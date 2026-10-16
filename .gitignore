@@ -1,0 +1,15 @@
+# ---- Runtime data (contains live tokens / secrets, never commit) ----
+/accounts/
+/usage/
+
+# ---- Python bytecode cache (project root) ----
+/__pycache__/
+*.pyc
+
+# ---- Local / editor noise ----
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
