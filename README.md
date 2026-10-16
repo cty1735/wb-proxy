@@ -1,4 +1,24 @@
-# WorkBuddy2API-Hub — 国际版、国内版多账号网关中枢
+# wb-proxy — 基于 workbuddy2api-hub 的增量增强版
+
+> 本项目以 **[ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub)** 的 **v1.7.5** 为基座：**完整保留其全部原始能力与实现细节**（见下方「原始项目介绍」与后续技术章节），并在此基础上持续叠加改进与修复。
+>
+> 相对上游基座多做了什么，见下方「增量功能」。
+
+## 增量功能
+
+| 日期 | 说明 |
+| --- | --- |
+| 2026-10-16 | README 改版：新增本「增量功能」表，并将原始项目介绍降级为子章节 |
+| 2026-10-16 | 看板主题改版：强调色改为亮橙、浅色背景纯白 / 深色背景纯黑、整体样式优化；Hermes 未选择模型时回退到首个可用模型；同步内置插件市场地址 |
+| 2026-10-16 | 基座初始版本（对齐上游 workbuddy2api-hub v1.7.5） |
+
+> **维护约定**：每次更新后，在表格**顶部新增一行**，用一句话写明相对基座新增 / 修改了什么，保持本文件与项目进展同步。
+
+---
+
+## 原始项目介绍（上游基座）
+
+### WorkBuddy2API-Hub — 国际版、国内版多账号网关中枢
 
 <p align="center">
   <a href="https://github.com/ardeyouxipianyi/workbuddy2api-hub/releases"><img src="https://img.shields.io/badge/Release-v1.7.5-2496ED?style=flat-square" alt="Version 1.6.20"></a>
