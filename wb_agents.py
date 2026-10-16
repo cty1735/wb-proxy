@@ -791,12 +791,19 @@ def _apply_hermes(paths, ctx):
         models[mid] = item
     if models:
         provider["models"] = models
-    if ctx.get("model"):
-        provider["default_model"] = ctx["model"]
+    # Hermes routes every turn through the selected provider, so a model the
+    # gateway does not serve fails on the first message. Prefer the panel's
+    # pick; when none was chosen, fall back to the first served model instead
+    # of leaving a stale default (e.g. "anthropic/claude-opus-4.6") behind.
+    model = ctx.get("model")
+    if not model and models:
+        model = next(iter(models))
+    if model:
+        provider["default_model"] = model
     text = yaml_upsert_inline(text, "providers.%s" % PROVIDER_ID, provider)
     text = yaml_upsert_inline(text, "model.provider", "custom:" + PROVIDER_ID)
-    if ctx.get("model"):
-        text = yaml_upsert_inline(text, "model.default", ctx["model"])
+    if model:
+        text = yaml_upsert_inline(text, "model.default", model)
     env_path = paths["env"]
     env_text = _read_text(env_path)
     env_text = env_upsert(env_text, {CREDENTIAL_REF: ctx["api_key"]})
@@ -900,8 +907,8 @@ CLIENTS = {
     "hermes": {
         "id": "hermes",
         "label": "Hermes CLI",
-        "desc": "Hermes Agent; registers a wb-proxy provider in config.yaml "
-                "and selects it.",
+        "desc": "Hermes Agent; registers a wb-proxy provider in config.yaml, "
+                "selects it, and picks a served model.",
         "protocol": "openai",
         "files": lambda home: {
             "config": os.path.join(_hermes_home(home), "config.yaml"),
