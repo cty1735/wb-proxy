@@ -609,9 +609,23 @@ def _apply_opencode(paths, ctx):
         data["$schema"] = "https://opencode.ai/config.json"
     models = {}
     for entry in ctx.get("models") or []:
-        mid = entry.get("id")
-        if mid:
-            models[mid] = {}
+        if isinstance(entry, dict):
+            mid = entry.get("id")
+            name = entry.get("name")
+        else:
+            mid = entry
+            name = None
+        mid = str(mid or "").strip()
+        if not mid:
+            continue
+        # OpenCode v2's model picker searches model names only - the provider
+        # name is not a search key unless an integration is connected - so tag
+        # every model with "wb": the row reads "hy3 wb" and typing "wb" lists
+        # every model this gateway serves.
+        label = str(name or mid).strip() or mid
+        if "wb" not in label.lower():
+            label = "%s wb" % label
+        models[mid] = {"name": label}
     provider = {
         "npm": "@ai-sdk/openai-compatible",
         "name": PROVIDER_NAME,
