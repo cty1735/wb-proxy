@@ -1843,6 +1843,8 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     '消费倍率': 'Rate',
     '消费倍率 / 优惠': 'Rate / discount',
     '按额度计费': 'Billed in credits',
+    '全部提供商': 'All providers',
+    '按提供商筛选本页数据': 'Filter this page by provider',
     '该模型在上游目录里没有倍率字段；Qoder 按账号额度（credits）计费，实际扣减见「最近请求」的「积分」列。': 'This model has no rate field in the upstream catalog; Qoder bills in account credits, and the actual charge is in the Credits column of Recent requests.',
     '官网文档参考值；实际倍率以账号模型清单（price_factor）为准': 'Reference value from the official docs; the actual rate comes from the account model list (price_factor).',
     '来自账号模型清单的 price_factor；活动折扣可能让实际倍率不同': 'Taken from the account model list price_factor; promotions may change the effective rate.',
@@ -3779,13 +3781,22 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 <!-- ====================== 页头 + 范围 ====================== -->
   <div class="pagehead">
     <h1 class="pagetitle">数据看板 <span class="pagesub" id="pageSub">—</span></h1>
-    <div class="seg" id="rangeSeg">
-      <button data-range="today" class="on">今日</button>
-      <button data-range="d3">近 3 日</button>
-      <button data-range="week">本周</button>
-      <button data-range="month">本月</button>
-      <button data-range="d30">近 30 天</button>
-      <button data-range="all">全部</button>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <!-- 提供商筛选：与头部网关切换解耦，只决定本页统计口径（默认全部）。 -->
+      <select id="analyticsProvider" class="slot-select" title="按提供商筛选本页数据"
+              onchange="setAnalyticsProvider(this.value)">
+        <option value="all">全部提供商</option>
+        <option value="workbuddy">WorkBuddy</option>
+        <option value="qoder">Qoder</option>
+      </select>
+      <div class="seg" id="rangeSeg">
+        <button data-range="today" class="on">今日</button>
+        <button data-range="d3">近 3 日</button>
+        <button data-range="week">本周</button>
+        <button data-range="month">本月</button>
+        <button data-range="d30">近 30 天</button>
+        <button data-range="all">全部</button>
+      </div>
     </div>
   </div>
 
@@ -5296,7 +5307,14 @@ async function switchProvider(p){
     await Promise.all([loadAccounts(), loadModels(), loadSchedulerStatus(), refresh()]);
     // 当前页签的内容跟着换提供商重拉一遍：这些页面只在切页签或轮询时取数，
     // 光等下一轮会停在旧提供商的数字上。
-    if(currentMainTab === 'analytics'){ loadAnalytics(); loadAnalyticsMatrix(); }
+    if(currentMainTab === 'analytics'){
+      // 看板筛选先对齐到刚切过去的提供商；真变了它会整套重取，
+      // 没变（用户本来就看这个提供商）才走原来的单次刷新。
+      const changed = (typeof window.setAnalyticsProvider === 'function')
+                      && window.setAnalyticsProvider(currentProvider());
+      if(!changed) loadAnalytics();
+      loadAnalyticsMatrix();
+    }
     if(currentMainTab === 'tasks' && currentProvider() === 'qoder'){ loadQoderQuota(); }
     if(currentMainTab === 'agents'){ loadAgents(); }
     toast('已切换到 ' + providerName() + ' · ' + (window.VIEW_REALM === "cn" ? "国内版" : "国际版") + '出口', 'ok');
@@ -9103,6 +9121,12 @@ const MAIN_TABS = ['gateway', 'accounts', 'tasks', 'analytics', 'agents', 'setti
 const MAIN_TAB_STORE = 'wb-proxy-main-tab';
 let currentMainTab = 'gateway';
 let analyticsRange = 'today';
+// 数据看板自己的提供商筛选（全部 / WorkBuddy / Qoder），与头部网关切换解耦：
+// 头部决定账号、模型清单等页签看谁；这里只决定统计口径，默认看全部。
+let analyticsProvider = 'all';
+// 首次进入看板时把筛选对齐到头部当前的提供商（之后用户手动选的算数）；
+// 切换头部提供商时 switchProvider 会重新对齐。
+let analyticsProviderReady = false;
 let cachedMatrixData = null;
 let matrixAcctFilter = '';
 let matrixModelFilter = '';
@@ -12328,7 +12352,7 @@ function onRangeCustomChange(){
 /* 三个取数端点共用同一个查询串，避免 /usage 与 /usage/perf 各拼一份而漏掉自定义
  * 区间——那正是「卡片与表格口径不一致」的复发路径。 */
 function analyticsQuery(){
-  let q = '?realm=all&provider=' + encodeURIComponent(currentProvider())
+  let q = '?realm=all&provider=' + encodeURIComponent(analyticsProvider || 'all')
         + '&range=' + encodeURIComponent(analyticsRange || 'today');
   if(analyticsRange === 'custom'){
     const sEl = document.getElementById('rangeCustomSince');
@@ -13421,7 +13445,14 @@ function fmtDate(epoch){
    数据层：直接用面板的 getJSON（自动带 X-Panel-Token、单飞合并、401 统一处理、
    POLL_READ 走 ETag 条件请求），不再自管 token 与登录。
    ============================================================ */
-const api = (path, opts) => getJSON(path, opts || POLL_READ);
+const api = (path, opts) => getJSON(withAnalyticsProvider(path), opts || POLL_READ);
+// 本页所有取数都带上看板自己的 provider 筛选（全部 = all）；realm 一律 all，
+// 与 KPI / 曲线 / 回溯保持同一口径。
+function withAnalyticsProvider(path){
+  const u = String(path || '');
+  return u + (u.indexOf('?') === -1 ? '?' : '&')
+         + 'provider=' + encodeURIComponent(analyticsProvider || 'all');
+}
 
 /* ============================================================
    状态
@@ -13531,7 +13562,7 @@ function nicknameOf(uid){
 }
 async function loadRecent(){
   try{
-    const r = await api('/usage/recent?limit=12');
+    const r = await api('/usage/recent?realm=all&limit=12');
     const rows = r.rows || [];
     $('recentMeta').textContent = `共 ${fmtCompact(r.total || 0)} 条记录`;
     $('recentList').innerHTML = rows.map(x => {
@@ -13596,7 +13627,7 @@ async function loadRange(){
 }
 
 async function loadStatic(){
-  try{ state.perf = await api('/usage/perf'); } catch(e){ console.error(e); }
+  try{ state.perf = await api('/usage/perf?realm=all'); } catch(e){ console.error(e); }
   try{
     const now = Math.floor(Date.now()/1000);
     state.heat = await api(`/usage/timeseries?realm=all&range=custom&since=${now-366*86400}&until=${now}&bucket_seconds=86400`);
@@ -14161,9 +14192,36 @@ function syncOldRange(){
    ============================================================ */
 let wbaStarted = false;
 function wbaTick(){
+  // 第一次进看板：筛选跟随头部提供商（之后以用户在下拉里的选择为准）。
+  if (!analyticsProviderReady){
+    analyticsProviderReady = true;
+    analyticsProvider = currentProvider();
+    const sel = document.getElementById('analyticsProvider');
+    if (sel) sel.value = analyticsProvider;
+  }
   if (!wbaStarted){ wbaStarted = true; loadStatic(); }
   loadRange();
 }
+/* 数据看板的提供商筛选：切换后清空上一口径的缓存（KPI、曲线、最近请求、
+   性能分位、工作回溯），再整套重取；wbaStarted 复位是为了让 loadStatic 也重跑。
+   返回 true 表示口径真的变了（已触发重取），false 表示没变。 */
+function setAnalyticsProvider(v){
+  const next = (v === 'qoder' || v === 'workbuddy') ? v : 'all';
+  const sel = document.getElementById('analyticsProvider');
+  if (sel) sel.value = next;
+  analyticsProviderReady = true;
+  if (next === analyticsProvider) return false;
+  analyticsProvider = next;
+  prevSummary = null;
+  state.analytics = null;
+  state.series = null;
+  state.perf = null;
+  state.heat = null;
+  wbaStarted = false;
+  wbaTick();
+  return true;
+}
+window.setAnalyticsProvider = setAnalyticsProvider;
 window.loadAnalytics = wbaTick;            /* 面板 5s 轮询 / 切页 / 回前台统一入口 */
 window.loadAnalyticsMatrix = function(){}; /* 旧性能矩阵已并入本页（性能分位折叠区） */
 window.wbaLoad = wbaTick;                  /* 调试入口 */
