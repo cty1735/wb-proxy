@@ -153,8 +153,9 @@ class Scheduler:
                 else:
                     self.log(f"! 账号 [{uid8}] Token 保活刷新失败: {acc.last_error}")
 
-            # 2. 如果是国内版账号，检查每日签到与猫猫旅行
-            if acc.realm == "cn":
+            # 2. 如果是国内版 WorkBuddy 账号，检查每日签到与猫猫旅行
+            #    （Qoder 没有签到/成长任务；保活刷新仍然对所有提供商生效）
+            if acc.realm == "cn" and acc.provider == "workbuddy":
                 if acc.can_checkin():
                     self.log(f"检测到国内版账号 [{uid8}] 今日尚未签到，执行自动签到...")
                     res = acc.checkin(trigger="scheduler")
@@ -197,8 +198,8 @@ class Scheduler:
                         self.log(f"🌙 {line}")
                     time.sleep(1.0)
 
-            # 3. 如果是国际版账号，检查每日活跃对话 (送 30/50 积分福利)
-            if acc.realm == "intl":
+            # 3. 如果是国际版 WorkBuddy 账号，检查每日活跃对话 (送 30/50 积分福利)
+            if acc.realm == "intl" and acc.provider == "workbuddy":
                 if acc.can_daily_chat():
                     self.log(f"检测到国际版账号 [{uid8}] 今日尚未活跃，执行每日活跃打卡对话...")
                     res = acc.daily_chat(trigger="scheduler")

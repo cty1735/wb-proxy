@@ -14,6 +14,7 @@ from wb_fingerprint import derive_id, generate_request_id
 import wb_activity
 import wb_atrest
 import wb_identity
+import wb_qoder
 import wb_settings
 import wb_upstream_pool
 import wb_webagent
@@ -216,6 +217,35 @@ DEFAULT_UA_VERSION = '5.5.2'
 
 def get_realm_config(realm):
     return REALM_CONFIGS.get(realm) or REALM_CONFIGS["intl"]
+
+#: 账号的提供商维度。workbuddy = 原有的 WorkBuddy 账号（缺省，旧凭证档没有
+#: 这个字段，加载时补上）；qoder = Qoder 账号（国际 qoder.sh / 国内
+#: qoder.com.cn，协议见 wb_qoder）。
+PROVIDERS = ("workbuddy", "qoder")
+DEFAULT_PROVIDER = "workbuddy"
+
+
+def normalize_provider(value):
+    text = str(value or "").strip().lower()
+    return text if text in PROVIDERS else DEFAULT_PROVIDER
+
+
+def provider_filter(provider):
+    """provider 参数的归一：None / "all" 表示不过滤，其余按具体提供商过滤。"""
+    if provider in (None, "all"):
+        return None
+    return normalize_provider(provider)
+
+
+def provider_display_name(provider):
+    return "Qoder" if normalize_provider(provider) == "qoder" else "WorkBuddy"
+
+
+def provider_default_domain(provider, realm):
+    """该「提供商 × 区域」的规范域名（凭证档缺 domain 时的兜底）。"""
+    if normalize_provider(provider) == "qoder":
+        return urllib.parse.urlsplit(wb_qoder.realm_config(realm)["site_url"]).netloc
+    return get_realm_config(realm)["domain"]
 
 def _jwt_claims(token):
     try:
@@ -469,6 +499,9 @@ class Account(object):
         # optional X-Device-Token) can resolve settings without a pool lookup.
         self.accounts_dir = os.path.dirname(path) if path else ""
         token = str(data.get("accessToken") or "")
+        # 提供商维度：旧凭证档没有 provider 字段，一律按 WorkBuddy 处理，
+        # 升级前后的行为完全一致。
+        self.provider = normalize_provider(data.get("provider"))
         self.uid = str(data.get("uid") or jwt_uid(token))
         # The CN desktop build stores its nickname as an encrypted envelope
         # ({"$wbEncrypted": ...}) rather than plain text. Stringifying that would
@@ -482,7 +515,7 @@ class Account(object):
         self.domain = str(data.get("domain") or "")
         self.realm = str(data.get("realm") or detect_realm_from_token(token, self.domain))
         if not self.domain:
-            self.domain = get_realm_config(self.realm)["domain"]
+            self.domain = provider_default_domain(self.provider, self.realm)
         self.platform = str(data.get("platform") or "CLI")
         # 出站身分读回凭证档里保存的值：面板手动切换与 429 自动切换都会经由
         # save() 写进凭证档（to_dict() 序列化的是当下身分），所以重启后接着用
@@ -494,6 +527,10 @@ class Account(object):
         self.access_token = token
         self.refresh_token = str(data.get("refreshToken") or "")
         self.expires_at = normalize_epoch(data.get("expiresAt")) or jwt_exp(token)
+        # Qoder 账号的协议状态（kind / personalToken / userId / machineId…）。
+        # 仅 provider=qoder 会写入凭证档；WorkBuddy 账号永远是空 dict。
+        raw_qoder_auth = data.get("qoderAuth")
+        self.qoder_auth = dict(raw_qoder_auth) if isinstance(raw_qoder_auth, dict) else {}
         # 企业账号登录时切到企业空间（token_source=enterprise_switch），企业 id
         # 只写在 token 里，凭据文件的 enterpriseId 往往是空的。不回填的话每个
         # 请求都会带上 X-No-Enterprise-Id: 1，企业目录/配额分支走错。
@@ -643,9 +680,10 @@ class Account(object):
         cooldown for inspection. The local credential file must not: save()
         strips RUNTIME_ONLY_FIELDS before writing.
         """
-        return {
+        data = {
             "uid": self.uid,
             "nickname": self.nickname,
+            "provider": self.provider,
             "domain": self.domain,
             "realm": self.realm,
             "platform": self.platform,
@@ -670,6 +708,11 @@ class Account(object):
             # 持久化：6004 的恢复时间是上游给的事实，重启后仍然成立（见 __init__）。
             "modelCaps": {mid: dict(entry) for mid, entry in self.model_caps.items()},
         }
+        if self.provider == "qoder":
+            # Qoder 的协议状态自成一体（PAT / refresh 字段的解析依据），
+            # 只有 qoder 账号写进凭证档，WorkBuddy 文件不多一个字段。
+            data["qoderAuth"] = dict(self.qoder_auth)
+        return data
 
     def _throttle_snapshot(self, now):
         """Return one consistent view of account and per-model cooldowns."""
@@ -701,6 +744,7 @@ class Account(object):
         return {
             "uid": self.uid,
             "nickname": self.nickname or (self.uid[:8] if self.uid else "?"),
+            "provider": self.provider,
             "domain": self.domain,
             "realm": self.realm,
             "platform": self.platform,
@@ -747,10 +791,16 @@ class Account(object):
             "lastCheckin": self.last_checkin,
             "lastDailyChat": self.last_daily_chat,
             "lastActivityReport": self.last_activity_report,
-            "canCheckin": self.realm == "cn" and not self.is_enterprise(),
-            "canDailyChat": self.realm == "intl",
-            "canReportActivity": self.realm == "cn" and not self.is_enterprise(),
-            "machineId": derive_id(self.uid, "machine"),
+            # 活动能力只对 WorkBuddy 账号成立：Qoder 没有签到/每日活跃/成长体系，
+            # 面板按这几个标志显隐按钮，服务端循环也照它们发车。
+            "canCheckin": (self.provider == "workbuddy" and self.realm == "cn"
+                           and not self.is_enterprise()),
+            "canDailyChat": self.provider == "workbuddy" and self.realm == "intl",
+            "canReportActivity": (self.provider == "workbuddy" and self.realm == "cn"
+                                  and not self.is_enterprise()),
+            "machineId": ((self.qoder_auth.get("machineId") or "")
+                          if self.provider == "qoder"
+                          else derive_id(self.uid, "machine")),
             "sessionId": derive_id(self.uid, "session"),
         }
 
@@ -758,6 +808,10 @@ class Account(object):
         os.makedirs(directory, exist_ok=True)
         safe_uid = re.sub(r"[^A-Za-z0-9_-]", "_", str(self.uid or "")).strip("_ ")
         name = (safe_uid or uuid.uuid4().hex) + ".json"
+        if self.provider == "qoder":
+            # Qoder 与 WorkBuddy 的 uid 空间互相独立，前缀避免两边撞名互踩，
+            # 也让账号目录一眼能看出文件属于哪个提供商。
+            name = "qoder-" + name
         path = os.path.abspath(os.path.join(directory, name))
         if not path.startswith(os.path.abspath(directory)):
             raise ValueError("invalid path for account save")
@@ -1187,6 +1241,8 @@ class Account(object):
         Only called from the explicit dashboard/API action - never from the
         balance scheduler - and persists the new nickname immediately.
         """
+        if self.provider != "workbuddy":
+            return self._sync_qoder_nickname()
         _uid, nickname = fetch_account_profile(self)
         if nickname and nickname != self.nickname:
             self.nickname = nickname
@@ -1196,6 +1252,22 @@ class Account(object):
             if directory:
                 self.save(directory)
         return nickname
+
+    def _sync_qoder_nickname(self):
+        """Qoder 昵称来自 job token 的 userinfo（没有 Web 控制台档案接口）。"""
+        info = wb_qoder.fetch_userinfo(self.access_token, self.realm, proxy=self.proxy)
+        name = str(info.get("name") or "")
+        if name:
+            self.nickname = name
+            self.qoder_auth["name"] = name
+            if info.get("email"):
+                self.qoder_auth["email"] = str(info["email"])
+            directory = getattr(self, "accounts_dir", "")
+            if not directory and self.path:
+                directory = os.path.dirname(self.path)
+            if directory:
+                self.save(directory)
+        return name or self.nickname
 
     def set_product(self, value):
         """切换出站身分（cli <-> workbuddy）。回传 True 表示真的换了。
@@ -1226,6 +1298,8 @@ class Account(object):
             return self._refresh_locked()
 
     def _refresh_locked(self):
+        if self.provider != "workbuddy":
+            return self._refresh_qoder_locked()
         if not self.refresh_token:
             self._set_last_error("no refresh token; sign in again")
             return False
@@ -1269,7 +1343,39 @@ class Account(object):
             self.save(os.path.dirname(self.path))
         return True
 
+    def _refresh_qoder_locked(self):
+        """Qoder 凭证续期：PAT 重新兑换，或设备码 refresh token 换新。
+
+        刷新成功后整体替换 access/refresh/expires 与 qoderAuth（上游把
+        refresh token 当一次性用，旧值必须换掉）。失败只记错误、不动凭证：
+        下一次巡检或手动点「刷新凭证」会再试。
+        """
+        if not self.qoder_auth and not self.refresh_token:
+            self._set_last_error("no qoder credential; sign in again")
+            return False
+        directory = self.accounts_dir or (os.path.dirname(self.path) if self.path else "")
+        try:
+            updated = wb_qoder.refresh_credential(
+                self.realm, self.qoder_auth, self.refresh_token,
+                access_token=self.access_token, proxy=self.proxy,
+                data_dir=directory)
+        except Exception as exc:
+            self._set_last_error("refresh failed: %s" % exc)
+            return False
+        self.access_token = updated["accessToken"]
+        self.refresh_token = updated["refreshToken"]
+        self.expires_at = updated["expiresAt"]
+        self.qoder_auth = updated["qoderAuth"]
+        with self._throttle_lock:
+            self.last_error = ""
+            self.cooldown_until = 0
+        if self.path and os.path.exists(os.path.dirname(self.path)):
+            self.save(os.path.dirname(self.path))
+        return True
+
     def can_checkin(self):
+        if self.provider != "workbuddy":
+            return False
         if self.realm != "cn":
             return False
         if self.is_enterprise():
@@ -1280,6 +1386,8 @@ class Account(object):
         return not str(self.last_checkin).startswith(today_str)
 
     def can_daily_chat(self):
+        if self.provider != "workbuddy":
+            return False
         if self.realm != "intl":
             return False
         if not self.last_daily_chat:
@@ -1289,6 +1397,8 @@ class Account(object):
 
     def can_report_activity(self):
         """国内版每天一次的对话活跃上报（点亮 growth 连登）是否还没做过。"""
+        if self.provider != "workbuddy":
+            return False
         if self.realm != "cn":
             return False
         if self.is_enterprise():
@@ -1428,6 +1538,8 @@ class Account(object):
         并进同一行的说明里，不再多记一行。ok 以真正计入积分的网页腿为准：网页腿
         开着且失败时整次算失败（桌面腿跑过也不算数）。
         """
+        if self.provider != "workbuddy":
+            return {"ok": False, "error": "Qoder 账号不支持每日活跃打卡"}
         if self.realm != "intl":
             return {"ok": False, "error": "daily chat is only for international accounts"}
         res = self._daily_chat_upstream(web)
@@ -1498,6 +1610,8 @@ class Account(object):
         trigger 只用于活动历史的来源标注（scheduler / manual / account_add /
         account_import）；记录写失败不会改变签到结果。
         """
+        if self.provider != "workbuddy":
+            return {"ok": False, "error": "Qoder 账号不支持签到"}
         if self.realm != "cn":
             return {"ok": False, "error": "checkin is only available for CN realm accounts"}
         if self.is_enterprise():
@@ -1548,6 +1662,8 @@ class Account(object):
         一次 /activity/growth/streak 把连登天数带回去——读失败不影响上报本身的
         结论。只有国内版有这套成长体系，国际版直接拒绝。
         """
+        if self.provider != "workbuddy":
+            return {"ok": False, "error": "Qoder 账号不支持活跃上报"}
         if self.realm != "cn":
             return {"ok": False, "error": "activity report is only for CN realm accounts"}
         if self.is_enterprise():
@@ -1963,6 +2079,8 @@ class Account(object):
             return res
 
     def _fetch_credits_raw(self):
+        if self.provider != "workbuddy":
+            return self._fetch_credits_qoder()
         if self.realm == "cn":
             try:
                 res = self._fetch_credits_cn_detailed()
@@ -1985,6 +2103,24 @@ class Account(object):
                 except Exception:
                     pass
         return self._fetch_credits_fallback()
+
+    def _fetch_credits_qoder(self):
+        """Qoder 额度查询：openapi /api/v2/quota/usage → 看板同款 credits。
+
+        桶的缺值保持缺值（见 wb_qoder.credits_from_quota）；一个数字都没有
+        时返回失败，而不是把账号画成 0/0。
+        """
+        try:
+            raw = wb_qoder.fetch_quota(self.access_token, self.realm, proxy=self.proxy)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        credits = wb_qoder.credits_from_quota(raw)
+        if not credits:
+            return {"ok": False, "error": "上游没有返回可用的额度数据"}
+        self.credits = credits
+        if self.path and os.path.exists(os.path.dirname(self.path)):
+            self.save(os.path.dirname(self.path))
+        return {"ok": True, "credits": self.credits}
 
     def _set_last_error(self, message):
         """Record refresh errors alongside the state shown in the panel."""
@@ -2463,20 +2599,27 @@ class AccountPool(object):
                      % (uid[:8], ", ".join(mids)))
         return restored
 
-    def list_public(self, realm=None):
+    def list_public(self, realm=None, provider=None):
         with self._lock:
             accs = self.accounts if (not realm or realm == "all") else [a for a in self.accounts if a.realm == realm]
+            want = provider_filter(provider)
+            if want:
+                accs = [a for a in accs if a.provider == want]
             return [a.public() for a in accs]
 
-    def get(self, uid):
+    def get(self, uid, provider=None):
+        want = provider_filter(provider)
         with self._lock:
             for account in self.accounts:
-                if account.uid == uid: return account
+                if account.uid == uid and (not want or account.provider == want):
+                    return account
         return None
 
     def add(self, account):
         with self._lock:
-            existing = self.get(account.uid)
+            # 同 uid 的替换只在同一提供商内发生：两边的 uid 空间互相独立，
+            # 万一撞号也不能把另一个提供商的账号顶掉。
+            existing = self.get(account.uid, provider=account.provider)
             if existing is not None:
                 account.added_at = existing.added_at
                 account.path = existing.path
@@ -2507,7 +2650,8 @@ class AccountPool(object):
             self.accounts.remove(account)
             return True
 
-    def preview_import_rows(self, rows, realm=None, overwrite=False):
+    def preview_import_rows(self, rows, realm=None, overwrite=False,
+                            provider=DEFAULT_PROVIDER, data_dir=None):
         """Report what import_rows() would do, without touching the pool.
 
         Shares the same accept/skip rules as import_rows() so a dry run cannot
@@ -2518,7 +2662,8 @@ class AccountPool(object):
         seen = set()
         for index, row in enumerate(rows):
             try:
-                kwargs = normalise_import_row(row, realm=realm)
+                kwargs = normalise_import_row(row, realm=realm, provider=provider,
+                                              data_dir=data_dir)
             except Exception as exc:
                 preview["invalid"].append({"index": index + 1, "reason": str(exc)})
                 continue
@@ -2534,7 +2679,8 @@ class AccountPool(object):
             seen.add(uid)
         return preview
 
-    def import_rows(self, rows, realm=None, overwrite=False):
+    def import_rows(self, rows, realm=None, overwrite=False,
+                    provider=DEFAULT_PROVIDER, data_dir=None):
         """Add accounts from exported/foreign rows.
 
         Returns a report dict:
@@ -2550,7 +2696,8 @@ class AccountPool(object):
         seen = set()
         for index, row in enumerate(rows):
             try:
-                kwargs = normalise_import_row(row, realm=realm)
+                kwargs = normalise_import_row(row, realm=realm, provider=provider,
+                                              data_dir=data_dir)
             except Exception as exc:
                 invalid.append({"index": index + 1, "reason": str(exc)})
                 continue
@@ -2561,7 +2708,7 @@ class AccountPool(object):
                 continue
             seen.add(uid)
 
-            existing = self.get(uid) is not None
+            existing = self.get(uid, provider=kwargs.get("provider")) is not None
             if existing and not overwrite:
                 skipped.append({"uid": uid, "reason": "already exists"})
                 continue
@@ -2829,23 +2976,29 @@ class AccountPool(object):
         self.apply_proxy_slots()
         return account.public()
 
-    def set_all_enabled(self, enabled, realm=None):
+    def set_all_enabled(self, enabled, realm=None, provider=None):
         with self._lock:
             for account in self.accounts:
                 if realm and account.realm != realm: continue
+                want = provider_filter(provider)
+                if want and account.provider != want:
+                    continue
                 account.enabled = bool(enabled)
                 if enabled:
                     account.clear_error()
                 account.save(self.dir)
         self.apply_proxy_slots()
 
-    def count_ready(self, realm=None, model=None):
+    def count_ready(self, realm=None, model=None, provider=DEFAULT_PROVIDER):
         with self._lock:
-            snapshot = [a for a in self.accounts if not realm or a.realm == realm]
+            want = provider_filter(provider)
+            snapshot = [a for a in self.accounts
+                        if (not realm or a.realm == realm)
+                        and (not want or a.provider == want)]
         return sum(1 for a in snapshot if a.enabled and a.access_token and a.ready(model=model))
 
     def pick_for_session(self, realm=None, session_key=None, exclude=None, model=None,
-                         page=None):
+                         page=None, provider=DEFAULT_PROVIDER):
         """Pick the account for one turn of a conversation.
 
         Three shapes, in order of preference:
@@ -2863,19 +3016,23 @@ class AccountPool(object):
           every oversized body onto a single account.
         """
         exclude = exclude or set()
+        want = provider_filter(provider)
         if session_key and page is None:
             for uid in self.affinity.recent(session_key):
                 if uid in exclude:
                     continue
                 account = self.get(uid)
-                if account and account.realm == realm and account.ready(model=model):
+                if account and account.realm == realm and account.ready(model=model) \
+                        and (not want or account.provider == want):
                     self.affinity.bind(session_key, uid)
                     return account
-        account = self.pick(realm=realm, exclude=exclude, model=model, page=page)
+        account = self.pick(realm=realm, exclude=exclude, model=model, page=page,
+                            provider=provider)
         if account is None and page is not None:
             # The page has nobody usable right now. Serving the conversation
             # from outside it beats not serving it at all.
-            account = self.pick(realm=realm, exclude=exclude, model=model)
+            account = self.pick(realm=realm, exclude=exclude, model=model,
+                                provider=provider)
         # A page conversation is not bound on purpose: its rotation is what keeps
         # every account of the page warm, and a binding would pin it back to one
         # (the state it was released from). The page cursor carries its rotation.
@@ -2883,10 +3040,14 @@ class AccountPool(object):
             self.affinity.bind(session_key, account.uid)
         return account
 
-    def pick(self, realm=None, exclude=None, model=None, page=None):
+    def pick(self, realm=None, exclude=None, model=None, page=None,
+             provider=DEFAULT_PROVIDER):
         exclude = exclude or set()
+        want = provider_filter(provider)
         with self._lock:
-            snapshot = [a for a in self.accounts if not realm or a.realm == realm]
+            snapshot = [a for a in self.accounts
+                        if (not realm or a.realm == realm)
+                        and (not want or a.provider == want)]
         if page is not None:
             snapshot = self._page_slice(snapshot, page)
         if not snapshot:
@@ -3136,14 +3297,19 @@ class AccountPool(object):
                 return account
         return None
 
-    def representative(self, realm=None):
+    def representative(self, realm=None, provider=DEFAULT_PROVIDER):
+        want = provider_filter(provider)
         with self._lock:
-            candidates = [a for a in self.accounts if not realm or a.realm == realm]
+            candidates = [a for a in self.accounts
+                          if (not realm or a.realm == realm)
+                          and (not want or a.provider == want)]
             for account in candidates:
                 if account.access_token: return account
             return candidates[0] if candidates else None
 
-    def start_login(self, realm="intl", platform="CLI"):
+    def start_login(self, realm="intl", platform="CLI", provider=DEFAULT_PROVIDER):
+        if normalize_provider(provider) == "qoder":
+            return self._start_qoder_login(realm)
         cfg = get_realm_config(realm)
         url = "%s%s?platform=%s" % (cfg["chat_upstream"], AUTH_STATE_PATH, urllib.parse.quote(str(platform)))
         headers = {
@@ -3165,6 +3331,44 @@ class AccountPool(object):
             self.logins[state] = {"created": time.time(), "platform": platform, "realm": realm}
         return {"state": state, "authUrl": auth_url, "realm": realm, "platform": platform}
 
+    def _start_qoder_login(self, realm="intl"):
+        """Qoder 浏览器设备码登录（仅国际版；国内版走 PAT）。"""
+        realm = "cn" if str(realm or "").lower() == "cn" else "intl"
+        started = wb_qoder.device_login_start(realm, data_dir=self.dir)
+        nonce = started["nonce"]
+        with self._lock:
+            self.logins[nonce] = {
+                "created": time.time(),
+                "provider": "qoder",
+                "kind": "qoder-device",
+                "realm": realm,
+                "verifier": started["verifier"],
+                "machineId": started["machineId"],
+            }
+        return {"state": nonce, "authUrl": started["authUrl"], "realm": realm,
+                "platform": "qoder", "provider": "qoder"}
+
+    def add_qoder_pat(self, pat, realm="intl"):
+        """PAT 兑换并加入账号池（国内/国际通用；面板的 Qoder 登录入口）。"""
+        realm = "cn" if str(realm or "").lower() == "cn" else "intl"
+        credential = wb_qoder.credential_from_pat(pat, realm, data_dir=self.dir)
+        account = Account({
+            "uid": credential["uid"],
+            "nickname": credential["nickname"],
+            "provider": "qoder",
+            "domain": credential["domain"],
+            "realm": realm,
+            "platform": "CLI",
+            "accessToken": credential["accessToken"],
+            "refreshToken": credential["refreshToken"],
+            "expiresAt": credential["expiresAt"],
+            "qoderAuth": credential["qoderAuth"],
+            "source": "pat",
+            "enabled": True,
+        })
+        self.add(account)
+        return account
+
     def poll_login(self, state):
         state = str(state or "").strip()
         with self._lock:
@@ -3174,6 +3378,8 @@ class AccountPool(object):
         if time.time() - info["created"] > LOGIN_TTL_SECONDS:
             with self._lock: self.logins.pop(state, None)
             return {"status": "expired", "message": "login window expired - start again"}
+        if info.get("provider") == "qoder":
+            return self._poll_qoder_login(state, info)
         realm = info.get("realm") or "intl"
         cfg = get_realm_config(realm)
         url = "%s%s?state=%s" % (cfg["chat_upstream"], AUTH_TOKEN_PATH, urllib.parse.quote(state))
@@ -3226,6 +3432,38 @@ class AccountPool(object):
         if realm == "cn":
             try: account.checkin(trigger="account_add")
             except Exception: pass
+        with self._lock: self.logins.pop(state, None)
+        return {"status": "ok", "account": account.public()}
+
+    def _poll_qoder_login(self, state, info):
+        """Qoder 设备码轮询一次；成功后建号入池。"""
+        realm = info.get("realm") or "intl"
+        poll = wb_qoder.device_login_poll(state, info.get("verifier") or "",
+                                          realm=realm, data_dir=self.dir)
+        status = poll.get("status")
+        if status == "pending":
+            return {"status": "pending",
+                    "message": poll.get("message") or "waiting for browser login"}
+        if status != "ok":
+            with self._lock: self.logins.pop(state, None)
+            return {"status": "error",
+                    "message": poll.get("message") or "device login failed"}
+        credential = poll.get("credential") or {}
+        account = Account({
+            "uid": credential.get("uid"),
+            "nickname": credential.get("nickname"),
+            "provider": "qoder",
+            "domain": credential.get("domain"),
+            "realm": realm,
+            "platform": "CLI",
+            "accessToken": credential.get("accessToken"),
+            "refreshToken": credential.get("refreshToken"),
+            "expiresAt": credential.get("expiresAt"),
+            "qoderAuth": credential.get("qoderAuth"),
+            "source": "oauth",
+            "enabled": True,
+        })
+        self.add(account)
         with self._lock: self.logins.pop(state, None)
         return {"status": "ok", "account": account.public()}
 
@@ -3543,13 +3781,155 @@ def _coerce_account_rows(blob):
     return out, ""
 
 
-def normalise_import_row(row, realm=None):
+#: Qoder 域名里能认出区域的字样。cn 必须先于 intl 判定：qoder.com 是
+#: qoder.com.cn 的子串，反过来会把国内域名误判成国际。
+_QODER_DOMAIN_MARKERS = {
+    "cn": ("qoder.com.cn", "qoder.cn"),
+    "intl": ("qoder.sh", "qoder.com"),
+}
+
+
+def _qoder_realm_evidence(domain):
+    """从域名看 Qoder 区域，看不出返回 None。"""
+    dom = str(domain or "").lower()
+    for realm in ("cn", "intl"):
+        if any(marker in dom for marker in _QODER_DOMAIN_MARKERS[realm]):
+            return realm
+    return None
+
+
+def _qoder_domain_for_realm(realm, domain):
+    """把行里的域名对齐到区域：写着另一边的域名换成该区域的规范域名。"""
+    dom = str(domain or "").strip()
+    evidence = _qoder_realm_evidence(dom)
+    if dom and (evidence is None or evidence == realm):
+        return dom
+    return provider_default_domain("qoder", realm)
+
+
+def _normalise_qoder_row(row, realm=None, data_dir=None):
+    """Turn one qoder credential row into Account kwargs.
+
+    接受三种行：
+      - 网关导出的 qoder 账号（provider=qoder + accessToken + qoderAuth）；
+      - 带 PAT 的行（personalToken / personal_token / pat；或 qoderAuth 里
+        有 personalToken 而 accessToken 缺失）：现场兑换成凭据；
+      - 设备码登录后人工拼的行（accessToken + refreshToken，无过期时间
+        时按 +24h 处理）。
+
+    Qoder 的 access token 是不透明串而不是 JWT，这里刻意不做 JWT 校验。
+    """
+    auth_layer = row.get("auth") if isinstance(row.get("auth"), dict) else None
+    profile = row.get("account") if isinstance(row.get("account"), dict) else None
+
+    def pick(key, default=None):
+        """Read a field from whichever layer holds it (flat, auth, account)."""
+        for layer in (row, auth_layer, profile):
+            if isinstance(layer, dict) and layer.get(key) not in (None, ""):
+                return layer.get(key)
+        return default
+
+    qoder_auth = pick("qoderAuth")
+    qoder_auth = dict(qoder_auth) if isinstance(qoder_auth, dict) else {}
+
+    # 区域：调用方强制 > 行里的 realm > 域名证据 > 国际版。
+    forced = str(realm or "").strip().lower()
+    if forced not in ("intl", "cn"):
+        forced = ""
+    row_realm = str(pick("realm") or "").strip().lower()
+    detected = (forced
+                or (row_realm if row_realm in ("intl", "cn") else "")
+                or _qoder_realm_evidence(pick("domain"))
+                or "intl")
+
+    token = str(pick("accessToken") or "").strip()
+    refresh = str(pick("refreshToken") or "").strip()
+    pat = str(pick("personalToken") or pick("personal_token")
+              or pick("pat") or "").strip() or \
+        str(qoder_auth.get("personalToken") or "").strip()
+    source = str(pick("source") or "").strip()
+
+    if not token and pat:
+        # PAT 兑换要与上游交互；失败（网络/令牌失效）直接作为 bad row 报出。
+        credential = wb_qoder.credential_from_pat(pat, detected, data_dir=data_dir)
+        token = credential["accessToken"]
+        refresh = credential["refreshToken"]
+        expires = credential["expiresAt"]
+        qoder_auth = dict(credential["qoderAuth"])
+        detected = str(credential.get("realm") or detected)
+        nickname = str(pick("nickname") or credential["nickname"])
+        raw_uid = str(pick("uid") or credential["uid"])
+        source = source or "pat"
+    else:
+        if not token:
+            raise ValueError("no accessToken (or personal PAT) in qoder account row")
+        expires = (normalize_epoch(pick("expiresAt")) or jwt_exp(token)
+                   or int(time.time() + 24 * 3600))
+        nickname = str(pick("nickname") or qoder_auth.get("name")
+                       or qoder_auth.get("email") or "")
+        raw_uid = str(pick("uid") or qoder_auth.get("userId") or jwt_uid(token))
+
+    uid = re.sub(r"[^A-Za-z0-9_-]", "_", raw_uid).strip("_ ")
+    if not uid:
+        raise ValueError("cannot determine uid for a qoder account")
+
+    # 补全 qoderAuth：kind 决定 refresh 走 PAT 重新兑换还是 refresh token，
+    # 猜不出 kind 时按 refresh 字段的形状看（pat| 前缀是 PAT 凭据）。
+    kind = str(qoder_auth.get("kind") or "").strip().lower()
+    if kind not in ("pat", "oauth"):
+        kind = "pat" if (pat or wb_qoder.is_pat_refresh(refresh)) else "oauth"
+    machine = str(qoder_auth.get("machineId") or "").strip() \
+        or wb_qoder.machine_id(data_dir)
+    qoder_auth.update({
+        "kind": kind,
+        "personalToken": str(qoder_auth.get("personalToken") or pat),
+        "userId": str(qoder_auth.get("userId") or raw_uid),
+        "machineId": machine,
+    })
+    if not refresh and kind == "pat" and qoder_auth["personalToken"]:
+        refresh = wb_qoder.encode_pat_refresh(qoder_auth["personalToken"], "",
+                                              qoder_auth["userId"], machine)
+
+    return {
+        "uid": uid,
+        "nickname": nickname or uid[:8],
+        "provider": "qoder",
+        "domain": _qoder_domain_for_realm(detected, pick("domain")),
+        "realm": detected,
+        "platform": str(pick("platform") or "CLI"),
+        # Qoder 没有企业维度，行里带 enterpriseId 也不采纳。
+        "enterpriseId": "",
+        "accessToken": token,
+        "refreshToken": refresh,
+        "expiresAt": expires,
+        "qoderAuth": qoder_auth,
+        "source": source or "import",
+        "enabled": True,
+        # Volatile state is intentionally reset - see VOLATILE_FIELDS.
+        "lastError": "",
+        "cooldownUntil": 0.0,
+    }
+
+
+def normalise_import_row(row, realm=None, provider=DEFAULT_PROVIDER, data_dir=None):
     """Turn one exported/foreign row into Account kwargs.
 
     Accepts both the flat account shape and the nested desktop-credential shape
     so a file from either source imports cleanly. Raises ValueError when the
     row carries no usable credential.
+
+    `provider` 是这份文档的预期提供商。导出文档逐行带着 provider 字段，行
+    自报的 provider 优先：把 Qoder 导出喂进 WorkBuddy 的导入通道也不会被
+    当成 WorkBuddy 行去校验 JWT。行里没有 provider 时按 `provider` 参数走
+    （默认 workbuddy），qoder 交给 _normalise_qoder_row()。
     """
+    wanted = provider_filter(provider)
+    declared = None
+    if isinstance(row, dict) and row.get("provider"):
+        declared = normalize_provider(row.get("provider"))
+    if (declared or wanted or DEFAULT_PROVIDER) == "qoder":
+        return _normalise_qoder_row(row, realm=realm, data_dir=data_dir)
+
     # cockpit tools exports a bare array of snake_case OAuth rows. Map it onto
     # the flat shape the rest of this function already understands; expires_at
     # is milliseconds, which normalize_epoch() below converts to seconds.

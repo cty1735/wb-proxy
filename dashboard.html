@@ -324,6 +324,20 @@ a:hover{text-decoration:underline}
 .realm-switch button:hover{color:var(--fg);background:var(--panel)}
 .realm-switch button.active{background:var(--panel);color:var(--accent);border-color:var(--accent);box-shadow:var(--shadow-sm);font-weight:600}
 .realm-switch button.active#accountsRealmCn{color:var(--bad);border-color:var(--bad)}
+/* 头部提供商切换（WorkBuddy / Qoder）。单独一套类名，别用 .main-nav-btn——
+   那个会被页签显隐系统（navPageRows）当成页面入口捡走。Qoder 用思考色系的
+   紫色，与 WorkBuddy 的蓝色强调色一眼区分。 */
+.provider-switch{display:inline-flex;gap:3px;background:var(--panel2);padding:3px;border-radius:9px;border:1px solid var(--line);flex:0 0 auto}
+.provider-switch button{background:transparent;border:1px solid transparent;color:var(--dim);padding:4px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s ease;letter-spacing:.02em}
+.provider-switch button:hover{color:var(--fg);background:var(--panel)}
+.provider-switch button.active{background:var(--panel);color:var(--accent);border-color:var(--accent);box-shadow:var(--shadow-sm)}
+.provider-switch button.active#providerBtnQoder{color:var(--think);border-color:var(--think)}
+/* Qoder 视图下收起 WorkBuddy 专属控件（签到/活跃/桌面扫描/出站身份…）。集中在
+   这一条规则里管，免得给每个按钮已有的按视图显隐逻辑（updateUI 里的 inline
+   display）再各补一份 provider 条件。 */
+body.provider-qoder .wb-only{display:none !important}
+/* Qoder 视图专属区块：WorkBuddy 视图下收起（与 .wb-only 对称）。 */
+body:not(.provider-qoder) .qoder-only{display:none !important}
 
 .realm-card{
   background:var(--panel);border:1px solid var(--line);border-radius:12px;
@@ -1146,6 +1160,41 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     'WorkBuddy 独立桌面客户端 (WB)': 'WorkBuddy standalone desktop client (WB)',
     'WorkBuddy 用量看板': 'WorkBuddy Usage Dashboard',
     'WorkBuddy 网关': 'WorkBuddy Gateway',
+    'Qoder 网关': 'Qoder Gateway',
+    'Qoder 网关与账号': 'Qoder gateway & accounts',
+    '添加 Qoder 账号': 'Add a Qoder account',
+    '添加 Qoder 账号 (设备码 / PAT)': 'Add a Qoder account (device code / PAT)',
+    '管理 Qoder 账号池与代理出口，查看当日调用量、成功率、最近请求与网关模型清单。': 'Manage the Qoder account pool and proxy exits; review call volume, success rate, recent requests and the gateway model list.',
+    '正在申请设备码登录…': 'Requesting a device code...',
+    '在浏览器里打开下方链接并完成登录授权': 'Open the link below in your browser and complete the sign-in',
+    '等待授权完成（自动检测）': 'Waiting for authorization (auto-detected)',
+    '正在向 qoder.com (国际版) 申请设备码...': 'Requesting a device code from qoder.com (Global)...',
+    '或使用 PAT（个人访问令牌）登录': 'Or sign in with a PAT (personal access token)',
+    '粘贴 Qoder PAT（在 qoder.com 账号设置的 Integrations 页面生成）': 'Paste a Qoder PAT (created on the Integrations page of your qoder.com account settings)',
+    '用 PAT 登录': 'Sign in with PAT',
+    'PAT 在服务端兑换成登录态后入池，长期有效。': 'The PAT is exchanged for a session server-side and added to the pool; it stays valid long-term.',
+    '正在用 PAT 兑换登录态…': 'Exchanging the PAT for a session...',
+    '国内版（qoder.com.cn）请使用 PAT 登录。': 'For the China realm (qoder.com.cn) sign in with a PAT.',
+    'Qoder 暂无签到与每日活跃体系': 'Qoder has no check-in or daily-activity system',
+    '在浏览器里打开链接并用 Qoder 账号登录；授权完成后本窗口自动检测并完成入池。': 'Open the link in your browser and sign in with your Qoder account; this window detects it and adds the account to the pool.',
+    'Qoder 额度与福利': 'Qoder quota & perks',
+    'Qoder 账号的套餐与加油包额度总览：剩余、已用与到期。': 'Qoder account plans and add-on quota at a glance: remaining, used and expiry.',
+    '各账号的套餐与加油包额度（剩余 / 已用 / 到期）。数字是最近一次「刷新额度」的快照。': 'Per-account plan and add-on quota (remaining / used / expiry); the numbers are a snapshot from the latest "Refresh quota".',
+    '刷新额度': 'Refresh quota',
+    '总剩余额度': 'Total remaining',
+    '总已用额度': 'Total used',
+    '最近到期': 'Soonest expiry',
+    '个人套餐': 'Personal plan',
+    '加油包': 'Add-on packs',
+    '企业资源包': 'Org resource pack',
+    '快照时间': 'Snapshot',
+    '已到期': 'expired',
+    '已刷新 Qoder 账号额度': 'Qoder account quota refreshed',
+    'Qoder 额度加载失败: ': 'Failed to load Qoder quota: ',
+    '还没有 Qoder 账号：先在「网关与账号」页添加一个 Qoder 账号（设备码 / PAT）。': 'No Qoder accounts yet: add one on the Gateway & accounts page first (device code / PAT).',
+    '个账号还没有额度快照，点右上角「刷新额度」从 Qoder 配额接口拉取。': ' account(s) have no quota snapshot yet; click Refresh quota to pull one from the Qoder quota API.',
+    '任务与福利': 'Tasks & perks',
+    '每日活跃打卡、Buddy 加油站、成长任务与福利积分总览。': 'Daily activity check-in, the Buddy gas station, growth tasks and a perks/credits overview.',
     '[task_runner] 正在启动全自动任务接取、事件上报与奖励领取流水...': '[task_runner] Starting the fully automatic task claiming, event reporting and reward claiming pipeline...',
     '] 吗？密钥会被抹掉且无法恢复；看板里它已经产生的历史用量仍会保留这个名字。': ']? The secret will be erased and cannot be recovered; the usage it already produced in the dashboard keeps this name.',
     '] 已保存': '] saved',
@@ -3214,7 +3263,14 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 <body>
 <header>
   <div class="header-left" style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
-    <h1><span class="dot" id="statusDot"></span>WorkBuddy 网关</h1>
+    <h1><span class="dot" id="statusDot"></span><span id="brandTitle">WorkBuddy 网关</span></h1>
+    <!-- 提供商切换：全站唯一入口，改的是服务端持久化的 provider（POST /realm）。
+         面板每个按提供商取数的请求都显式带 ?provider=，所以这个切换只影响看板
+         自己看到的账号/用量/模型，不会改变普通客户端流量的去向。 -->
+    <div class="provider-switch" id="providerSwitch" role="group" aria-label="提供商" data-no-i18n>
+      <button type="button" id="providerBtnWorkbuddy" class="active" onclick="switchProvider('workbuddy')" aria-pressed="true">WorkBuddy</button>
+      <button type="button" id="providerBtnQoder" onclick="switchProvider('qoder')" aria-pressed="false">Qoder</button>
+    </div>
     <nav class="main-nav">
       <button class="main-nav-btn active" id="btnNavGateway" onclick="switchMainTab('gateway')">
         <span id="navGatewayLabel">网关</span>
@@ -3319,7 +3375,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
           <span id="tabIntlViewBadge" class="badge s mini" style="display:inline-block">当前视图</span>
         </div>
       </div>
-      <div class="mono" style="font-size:11px;color:var(--dim);margin-bottom:8px">www.workbuddy.ai</div>
+      <div class="mono" style="font-size:11px;color:var(--dim);margin-bottom:8px" id="tabIntlHost">www.workbuddy.ai</div>
       <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:8px">
         <div style="display:flex;align-items:baseline;gap:6px">
           <span id="tabIntlCredits" style="font-size:22px;font-weight:700;color:var(--accent2);letter-spacing:-.5px" title="总剩余积分：全部账号（含停用）之和；「可用」只算启用且未触发限额护栏的账号">0</span>
@@ -3338,7 +3394,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
           <span id="tabCnViewBadge" class="badge warn mini" style="display:none">当前视图</span>
         </div>
       </div>
-      <div class="mono" style="font-size:11px;color:var(--dim);margin-bottom:8px">copilot.tencent.com</div>
+      <div class="mono" style="font-size:11px;color:var(--dim);margin-bottom:8px" id="tabCnHost">copilot.tencent.com</div>
       <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:8px">
         <div style="display:flex;align-items:baseline;gap:6px">
           <span id="tabCnCredits" style="font-size:22px;font-weight:700;color:var(--accent2);letter-spacing:-.5px" title="总剩余积分：全部账号（含停用）之和；「可用」只算启用且未触发限额护栏的账号">0</span>
@@ -3482,14 +3538,14 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     <div id="accountsBody" class="collapse">
       <div class="collapse-inner">
     <div class="toolbar">
-    <button onclick="openLoginModal()">添加</button>
+    <button onclick="openLoginModal()" id="btnAddAccount">添加</button>
     <div class="tb-group">
     <!-- 桌面客户端自 2026-09-24 起把 token 改成加密存储（$wbEncrypted 信封）。
          网关现在会从正在运行的桌面端进程内存里回收静态密钥来解密（只读、密钥
          只留在内存里，实现见 wb_atrest.py），所以这个入口重新放出来。 -->
-    <button class="sec" id="btnScanDesktop" onclick="scanDesktop(this)">扫描桌面客户端</button>
+    <button class="sec wb-only" id="btnScanDesktop" onclick="scanDesktop(this)">扫描桌面客户端</button>
     <!-- 活动记录入口：只读 GET /activity/history，账号区自己的控件，不另开页面。 -->
-    <button class="sec" onclick="openActivityHistory()">签到记录</button>
+    <button class="sec wb-only" onclick="openActivityHistory()">签到记录</button>
     <button class="sec" onclick="openImport()">导入</button>
     <button class="sec" onclick="exportAccounts(this)">导出</button>
     </div>
@@ -3499,16 +3555,16 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     </div>
     <div class="tb-group">
     <button class="sec" id="btnCheckin" onclick="doCheckin(this)" style="display:none">Buddy 加油站签到</button>
-    <button class="sec" id="btnDailyChat" onclick="doDailyChat(this)" style="display:none">每日活跃打卡 (国际版)</button>
+    <button class="sec wb-only" id="btnDailyChat" onclick="doDailyChat(this)" style="display:none">每日活跃打卡 (国际版)</button>
     <!-- 网页通道打卡按钮不再上屏（2026-10-10 起）：网页通道那一步已经由设置里的
          「国际版每日活跃打卡」自动带在「每日活跃打卡」里，手动补跑走
          /accounts/daily-chat-web 即可。要放回面板：去掉下面的 display:none，
          并在 updateUI() 里恢复它按视图显隐。 -->
-    <button class="sec" id="btnDailyChatWeb" onclick="doDailyChatWeb(this)" style="display:none">网页通道打卡 (国际版)</button>
+    <button class="sec wb-only" id="btnDailyChatWeb" onclick="doDailyChatWeb(this)" style="display:none">网页通道打卡 (国际版)</button>
     </div>
     <div class="tb-group">
     <button class="sec" onclick="autoAssignSlots()" title="把尚未绑定出口的已启用账号依次分配到已启用的代理槽；已有绑定的账号不受影响">一键分配代理</button>
-    <button class="sec" id="btnProductAll" onclick="cycleAllProducts(this)" title="把全部账号（含另一个版本）的出站身份切到下一个：WB → VSC → CLI">一键切换所有出站身份：<span id="productAllLabel">WB</span></button>
+    <button class="sec wb-only" id="btnProductAll" onclick="cycleAllProducts(this)" title="把全部账号（含另一个版本）的出站身份切到下一个：WB → VSC → CLI">一键切换所有出站身份：<span id="productAllLabel">WB</span></button>
     <button class="sec" onclick="setAll(true, this)">全部启用</button>
     <button class="sec" onclick="setAll(false, this)">全部停用</button>
     </div>
@@ -3530,8 +3586,9 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 
   <!-- 签到与活跃记录：读 wb_activity.py 落下的结构化历史（GET /activity/history），
        一行一次真实尝试。筛选全部由服务端做（range/task/result/uid/limit），前端
-       只拼查询串与渲染，免得两处各写一份筛选规则再慢慢跑偏。 -->
-  <section>
+       只拼查询串与渲染，免得两处各写一份筛选规则再慢慢跑偏。
+       这是 WorkBuddy 专属区块：Qoder 视图（body.provider-qoder）下整个收起。 -->
+  <section class="wb-only">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
       <h2 style="margin:0">签到与活跃记录 <em id="activityCount"></em></h2>
       <div style="display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -3571,10 +3628,47 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
   <!-- 页面头部：标题 + 一行说明，与其它页面的头部结构保持一致 -->
   <div style="margin-bottom:16px">
     <h2 style="margin:0;font-size:17px;color:var(--fg);font-family:var(--serif);font-weight:600;letter-spacing:.02em">任务与福利</h2>
-    <div style="font-size:12px;color:var(--dim);margin-top:4px">每日活跃打卡、Buddy 加油站、成长任务与福利积分总览。</div>
+    <div style="font-size:12px;color:var(--dim);margin-top:4px" id="pageTasksDesc">每日活跃打卡、Buddy 加油站、成长任务与福利积分总览。</div>
   </div>
-  <!-- 国际版每日活跃福利 -->
-  <section id="sectionIntlTasks" style="margin-bottom:24px">
+
+  <!-- Qoder 额度与福利视图：Qoder 没有签到/成长任务体系，「任务与福利」页在
+       Qoder 模式下改成为「额度与福利」——按账号展示套餐与加油包的剩余、已用
+       与到期。数据来自账号积分快照（与账号页「积分」列同一份），右上的
+       「刷新额度」走 POST /accounts/credits 从 Qoder 配额接口拉一次。
+       WorkBuddy 视图下由 .qoder-only 收起。 -->
+  <section id="sectionQoderQuota" class="qoder-only">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+      <div>
+        <h2 style="margin:0">Qoder 额度与福利</h2>
+        <div style="font-size:12px;color:var(--dim)">各账号的套餐与加油包额度（剩余 / 已用 / 到期）。数字是最近一次「刷新额度」的快照。</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="primary" id="btnQoderQuotaRefresh" onclick="loadQoderQuota(true, this)">刷新额度</button>
+      </div>
+    </div>
+    <div class="cards" style="margin-bottom:16px;grid-template-columns:repeat(auto-fit,minmax(185px,1fr))">
+      <div class="card accent2">
+        <div class="k">账号</div>
+        <div class="v" id="qoderQuotaAccounts" style="font-size:20px">-</div>
+      </div>
+      <div class="card accent">
+        <div class="k">总剩余额度</div>
+        <div class="v" id="qoderQuotaRemain" style="color:var(--accent)">-</div>
+      </div>
+      <div class="card">
+        <div class="k">总已用额度</div>
+        <div class="v" id="qoderQuotaUsed">-</div>
+      </div>
+      <div class="card warn">
+        <div class="k">最近到期</div>
+        <div class="v" id="qoderQuotaExpiry" style="color:var(--warn);font-size:17px">-</div>
+      </div>
+    </div>
+    <div id="qoderQuotaList" class="table-wrap"></div>
+  </section>
+
+  <!-- 国际版每日活跃福利（WorkBuddy 专属区块） -->
+  <section id="sectionIntlTasks" class="wb-only" style="margin-bottom:24px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
       <div>
         <h2 style="margin:0">国际版每日活跃福利</h2>
@@ -3596,8 +3690,8 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     </div>
   </section>
 
-  <!-- 国内版专属成长任务与日常福利 -->
-  <section id="sectionGrowthTasks">
+  <!-- 国内版专属成长任务与日常福利（WorkBuddy 专属区块） -->
+  <section id="sectionGrowthTasks" class="wb-only">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
       <div>
         <h2 style="margin:0">国内版任务与福利</h2>
@@ -3893,7 +3987,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
       <summary><h2>模型性能分位</h2><span class="fbadge" id="foldPerfBadge">—</span><span class="chev">▶</span></summary>
       <div class="fbody" id="foldPerf"><div class="empty">加载中…</div></div>
     </details>
-    <details class="fold" id="foldGrantsBox">
+    <details class="fold wb-only" id="foldGrantsBox">
       <summary><h2>积分获取历史</h2><span class="chev">▶</span></summary>
       <div class="fbody">
       <!-- 原版「积分获取历史」区块：id、整行表头与说明与旧版逐字一致
@@ -4112,7 +4206,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
               <td class="limit-realm-col" style="display:none" data-label="国际版"><input id="limitIntlModelDailyToken" class="limit-input" type="number" min="0" step="1000000" placeholder="继承全局"></td>
               <td class="limit-realm-col" style="display:none" data-label="国内版"><input id="limitCnModelDailyToken" class="limit-input" type="number" min="0" step="1000000" placeholder="继承全局"></td>
             </tr>
-            <tr>
+            <tr class="wb-only">
               <td class="limit-name">
                 <div style="font-weight:600;color:var(--fg)">临期积分优先 <em id="setExpiringWindowState"></em></div>
                 <div style="font-size:12px;color:var(--dim);margin-top:2px">
@@ -4186,7 +4280,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
         </div>
       </section>
 
-      <section>
+      <section class="wb-only">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
           <div>
             <h2 style="margin:0">自动切换出站身份 <em id="setAutoSwitchState"></em></h2>
@@ -4207,7 +4301,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
         </div>
       </section>
 
-      <section>
+      <section class="wb-only">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
           <div>
             <h2 style="margin:0">国际版每日活跃打卡 <em id="setDailyChatWebState"></em></h2>
@@ -4590,6 +4684,56 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
   </div>
 </div>
 
+<!-- Qoder 登录：国际版走浏览器设备码（轮询自动完成），国内版只有 PAT 通道；
+     国际版也留 PAT 作为兜底。两段都在这个弹窗里，入口由工具栏的「添加」按当前
+     提供商分发（openLoginModal）。 -->
+<div class="modal-mask" id="qoderLoginModal">
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-hd">
+      <h2>添加 Qoder 账号</h2>
+      <button class="modal-x" onclick="closeQoderLogin()" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-bd">
+      <div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:16px">
+        <div style="font-size:12px;color:var(--dim);margin-bottom:8px;font-weight:600">选择要登录的版本：</div>
+        <div style="display:flex;gap:18px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="radio" name="qoderLoginRealm" value="cn" id="qoderRadioCn" onchange="switchQoderLoginRealm(this.value)">
+            <span><b>国内版</b> (qoder.com.cn)</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="radio" name="qoderLoginRealm" value="intl" id="qoderRadioIntl" onchange="switchQoderLoginRealm(this.value)">
+            <span><b>国际版</b> (qoder.com)</span>
+          </label>
+        </div>
+      </div>
+      <div id="qoderDeviceSection">
+        <div class="step" id="qoderStep1"><div class="n">1</div><div class="t" id="qoderStep1Text">正在申请设备码登录…</div></div>
+        <div class="step" id="qoderStep2"><div class="n">2</div><div class="t">在浏览器里打开下方链接并完成登录授权</div></div>
+        <div id="qoderLoginLinkBox"></div>
+        <div class="step" id="qoderStep3"><div class="n">3</div><div class="t">等待授权完成（自动检测）</div></div>
+        <p class="hint" id="qoderLoginStatus" style="font-weight:500"></p>
+      </div>
+      <div id="qoderPatSection" style="border-top:1px dashed var(--line);padding-top:14px;margin-top:8px">
+        <div style="font-size:12px;color:var(--dim);margin-bottom:8px;font-weight:600">或使用 PAT（个人访问令牌）登录</div>
+        <input id="qoderPatInput" type="password" placeholder="粘贴 Qoder PAT（在 qoder.com 账号设置的 Integrations 页面生成）"
+               autocomplete="off" onkeydown="if(event.key==='Enter') submitQoderPat()"
+               style="width:100%;background:var(--panel2);border:1px solid var(--line);
+                      border-radius:8px;padding:9px 12px;color:var(--fg);font:inherit">
+        <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+          <button class="sec" id="btnQoderPatLogin" onclick="submitQoderPat(this)">用 PAT 登录</button>
+          <span class="hint" style="margin:0">PAT 在服务端兑换成登录态后入池，长期有效。</span>
+        </div>
+        <p class="hint" id="qoderPatStatus" style="font-weight:500"></p>
+      </div>
+    </div>
+    <div class="modal-ft">
+      <button class="sec" onclick="closeQoderLogin()">关闭</button>
+      <button id="btnQoderRestart" onclick="restartQoderLogin()">重新生成链接</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-mask" id="desktopScanModal">
   <div class="modal" role="dialog" aria-modal="true" style="width:min(720px,100%)">
     <div class="modal-hd">
@@ -4791,6 +4935,8 @@ function closeLogin(){
 }
 
 function openLoginModal(){
+  // Qoder 走自己的弹窗（国际版设备码 + 两区 PAT）；WorkBuddy 保持原 OAuth 弹窗。
+  if(currentProvider() === 'qoder'){ openQoderLogin(); return; }
   openLogin();
   const isCn = (window.VIEW_REALM === "cn");
   const rCn = document.getElementById("radioCn");
@@ -4881,13 +5027,272 @@ async function pollLogin(){
 }
 
 
+/* ---- Qoder 登录（国际版浏览器设备码 + 两区 PAT） ----
+   故意不与上面的 WorkBuddy 登录共用 loginState/loginTimer：两个弹窗可能先后
+   打开，共用一份状态会让前一个轮询拿错 state 去查。 */
+let qoderLoginState = null, qoderLoginTimer = null;
+
+function openQoderLogin(){
+  const m = document.getElementById("qoderLoginModal");
+  if(m) m.classList.add("show");
+  const isCn = (window.VIEW_REALM === "cn");
+  const rCn = document.getElementById("qoderRadioCn");
+  const rIntl = document.getElementById("qoderRadioIntl");
+  if(rCn) rCn.checked = isCn;
+  if(rIntl) rIntl.checked = !isCn;
+  const pat = document.getElementById("qoderPatInput");
+  if(pat) pat.value = "";
+  setQoderPatStatus("");
+  restartQoderLogin();
+}
+
+function closeQoderLogin(){
+  const m = document.getElementById("qoderLoginModal");
+  if(m) m.classList.remove("show");
+  if(qoderLoginTimer){ clearInterval(qoderLoginTimer); qoderLoginTimer = null; }
+  if(qoderLoginState){
+    postJSON("/accounts/login/cancel", {state: qoderLoginState}).catch(()=>{});
+    qoderLoginState = null;
+  }
+}
+
+function switchQoderLoginRealm(){
+  restartQoderLogin();
+}
+
+function qoderLoginRealm(){
+  const checked = document.querySelector('input[name="qoderLoginRealm"]:checked');
+  return checked ? checked.value : (window.VIEW_REALM === "cn" ? "cn" : "intl");
+}
+
+function setQoderPatStatus(text, kind){
+  const el = document.getElementById("qoderPatStatus");
+  if(!el) return;
+  el.textContent = text || "";
+  el.style.color = kind === "ok" ? "var(--accent2)" : (kind === "bad" ? "var(--bad)" : (kind === "warn" ? "var(--warn)" : "var(--dim)"));
+}
+
+async function restartQoderLogin(){
+  const realm = qoderLoginRealm();
+  if(qoderLoginTimer){ clearInterval(qoderLoginTimer); qoderLoginTimer = null; }
+  if(qoderLoginState){
+    postJSON("/accounts/login/cancel", {state: qoderLoginState}).catch(()=>{});
+    qoderLoginState = null;
+  }
+  const dev = document.getElementById("qoderDeviceSection");
+  const linkBox = document.getElementById("qoderLoginLinkBox");
+  const statusBox = document.getElementById("qoderLoginStatus");
+  const restartBtn = document.getElementById("btnQoderRestart");
+  if(linkBox) linkBox.innerHTML = "";
+  if(statusBox) statusBox.textContent = "";
+  if(realm === "cn"){
+    // 国内版没有设备码通道，收起整段步骤，引导用 PAT。
+    if(dev) dev.style.display = "none";
+    if(restartBtn) restartBtn.style.display = "none";
+    setQoderPatStatus("国内版（qoder.com.cn）请使用 PAT 登录。", "warn");
+    return;
+  }
+  if(dev) dev.style.display = "block";
+  if(restartBtn) restartBtn.style.display = "";
+  const s1 = document.getElementById("qoderStep1");
+  const s2 = document.getElementById("qoderStep2");
+  const s3 = document.getElementById("qoderStep3");
+  if(s1) s1.className = "step active";
+  if(s2) s2.className = "step";
+  if(s3) s3.className = "step";
+  const s1Text = document.getElementById("qoderStep1Text");
+  if(s1Text) s1Text.textContent = "正在向 qoder.com (国际版) 申请设备码...";
+  try{
+    const r = await postJSON("/accounts/login/start", {provider: "qoder", realm: "intl", platform: "CLI"});
+    qoderLoginState = r.state;
+    if(s1) s1.className = "step done";
+    if(s2) s2.className = "step active";
+    if(linkBox) linkBox.innerHTML =
+      '<a class="login-link" id="qoderLoginLink" href="' + esc(r.authUrl) + '" target="_blank" rel="noopener">' + esc(r.authUrl) + '</a>'
+      + '<button class="sec mini" onclick="copyQoderLoginLink()">复制登录链接</button>'
+      + '<div class="hint">在浏览器里打开链接并用 Qoder 账号登录；授权完成后本窗口自动检测并完成入池。</div>';
+    pollQoderLogin();
+    qoderLoginTimer = setInterval(pollQoderLogin, 2500);
+  }catch(e){
+    if(statusBox) statusBox.textContent = "发起失败: " + e.message;
+    if(s1) s1.className = "step";
+  }
+}
+
+async function copyQoderLoginLink(){
+  const link = document.getElementById("qoderLoginLink");
+  if(!link) return;
+  try{
+    await writeClipboard(link.getAttribute("href"));
+    toast('已复制到剪贴板', 'ok');
+  }catch(e){
+    toast('复制失败: ' + e.message, 'bad');
+  }
+}
+
+async function pollQoderLogin(){
+  if(!qoderLoginState) return;
+  try{
+    const r = await getJSON("/accounts/login/poll?state=" + encodeURIComponent(qoderLoginState));
+    const s3 = document.getElementById("qoderStep3");
+    const statusBox = document.getElementById("qoderLoginStatus");
+    if(s3) s3.className = "step active";
+    if(statusBox) statusBox.textContent = r.message || r.status;
+    if(r.status === "ok"){
+      if(s3) s3.className = "step done";
+      const who = (r.account && (r.account.nickname || r.account.uid)) || "";
+      if(statusBox) statusBox.textContent = "登录成功：" + who + " 已加入账号池";
+      if(qoderLoginTimer){ clearInterval(qoderLoginTimer); qoderLoginTimer = null; }
+      qoderLoginState = null;
+      await loadAccounts();
+      setTimeout(closeQoderLogin, 1200);
+    }else if(r.status === "error" || r.status === "expired" || r.status === "unknown"){
+      if(qoderLoginTimer){ clearInterval(qoderLoginTimer); qoderLoginTimer = null; }
+    }
+  }catch(e){}
+}
+
+async function submitQoderPat(btn){
+  const input = document.getElementById("qoderPatInput");
+  const pat = ((input && input.value) || "").trim();
+  if(!pat){ setQoderPatStatus("请先粘贴 PAT。", "warn"); return; }
+  const realm = qoderLoginRealm();
+  if(btn){ btn.disabled = true; btn.textContent = "兑换中..."; }
+  setQoderPatStatus("正在用 PAT 兑换登录态…");
+  try{
+    const r = await postJSON("/accounts/login/pat", {pat: pat, realm: realm});
+    if(r && r.ok){
+      const who = (r.account && (r.account.nickname || r.account.uid || "")) || "";
+      setQoderPatStatus("登录成功：" + who + " 已加入账号池", "ok");
+      if(input) input.value = "";
+      toast('Qoder 账号已添加', 'ok');
+      await loadAccounts();
+      await refresh();
+      setTimeout(closeQoderLogin, 1200);
+    }else{
+      setQoderPatStatus("登录失败: " + ((r && r.error) || "未知错误"), "bad");
+    }
+  }catch(e){
+    setQoderPatStatus("请求失败: " + e.message, "bad");
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = "用 PAT 登录"; }
+  }
+}
+
+
 window.ACTIVE_GATEWAY_REALM = "intl";
 window.VIEW_REALM = "intl";
 window.REALM_FILTER = "all";
 window.MODELS_DATA = [];
 window.ACCOUNTS = [];
+// 当前看板提供商（workbuddy|qoder）。头部切换器改的是服务端持久化的值
+// （POST /realm），面板每个按提供商取数的请求都显式带 ?provider= —— 服务端只认
+// 显式提示（见 wb_proxy._request_provider），所以看板停在 Qoder 页时，普通
+// WorkBuddy 客户端流量一点不受影响。
+window.PROVIDER = "workbuddy";
+window.PROVIDER_REALMS = {workbuddy: "intl", qoder: "intl"};
+
+function currentProvider(){
+  return window.PROVIDER === "qoder" ? "qoder" : "workbuddy";
+}
+function providerName(p){
+  return (p || currentProvider()) === "qoder" ? "Qoder" : "WorkBuddy";
+}
+// 给 URL 追加 provider=：面板按提供商取数的请求全走它（不带 ? 时自己补）。
+function withProvider(url){
+  const u = String(url || "");
+  return u + (u.indexOf("?") === -1 ? "?" : "&")
+         + "provider=" + encodeURIComponent(currentProvider());
+}
+
+const GATEWAY_TITLE_WB = "网关与账号";
+const GATEWAY_TITLE_QODER = "Qoder 网关与账号";
+const GATEWAY_DESC_WB = "管理账号池与代理出口，查看当日调用量、估算花费、成功率、最近请求与网关模型清单。";
+const GATEWAY_DESC_QODER = "管理 Qoder 账号池与代理出口，查看当日调用量、成功率、最近请求与网关模型清单。";
+// 「任务与福利」页的副标题与标题之外的说明；Qoder 模式下整页内容换成额度视图，
+// 副标题必须跟着换，否则页面在说一件它没做的事。
+const TASKS_DESC_WB = "每日活跃打卡、Buddy 加油站、成长任务与福利积分总览。";
+const TASKS_DESC_QODER = "Qoder 账号的套餐与加油包额度总览：剩余、已用与到期。";
+// 两个版本卡片上展示的上游主机名，跟着提供商换。
+const PROVIDER_HOSTS = {
+  workbuddy: {intl: "www.workbuddy.ai", cn: "copilot.tencent.com"},
+  qoder: {intl: "qoder.com", cn: "qoder.com.cn"},
+};
+
+// 提供商相关的界面同步（头部切换器、品牌名、页头文案、版本卡片主机名、
+// WorkBuddy 专属控件显隐）。全部幂等，随时从 updateUI() 调用；带提供商缓存，
+// 只有切换提供商时才真的重写这些文案（updateUI 每 5 秒跑一次，避免无谓的
+// textContent 重写——英文界面下每次重写都会触发 i18n 观察者再翻一遍）。
+function syncProviderChrome(force){
+  const p = currentProvider();
+  if(!force && window.__PROVIDER_CHROME__ === p) return;
+  window.__PROVIDER_CHROME__ = p;
+  document.body.classList.toggle("provider-qoder", p === "qoder");
+  const brand = document.getElementById("brandTitle");
+  if(brand) brand.textContent = providerName(p) + " 网关";
+  const gt = document.getElementById("gatewayPageTitle");
+  if(gt) gt.textContent = p === "qoder" ? GATEWAY_TITLE_QODER : GATEWAY_TITLE_WB;
+  const gd = document.getElementById("gatewayPageDesc");
+  if(gd) gd.textContent = p === "qoder" ? GATEWAY_DESC_QODER : GATEWAY_DESC_WB;
+  const td = document.getElementById("pageTasksDesc");
+  if(td) td.textContent = p === "qoder" ? TASKS_DESC_QODER : TASKS_DESC_WB;
+  const btnWb = document.getElementById("providerBtnWorkbuddy");
+  if(btnWb){
+    btnWb.classList.toggle("active", p !== "qoder");
+    btnWb.setAttribute("aria-pressed", p !== "qoder" ? "true" : "false");
+  }
+  const btnQ = document.getElementById("providerBtnQoder");
+  if(btnQ){
+    btnQ.classList.toggle("active", p === "qoder");
+    btnQ.setAttribute("aria-pressed", p === "qoder" ? "true" : "false");
+  }
+  const hosts = PROVIDER_HOSTS[p] || PROVIDER_HOSTS.workbuddy;
+  const hIntl = document.getElementById("tabIntlHost");
+  if(hIntl) hIntl.textContent = hosts.intl;
+  const hCn = document.getElementById("tabCnHost");
+  if(hCn) hCn.textContent = hosts.cn;
+}
+
+// 切换提供商：服务端把 realm 切到该提供商记着的出口，视图跟随并重拉全部数据。
+async function switchProvider(p){
+  if(p === currentProvider()){ syncProviderChrome(); return; }
+  try{
+    const res = await postJSON("/realm", {provider: p});
+    window.PROVIDER = (res.provider === "qoder" || res.provider === "workbuddy") ? res.provider : p;
+    if(res.realms && typeof res.realms === "object") window.PROVIDER_REALMS = res.realms;
+    if(res.current) window.ACTIVE_GATEWAY_REALM = res.current;
+    window.VIEW_REALM = window.ACTIVE_GATEWAY_REALM;
+    RECENT_PAGE = 1;
+    // 先把上一提供商的账号行清掉再重载：返回前这段间隙里，Qoder 页上不该还挂着
+    // WorkBuddy 的账号（重载失败时它们会一直挂着）。
+    window.ACCOUNTS = [];
+    renderAccounts();
+    // 用量视图的缓存与指纹全部按提供商隔离：切过来先清掉，避免第一屏还挂着
+    // 上一提供商的数字（要等下一轮轮询才纠正，面板上很显眼）。
+    MATRIX_MODELS = new Set();
+    matrixModelsAt = 0;
+    cachedMatrixData = null;
+    LAST_GRANTS_DATA = null;
+    lastRemainingFp = null;
+    lastRemainingData = null;
+    syncProviderChrome();
+    window.updateUI();
+    await Promise.all([loadAccounts(), loadModels(), loadSchedulerStatus(), refresh()]);
+    // 当前页签的内容跟着换提供商重拉一遍：这些页面只在切页签或轮询时取数，
+    // 光等下一轮会停在旧提供商的数字上。
+    if(currentMainTab === 'analytics'){ loadAnalytics(); loadAnalyticsMatrix(); }
+    if(currentMainTab === 'tasks' && currentProvider() === 'qoder'){ loadQoderQuota(); }
+    if(currentMainTab === 'agents'){ loadAgents(); }
+    toast('已切换到 ' + providerName() + ' · ' + (window.VIEW_REALM === "cn" ? "国内版" : "国际版") + '出口', 'ok');
+  }catch(e){
+    alert('切换提供商失败: ' + e.message);
+  }
+}
 
 function updateUI(){
+  // 提供商相关的界面（头部切换器、品牌名、页头文案、版本卡片主机名、
+  // WorkBuddy 专属控件显隐）跟着每次 UI 刷新一起同步。
+  syncProviderChrome();
   const isIntlView = (window.VIEW_REALM === "intl");
   const tIntl = document.getElementById("tabIntl");
   const tCn = document.getElementById("tabCn");
@@ -4913,8 +5318,10 @@ function updateUI(){
 
   // 区块标题上的出口标签：这几个区块的内容都按当前视图区域取（账号、禁用汇总、
   // 最近请求、模型清单），标出来免得把国际版的数字看成全局的。用 <em> 承载：
-  // 侧栏导航由 h2 生成时会剥掉 <em>，所以标签不会串进导航项。
-  const sectionRealm = isIntlView ? "（国际版）" : "（国内版）";
+  // 侧栏导航由 h2 生成时会剥掉 <em>，所以标签不会串进导航项。Qoder 视图再带上
+  // 提供商前缀，和 WorkBuddy 的同名区块一眼区分。
+  const sectionRealm = (currentProvider() === 'qoder' ? "（Qoder · " : "（")
+                     + (isIntlView ? "国际版" : "国内版") + "）";
   ["disabledRealmTag", "recentRealmTag", "modelsRealmTag"].forEach(function(id){
     const el = document.getElementById(id);
     if(el) el.textContent = sectionRealm;
@@ -5055,9 +5462,13 @@ async function refreshActiveRealm(){
   // VIEW_REALM: the view is the user's choice, and an account action taken from
   // one realm's view must not throw them into the other one. Boot-time view
   // selection (including the ?view= parameter) lives in initRealm().
+  // 同一个响应里也带着提供商（provider/providers/realms），一起收下：看板
+  // 启动与账号操作后都靠它对齐服务端记着的值。
   try {
     const r = await getJSON("/realm");
     if(r && r.current) window.ACTIVE_GATEWAY_REALM = r.current;
+    if(r && r.realms && typeof r.realms === "object") window.PROVIDER_REALMS = r.realms;
+    if(r && (r.provider === "qoder" || r.provider === "workbuddy")) window.PROVIDER = r.provider;
   } catch(e){}
 }
 
@@ -5070,22 +5481,27 @@ async function initRealm(){
   window.VIEW_REALM = window.ACTIVE_GATEWAY_REALM;
   const viewFromUrl = new URLSearchParams(window.location.search).get('view');
   if(viewFromUrl && ['intl', 'cn'].includes(viewFromUrl)) window.VIEW_REALM = viewFromUrl;
+  // ?provider= 只在本次会话里钉住看板视图（书签/对比用），**不**改服务端状态；
+  // 刷新后仍然跟服务端记着的值走。
+  const provFromUrl = new URLSearchParams(window.location.search).get('provider');
+  if(provFromUrl === 'qoder' || provFromUrl === 'workbuddy') window.PROVIDER = provFromUrl;
   const limitFromUrl = new URLSearchParams(window.location.search).get('limit');
   if(limitFromUrl && [10, 20, 50, 100].includes(parseInt(limitFromUrl, 10))) RECENT_LIMIT = parseInt(limitFromUrl, 10);
   window.updateUI();
 }
 
 async function refreshModelCatalog(btn){
-  // 手动刷新模型清单：强制走一次上游 /v3/config（服务端执行，绕过 300s 缓存），
-  // 只刷当前视图版本——这张表显示的是哪个版本，刷新按钮就只拉哪个版本，绝
-  // 不跨区（服务端会挑该版本自己的账号发请求）。完成后立即重载表格。
+  // 手动刷新模型清单：强制走一次上游（服务端执行，绕过 300s 缓存），只刷当前
+  // 视图版本——这张表显示的是哪个版本，刷新按钮就只拉哪个版本，绝不跨区
+  // （服务端会挑该版本自己的账号发请求）。Qoder 由面板显式点名 provider。
   const realm = window.VIEW_REALM === 'cn' ? 'cn' : 'intl';
-  const label = realm === 'cn' ? '国内版' : '国际版';
+  const provider = currentProvider();
+  const label = (provider === 'qoder' ? 'Qoder ' : '') + (realm === 'cn' ? '国内版' : '国际版');
   if(btn) btn.disabled = true;
   const prevText = btn ? btn.textContent : '';
   if(btn) btn.textContent = '刷新中...';
   try{
-    const r = await postJSON('/catalog/refresh', {realm: realm});
+    const r = await postJSON('/catalog/refresh', {realm: realm, provider: provider});
     if(r && r.ok){
       toast(label + '模型清单：' + (r.msg || '已更新'), 'ok');
       await loadModels();
@@ -5104,7 +5520,7 @@ async function refreshModelCatalog(btn){
 
 async function loadModels(){
   try{
-    const r = await getJSON('/v1/models?realm=' + encodeURIComponent(window.VIEW_REALM));
+    const r = await getJSON(withProvider('/v1/models?realm=' + encodeURIComponent(window.VIEW_REALM)));
     MODELS_DATA = r.data || [];
     renderModelsSourceLine(r.catalog || null);
     renderAvailableModels();
@@ -5140,8 +5556,11 @@ function fmtCatalogStamp(sec){
 function renderModelsSourceLine(meta){
   const el = document.getElementById('modelsSourceLine');
   if(!el) return;
-  const tip = '清单构建顺序：先请求上游 API（/v3/config，用当前视图版本的账号）→ 失败则读取本机桌面客户端缓存文件 → 都拿不到才用内置快照。'
-    + '清单在 5 分钟缓存期内复用，过期自动重取；网关后台每天也会兜底获取一次；点「刷新模型清单」可立即从上游更新。';
+  const tip = (currentProvider() === 'qoder')
+    ? '清单构建顺序：先请求上游 API（Qoder 模型清单接口，用当前视图版本的账号）→ 失败则用内置快照。'
+      + '清单在 5 分钟缓存期内复用，过期自动重取；网关后台每天也会兜底获取一次；点「刷新模型清单」可立即从上游更新。'
+    : '清单构建顺序：先请求上游 API（/v3/config，用当前视图版本的账号）→ 失败则读取本机桌面客户端缓存文件 → 都拿不到才用内置快照。'
+      + '清单在 5 分钟缓存期内复用，过期自动重取；网关后台每天也会兜底获取一次；点「刷新模型清单」可立即从上游更新。';
   if(!meta || !meta.source){
     el.style.cssText = CATALOG_BANNER_BASE + 'background:transparent;border:1px dashed var(--line);color:var(--dim)';
     el.title = tip;
@@ -5456,6 +5875,148 @@ async function loadGrowthTasks(){
   }catch(e){
     console.error('loadGrowthTasks error:', e);
   }
+}
+
+/* Qoder 额度与福利视图（「任务与福利」页在 Qoder 模式下的内容）。
+ *
+ * Qoder 没有 WorkBuddy 那套签到/成长任务，这个视图改按账号展示套餐与加油包
+ * 的额度：数据同账号页的「积分」列（账号积分快照 /accounts 的 credits 字段，
+ * 由 wb_qoder.credits_from_quota 从配额接口塑形），「刷新额度」走
+ * POST /accounts/credits（provider=qoder）从 Qoder 配额接口重拉一次。
+ * 快照为空时引导先刷新，而不是画一堆 0。 */
+async function loadQoderQuota(force, btn){
+  if(btn){ btn.disabled = true; btn.textContent = '刷新中...'; }
+  try{
+    if(force){
+      // 只刷 Qoder：不带 realm 时端点覆盖两个版本的全部 Qoder 账号。
+      await postJSON('/accounts/credits', {provider: 'qoder'});
+    }
+    const data = await getJSON('/accounts?realm=all&provider=qoder');
+    renderQoderQuota(data.accounts || []);
+    if(force) toast('已刷新 Qoder 账号额度', 'ok');
+  }catch(e){
+    if(!isAuthError(e)) toast('Qoder 额度加载失败: ' + e.message, 'bad');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '刷新额度'; }
+  }
+}
+
+// 一个额度桶的单元格：剩余 / 总量 + 一条占比条；悬停给出已用与到期。
+// 缺桶（Qoder 常见：没有加油包/企业包）显示 —，不画 0/0 误导。
+function qoderQuotaCell(pkg){
+  if(!pkg) return '<span style="color:var(--dim)">—</span>';
+  const remain = Number(pkg.remain) || 0;
+  const size = Number(pkg.size) || 0;
+  const used = Number(pkg.used) || 0;
+  const pct = size > 0 ? Math.min(100, Math.max(0, remain / size * 100)) : 0;
+  const tone = pct <= 10 ? 'var(--bad)' : (pct <= 30 ? 'var(--warn)' : 'var(--ok)');
+  const tip = '剩余 ' + fmt(remain) + ' / 总量 ' + fmt(size) + ' · 已用 ' + fmt(used)
+    + (pkg.cycle_end_time ? ' · 到期 ' + pkg.cycle_end_time : '')
+    + (pkg.days_left != null ? (pkg.days_left <= 0 ? ' · 已到期' : ' · 剩 ' + pkg.days_left + ' 天') : '');
+  return '<div style="display:flex;align-items:center;gap:8px;justify-content:flex-end" title="' + esc(tip) + '">'
+    + '<span><b>' + fmt(remain) + '</b> <span style="color:var(--dim)">/ ' + fmt(size) + '</span></span>'
+    + '<span style="display:inline-block;width:64px;height:6px;border-radius:3px;background:var(--panel2);overflow:hidden;border:1px solid var(--line)">'
+    + '<span style="display:block;height:100%;width:' + pct.toFixed(1) + '%;background:' + tone + '"></span></span>'
+    + '</div>';
+}
+
+function qoderQuotaRow(a){
+  const c = a.credits || null;
+  const pkgs = (c && c.packages) || [];
+  const pick = code => pkgs.find(p => p.package_code === code) || null;
+  // 最近到期：优先展示「还有剩余、到期会作废」的包里最早的那个；全都不带
+  // 到期时间就画「不过期」。
+  let expiry = '—';
+  const dated = pkgs.filter(p => !p.no_expiry && (p.cycle_end_time || p.expire_time));
+  if(!pkgs.length){
+    expiry = '<span style="color:var(--dim)">—</span>';
+  } else if(!dated.length){
+    expiry = '不过期';
+  } else {
+    dated.sort((x, y) => String(x.cycle_end_time || x.expire_time)
+      .localeCompare(String(y.cycle_end_time || y.expire_time)));
+    const first = dated[0];
+    const days = first.days_left;
+    expiry = esc(String(first.cycle_end_time || first.expire_time).slice(5, 16))
+      + (days != null ? ' <span style="color:var(--dim)">('
+          + (days <= 0 ? '已到期' : '剩 ' + days + ' 天') + ')</span>' : '');
+  }
+  const snap = (c && c.updated_iso) ? String(c.updated_iso).slice(5, 16) : '—';
+  return '<tr>'
+    + '<td style="text-align:center"><span class="badge' + (a.realm === 'cn' ? ' warn' : '') + '">'
+    + (a.realm === 'cn' ? '国内版' : '国际版') + '</span></td>'
+    + '<td title="' + esc(a.uid || '') + '">' + esc(a.nickname || creditAccountLabel(a.uid))
+    + (a.enabled === false ? ' <span class="badge off">已停用</span>' : '') + '</td>'
+    + '<td style="text-align:right">' + qoderQuotaCell(pick('user-quota')) + '</td>'
+    + '<td style="text-align:right">' + qoderQuotaCell(pick('add-on-quota')) + '</td>'
+    + '<td style="text-align:right">' + qoderQuotaCell(pick('org-resource-package')) + '</td>'
+    + '<td style="text-align:center;font-size:12px">' + expiry + '</td>'
+    + '<td style="text-align:center;font-size:11px;color:var(--dim)" title="最近一次刷新额度的时刻">' + esc(snap) + '</td>'
+    + '<td style="text-align:center"><button class="sec mini" onclick="openCreditsDetail(\'' + esc(a.uid || '') + '\')">明细</button></td>'
+    + '</tr>';
+}
+
+function renderQoderQuota(accounts){
+  const box = document.getElementById('qoderQuotaList');
+  if(!box) return;
+  let remain = 0, used = 0, withCredits = 0, enabled = 0;
+  let earliest = null;   // {when, days, nickname}
+  accounts.forEach(a => {
+    if(a.enabled !== false) enabled += 1;
+    const c = a.credits;
+    if(!c) return;
+    withCredits += 1;
+    remain += Number(c.remain) || 0;
+    used += Number(c.used) || 0;
+    (c.packages || []).forEach(p => {
+      if(p.no_expiry) return;
+      const when = p.cycle_end_time || p.expire_time;
+      if(!when) return;
+      const key = String(when);
+      if(!earliest || key < earliest.when){
+        earliest = {when: key, days: p.days_left, nickname: a.nickname || a.uid};
+      }
+    });
+  });
+  const elAcct = document.getElementById('qoderQuotaAccounts');
+  if(elAcct){
+    elAcct.textContent = accounts.length ? (accounts.length + ' 个账号') : '—';
+    elAcct.title = accounts.length ? ('启用 ' + enabled + ' / 共 ' + accounts.length) : '';
+  }
+  const elRemain = document.getElementById('qoderQuotaRemain');
+  if(elRemain) elRemain.textContent = withCredits ? fmt(remain) : '—';
+  const elUsed = document.getElementById('qoderQuotaUsed');
+  if(elUsed) elUsed.textContent = withCredits ? fmt(used) : '—';
+  const elExp = document.getElementById('qoderQuotaExpiry');
+  if(elExp){
+    elExp.textContent = earliest
+      ? earliest.when.slice(5, 16) + (earliest.days != null
+          ? ' (' + (earliest.days <= 0 ? '已到期' : '剩 ' + earliest.days + ' 天') + ')' : '')
+      : (withCredits ? '不过期' : '—');
+    if(elExp && earliest) elExp.title = '最早到期的额度包来自 ' + (earliest.nickname || '');
+  }
+  if(!accounts.length){
+    box.innerHTML = '<div class="empty">还没有 Qoder 账号：先在「网关与账号」页添加一个 Qoder 账号（设备码 / PAT）。</div>';
+    return;
+  }
+  box.innerHTML = '<div style="overflow-x:auto"><table class="data-cards" id="qoderQuotaTable">'
+    + '<thead><tr>'
+    + '<th style="text-align:center;width:76px">版本</th>'
+    + '<th style="text-align:left">账号</th>'
+    + '<th style="text-align:right;min-width:170px">个人套餐</th>'
+    + '<th style="text-align:right;min-width:170px">加油包</th>'
+    + '<th style="text-align:right;min-width:170px">企业资源包</th>'
+    + '<th style="text-align:center;min-width:110px">最近到期</th>'
+    + '<th style="text-align:center;min-width:80px">快照时间</th>'
+    + '<th style="text-align:center;width:90px">操作</th>'
+    + '</tr></thead><tbody>'
+    + accounts.map(qoderQuotaRow).join('')
+    + '</tbody></table></div>'
+    + (withCredits < accounts.length
+       ? '<div style="font-size:12px;color:var(--dim);margin-top:10px">'
+         + (accounts.length - withCredits) + ' 个账号还没有额度快照，点右上角「刷新额度」从 Qoder 配额接口拉取。</div>'
+       : '');
+  applyTableSort('qoderQuotaTable');
 }
 
 async function runGrowthTasks(btn){
@@ -6482,6 +7043,11 @@ function activityStatusOf(a){
 }
 
 function activityStatusChip(a){
+  // Qoder 没有签到/活跃这套概念（那是 WorkBuddy 的福利体系），显示占位符，
+  // 别把一个空的「无记录」当成真实状态画出来。
+  if(a && a.provider === 'qoder'){
+    return '<span style="color:var(--dim)" title="Qoder 暂无签到与每日活跃体系">—</span>';
+  }
   const status = activityStatusOf(a);
   const uidAttr = esc(String((a && a.uid) || '').replace(/[^\w.@-]/g, ''));
   if(!status.isCn){
@@ -6526,6 +7092,12 @@ function activityStatusChip(a){
 // 今天的事件，按 uid 建表。rows 是最新在前，所以第一次见到的就是最近一次。
 // 读不到历史只是没有状态可显示：绝不能让它把账号区一起带坏。
 async function loadActivityToday(){
+  // 签到/活跃是 WorkBuddy 专属数据：Qoder 视图不读它，账号行的「今日活动」
+  // 一列会显示占位符（见 activityStatusChip）。
+  if(currentProvider() === 'qoder'){
+    ACTIVITY_TODAY = {byUid: {}, error: '', loaded: true};
+    return;
+  }
   try{
     const payload = await getJSON('/activity/history?range=today&limit=200');
     const rows = (payload && Array.isArray(payload.rows)) ? payload.rows : [];
@@ -6780,17 +7352,20 @@ function accountRow(a){
     + '<div class="acct-actions-col">'
     +   '<div class="acct-actions-row">'
     +     '<button class="sec mini" onclick="toggleAccount(&quot;' + uidAttr + '&quot;,' + (!a.enabled) + ', this)">' + (a.enabled ? '停用' : '启用') + '</button>'
+    // Qoder 账号的「测试」发一条最小聊天请求（服务端按 provider 走 COSY）。
     +     '<button class="sec mini" onclick="testAccount(&quot;' + uidAttr + '&quot;, this)">测试</button>'
     +     '<button class="sec mini" onclick="refreshOne(&quot;' + uidAttr + '&quot;, this)">刷新凭证</button>'
     +     '<button class="sec mini" onclick="syncProfile(&quot;' + uidAttr + '&quot;, this)" title="从 Web 控制台同步最新昵称（改名后免重登）">同步昵称</button>'
     +   '</div>'
     +   '<div class="acct-actions-row">'
-    +     '<span class="id-btn-label">出站身份：</span>'
+    // 出站身份（WB/VSC/CLI）是 WorkBuddy 专属概念，Qoder 账号没有这东西。
+    +     (a.provider === 'qoder' ? '' :
+          '<span class="id-btn-label">出站身份：</span>'
     +     '<div class="id-btn-group" title="出站身份：WB = WorkBuddy 独立桌面客户端（默认），VSC = 官方 VSCode 插件，CLI = 官方 CodeBuddy CLI；三者对应不同的出站指纹与配额通道。">'
     +       '<button class="id-btn' + ((!a.product || a.product === 'workbuddy') ? ' active' : '') + '" onclick="setAccountProduct(&quot;' + uidAttr + '&quot;, &quot;workbuddy&quot;, this)">WB</button>'
     +       '<button class="id-btn' + (a.product === 'vscode' ? ' active' : '') + '" onclick="setAccountProduct(&quot;' + uidAttr + '&quot;, &quot;vscode&quot;, this)">VSC</button>'
     +       '<button class="id-btn' + (a.product === 'cli' ? ' active' : '') + '" onclick="setAccountProduct(&quot;' + uidAttr + '&quot;, &quot;cli&quot;, this)">CLI</button>'
-    +     '</div>'
+    +     '</div>')
     +     '<button class="sec mini" onclick="exportOne(&quot;' + uidAttr + '&quot;)">导出</button>'
     +     '<button class="danger mini" onclick="deleteAccount(&quot;' + uidAttr + '&quot;,&quot;' + nameAttr + '&quot;, this)">删除</button>'
     +   '</div>'
@@ -7127,7 +7702,7 @@ function renderAccounts(){
       +   '请先登录或导入一个 ' + viewName + ' 账号，之后相关请求都会走该账号'
       + '</div>'
       + '<button onclick="openLoginModal()" style="font-size:14px;padding:10px 22px">'
-      +   '登录新账号 (OAuth)'
+      +   (currentProvider() === 'qoder' ? '添加 Qoder 账号 (设备码 / PAT)' : '登录新账号 (OAuth)')
       + '</button>'
       + '</div>';
     return;
@@ -7153,8 +7728,8 @@ function renderAccounts(){
 async function loadAccounts(){
   try{
     const [acct, byAcct] = await Promise.all([
-      getJSON('/accounts?realm=all'),
-      getJSON('/usage/by-account', POLL_READ),
+      getJSON(withProvider('/accounts?realm=all')),
+      getJSON(withProvider('/usage/by-account'), POLL_READ),
       // 今日活动与账号列表并行取；它自己吞掉失败，读不到历史不该让账号区跟着坏。
       loadActivityToday(),
     ]);
@@ -7168,7 +7743,7 @@ async function loadAccounts(){
     if(LAST_CREDIT_DATA) renderCreditHistory();
     // Auto-fetch credits once if not present
     if(window.ACCOUNTS.length && window.ACCOUNTS.some(a => !a.credits)){
-      postJSON('/accounts/credits', {}).then(r => {
+      postJSON('/accounts/credits', {provider: currentProvider()}).then(r => {
         window.ACCOUNTS = r.accounts || ACCOUNTS;
         renderAccounts();
       }).catch(()=>{});
@@ -7179,9 +7754,9 @@ async function loadAccounts(){
 async function fetchCredits(btn){
   if(btn){ btn.disabled = true; btn.textContent = '刷新中...'; }
   const currentView = (window.VIEW_REALM || "intl");
-  const viewName = currentView === 'cn' ? '国内版' : '国际版';
+  const viewName = (currentProvider() === 'qoder' ? 'Qoder ' : '') + (currentView === 'cn' ? '国内版' : '国际版');
   try{
-    const r = await postJSON('/accounts/credits', {realm: currentView});
+    const r = await postJSON('/accounts/credits', {realm: currentView, provider: currentProvider()});
     await loadAccounts();
     refresh();
     const count = (r.results || []).length;
@@ -7337,8 +7912,20 @@ async function testAccount(uid, btn){
 async function refreshAccounts(btn){
   if(btn){ btn.disabled = true; btn.textContent = '刷新中...'; }
   try{
-    const r = await postJSON('/accounts/refresh', {});
-    const results = r.results || [];
+    // 逐个刷新当前提供商的账号：/accounts/refresh 按 uid 逐个走（服务端不带
+    // uid 时会对全部账号刷新，包括另一个提供商的——看板上这一下不该顺手去
+    // 刷新 Qoder 的凭证，反之亦然）。window.ACCOUNTS 已按 provider 过滤。
+    const uids = (window.ACCOUNTS || []).map(a => a.uid);
+    if(!uids.length){ toast('当前提供商还没有账号', 'warn'); return; }
+    const results = [];
+    for(const uid of uids){
+      try{
+        const r = await postJSON('/accounts/refresh', {uid: uid});
+        results.push(...(r.results || []));
+      }catch(e){
+        results.push({uid: uid, ok: false, error: e.message});
+      }
+    }
     const okc = results.filter(x=>x.ok).length;
     const bad = results.filter(x=>!x.ok);
     toast('刷新完成: ' + okc + '/' + results.length, bad.length ? 'warn' : 'ok');
@@ -7355,7 +7942,9 @@ async function refreshAccounts(btn){
 async function setAll(enable, btn){
   if(btn) btn.disabled = true;
   try{
-    await postJSON('/accounts/set-all', {enabled: enable});
+    // 只作用于当前提供商的账号（跨两个版本）；Qoder 页的「全部启用」不该顺手
+    // 打开 WorkBuddy 的账号，反之亦然。
+    await postJSON('/accounts/set-all', {enabled: enable, provider: currentProvider()});
     await loadAccounts();
     toast(enable ? '已全部启用所有账号' : '已全部停用所有账号', 'ok');
   }catch(e){
@@ -7383,7 +7972,7 @@ async function downloadExport(query, fallbackLabel){
   // Fetch through the authorised JSON API and save the blob client-side.
   // A plain <a href> would not carry the X-Panel-Token header, so a
   // password-only session would be rejected.
-  const r = await fetch('/accounts/export' + (query || ''), {cache:'no-store', headers: authHeaders()});
+  const r = await fetch('/accounts/export' + withProvider(query || ''), {cache:'no-store', headers: authHeaders()});
   if(r.status === 401 || r.status === 403){ panelSessionLost(); throw new Error('unauthorized'); }
   if(r.status === 404){
     let msg = '账号不存在';
@@ -7395,7 +7984,8 @@ async function downloadExport(query, fallbackLabel){
   let doc;
   try{ doc = JSON.parse(text); }catch(e){ throw new Error('返回内容不是 JSON'); }
   const stamp = new Date().toISOString().slice(0,19).replace(/[-:T]/g,'');
-  const name = 'workbuddy-accounts-' + (fallbackLabel || '') + stamp + '.json';
+  const prefix = currentProvider() === 'qoder' ? 'qoder' : 'workbuddy';
+  const name = prefix + '-accounts-' + (fallbackLabel || '') + stamp + '.json';
   const blob = new Blob([text], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -7476,8 +8066,10 @@ async function readImportFile(file){
     if(!rows.length) throw new Error('账号列表是空的');
     importRows = rows;
 
-    // Dry-run first so the user sees exactly what will happen.
-    const r = await postJSON('/accounts/import', {data: doc, dryRun: true});
+    // Dry-run first so the user sees exactly what will happen. provider 决定
+    // 「裸行」（没自报 provider 的行）按哪个提供商归一化；文档里自报 provider
+    // 的行以自报值为准。
+    const r = await postJSON('/accounts/import', {data: doc, dryRun: true, provider: currentProvider()});
     renderImportPreview(file.name, r.result || {}, rows.length);
   }catch(e){
     importRows = null;
@@ -7534,7 +8126,7 @@ async function commitImport(btn){
 
   if(btn){ btn.disabled = true; btn.textContent = '导入中...'; }
   try{
-    const r = await postJSON('/accounts/import', {data: importRows, overwrite: overwrite});
+    const r = await postJSON('/accounts/import', {data: importRows, overwrite: overwrite, provider: currentProvider()});
     const res = r.result || {};
     const n = (res.added || []).length + (res.updated || []).length;
     toast('导入完成：新增 ' + (res.added || []).length
@@ -7634,7 +8226,7 @@ async function reloadCreditsDetail(btn){
   if(loadingEl && (!contentEl || contentEl.style.display === 'none')) loadingEl.style.display = "block";
 
   try {
-    const res = await postJSON("/accounts/credits/detail", { uid: CURRENT_CREDIT_DETAIL_UID, refresh: true });
+    const res = await postJSON("/accounts/credits/detail", { uid: CURRENT_CREDIT_DETAIL_UID, refresh: true, provider: currentProvider() });
     if(res && res.ok && res.credits){
       CURRENT_CREDITS_DATA = res.credits;
       // 同步更新全局 window.ACCOUNTS 中的 credits
@@ -8249,11 +8841,11 @@ async function refreshInner(gen){
   let usage, recent, perf;
   try{
     [usage, recent, perf] = await Promise.all([
-      getJSON('/usage?realm=' + encodeURIComponent(window.VIEW_REALM), POLL_READ),
+      getJSON(withProvider('/usage?realm=' + encodeURIComponent(window.VIEW_REALM)), POLL_READ),
       // /usage/recent 不在这里改成可校验：它没有服务端缓存，每次新请求都进榜，
       // 响应体每轮都在变，服务端也就没有稳定的校验符可发——照旧整份重取。
-      getJSON('/usage/recent?limit=' + RECENT_LIMIT + '&page=' + RECENT_PAGE + '&realm=' + encodeURIComponent(window.VIEW_REALM)),
-      getJSON('/usage/perf?realm=' + encodeURIComponent(window.VIEW_REALM), POLL_READ),
+      getJSON(withProvider('/usage/recent?limit=' + RECENT_LIMIT + '&page=' + RECENT_PAGE + '&realm=' + encodeURIComponent(window.VIEW_REALM))),
+      getJSON(withProvider('/usage/perf?realm=' + encodeURIComponent(window.VIEW_REALM)), POLL_READ),
     ]);
     // 取数期间又发起了更新的一轮（例如刚切了区域），这批结果已经过期，
     // 直接扔掉，交给排队的那一轮渲染，免得把旧区域的数字画上去。
@@ -8303,9 +8895,10 @@ async function refreshInner(gen){
   const succStr = (perf.success_rate_pct != null ? pct(perf.success_rate_pct) : '100.0%');
   if(t.usd_cny) costUsdRate = Number(t.usd_cny) || costUsdRate;
 
-  // 这三张卡的数字都按当前视图区域取（/usage 等接口带 realm），标题带上区域，
-  // 免得把国际版的用量看成全局的。
-  const realmTag = '（' + (window.VIEW_REALM === 'cn' ? '国内版' : '国际版') + '）';
+  // 这三张卡的数字都按当前视图区域取（/usage 等接口带 realm + provider），标题
+  // 带上区域，免得把国际版的用量看成全局的。Qoder 视图再带提供商前缀。
+  const realmTag = '（' + (currentProvider() === 'qoder' ? 'Qoder · ' : '')
+                 + (window.VIEW_REALM === 'cn' ? '国内版' : '国际版') + '）';
   document.getElementById('cards').innerHTML =
     card('网关调用量' + realmTag, fmt(t.requests) + ' <span style="font-size:13px;font-weight:500;color:var(--dim);margin-left:4px">次</span>', '', '') +
     card('积分消耗' + realmTag, (t.credit != null ? Number(t.credit).toFixed(2) : '0.00') + ' <span style="font-size:13px;font-weight:500;color:var(--dim);margin-left:4px">积分</span>', ((PRICING_ON && t.cost_cny != null) ? ('估算价值: ' + fmtCostBoth(t.cost_cny, 12)) : ''), 'warn') +
@@ -11003,7 +11596,7 @@ function switchMainTab(tab){
     // 每个页面各自按自己的区块重建侧栏；非当前页的区块变化在切过来时补上
     if(on) initPageNav(page);
   });
-  if(tab === 'tasks'){ loadGrowthTasks(); }
+  if(tab === 'tasks'){ if(currentProvider() === 'qoder'){ loadQoderQuota(); } else { loadGrowthTasks(); } }
   if(tab === 'accounts' || (!_accountsSeparateTab && tab === 'gateway')){ loadActivityBoard(); }
   if(tab === 'analytics'){ loadAnalytics(); loadAnalyticsMatrix(); }
   if(tab === 'settings'){ loadSettings(); loadProxySlots(); }
@@ -11041,7 +11634,7 @@ async function loadAgents(showToast){
   const state = document.getElementById('agentDetectState');
   if(state){ state.textContent = '(检测中...)'; state.style.color = 'var(--dim)'; }
   try {
-    const data = await getJSON('/agents');
+    const data = await getJSON(withProvider('/agents'));
     AGENTS_DATA = data || {};
     AGENT_MODELS = AGENTS_DATA.models || [];
     AGENT_KEYS = AGENTS_DATA.keys || AGENTS_DATA.api_keys || [];
@@ -11712,7 +12305,8 @@ function onRangeCustomChange(){
 /* 三个取数端点共用同一个查询串，避免 /usage 与 /usage/perf 各拼一份而漏掉自定义
  * 区间——那正是「卡片与表格口径不一致」的复发路径。 */
 function analyticsQuery(){
-  let q = '?realm=all&range=' + encodeURIComponent(analyticsRange || 'today');
+  let q = '?realm=all&provider=' + encodeURIComponent(currentProvider())
+        + '&range=' + encodeURIComponent(analyticsRange || 'today');
   if(analyticsRange === 'custom'){
     const sEl = document.getElementById('rangeCustomSince');
     const uEl = document.getElementById('rangeCustomUntil');
@@ -11744,7 +12338,7 @@ async function loadAnalyticsMatrix(){
       getJSON('/usage/perf' + q, POLL_READ),
       // The catalog is only a display filter, so a failure here must not
       // blank the table; null keeps the previous allowlist.
-      needModels ? getJSON('/v1/models?realm=all').catch(() => null) : Promise.resolve(null),
+      needModels ? getJSON('/v1/models?realm=all&provider=' + encodeURIComponent(currentProvider())).catch(() => null) : Promise.resolve(null),
     ]);
     if(models && models.data){
       MATRIX_MODELS = new Set(models.data.map(m => m.id));
@@ -12087,7 +12681,9 @@ async function loadAnalytics(){
     renderAnalytics(data);
     loadUsageSeries();
     loadRemainingUsage();
-    loadCreditGrants();
+    // 积分获取历史是 WorkBuddy 的福利体系（每日活跃奖励、免费套餐发放…），
+    // Qoder 视图下整个折叠块收起，这一份请求也不发。
+    if(currentProvider() !== 'qoder') loadCreditGrants();
   } catch(err) {
     console.error('loadAnalytics failed:', err);
   }
@@ -12102,7 +12698,7 @@ async function loadAnalytics(){
 // ---------------------------------------------------------------------------
 async function loadRemainingUsage(){
   try {
-    const data = await getJSON('/usage/remaining', POLL_READ);
+    const data = await getJSON(withProvider('/usage/remaining'), POLL_READ);
     renderRemainingUsage(data);
   } catch(err) {
     if(!isAuthError(err)) console.error('loadRemainingUsage failed:', err);

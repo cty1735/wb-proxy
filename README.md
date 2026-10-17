@@ -8,6 +8,10 @@
 
 | 日期 | 功能 |
 | --- | --- |
+| 2026-10-17 | Qoder 聊天通道接入：`/v1/chat/completions`（含 `/v1/completions`）、`/v1/messages`、`/v1/responses` 在显式 `?provider=qoder`（或 `X-Provider`）下走 Qoder COSY 协议，与 WorkBuddy 共用流式 / 非流式响应管线；没有显式提示时按模型归属兜底（Qoder 目录认识、WorkBuddy 目录不认识 → Qoder）；看板的 analytics / timeseries / remaining / by-account 也接受 provider 过滤 |
+| 2026-10-17 | 修复 Windows 下检测不到已安装 Hermes：`_hermes_home` 现在按 Hermes 自身规则解析（`HERMES_HOME` → Windows `%LOCALAPPDATA%\hermes` / POSIX `~/.hermes`，含 `HERMES_DATA_DIR_SUFFIX`），此前只认 `~/.hermes`，原生 Windows 安装全部漏检 |
+| 2026-10-17 | 新增 Qoder 提供商：看板头部 WorkBuddy / Qoder 切换，账号列表、积分、用量统计、默认出口与模型清单全部跟随提供商（各提供商再分国内 / 国际）；Qoder 支持浏览器设备码与 PAT 登录、额度查询与模型清单；普通 WorkBuddy 流量不受影响 |
+| 2026-10-17 | 看板/接口 providers 维度落地：账号、积分、用量（`/usage`、`/usage/recent`、`/usage/perf`）、模型清单与目录刷新端点接受 `?provider=`（或 `X-Provider`）显式提示；用量日志按提供商分桶记账，WorkBuddy 旧数据与旧口径逐字节不变 |
 | 2026-10-16 | 看板主题改版：强调色改为亮橙，浅色背景纯白、深色背景纯黑，整体样式优化 |
 | 2026-10-16 | Hermes 智能体未选择模型时回退到首个可用模型 |
 
@@ -243,7 +247,7 @@ Codex App 这类客户端会在 Responses 请求里声明 `web_search` / `web_fe
 | DSH (DeepSeek Harness) | `~/.dsh/settings.yaml`、`~/.dsh/.credentials.yaml` | OpenAI 兼容 |
 | Crush (Charm Crush) | `~/.config/crush/crush.json` | OpenAI 兼容 |
 | ZCode | `~/.zcode/v2/provider_config.json` | OpenAI 兼容（`openai-chat-completions`；**配置前先退出 ZCode**，运行中它会重写该文件） |
-| Hermes CLI (Hermes Agent) | `~/.hermes/config.yaml`、`~/.hermes/.env` | OpenAI 兼容（`providers.wb-proxy` + `model.provider: custom:wb-proxy`） |
+| Hermes CLI (Hermes Agent) | `~/.hermes/config.yaml`、`~/.hermes/.env`（Windows 为 `%LOCALAPPDATA%\hermes\`；设置了 `HERMES_HOME` 则用它） | OpenAI 兼容（`providers.wb-proxy` + `model.provider: custom:wb-proxy`） |
 
 用法：打开看板 →「智能体配置」→ 选 API Key（支持全局默认或绑定特定出口的多 Key）、默认模型与网关地址 → 在检测到的客户端卡片上点「一键配置」；随时可点「一键还原」。
 
@@ -314,6 +318,15 @@ python wb_agents.py restore --client codex                 # 随时字节级还�
 
 手动粘贴接受两种写法（都不用自己换算）：64 位 hex 的保护密钥，或 44 字符 base64 的 `atRestSecretKey`。拿不到密钥时，macOS / Linux 上请直接用方式一走浏览器登录。提示权限不足时，以管理员身份启动网关再试一次。
 
+### 方式三：Qoder 账号（国际版 qoder.com / 国内版 qoder.cn）
+
+看板头部有 **WorkBuddy / Qoder** 切换：切到 Qoder 后，账号列表、积分、用量统计、默认出口与模型清单整页跟着走；每个提供商各自再分国内 / 国际两个版本（互不串数据）。Qoder 账号的添加入口就是账号区那个「添加」按钮，弹窗提供两条通道：
+
+1. **浏览器设备码（仅国际版）**：点「添加」自动申请设备码并给出链接，浏览器里登录 qoder.com 后窗口内自动检测完成入池（与 WorkBuddy 的 OAuth 流程同一操作习惯）；
+2. **PAT（国际 / 国内通用）**：在 qoder.com（或 qoder.com.cn）账号设置里生成个人访问令牌，粘进弹窗点「用 PAT 登录」，服务端兑换成登录态后入池，长期有效。国内版只有这条通道。
+
+Qoder 账号与 WorkBuddy 账号在同一账号池里按 `provider` 隔离：签到 / 每日活跃 / 成长任务 / 出站身份这些 WorkBuddy 专属能力只作用于 WorkBuddy 账号；Qoder 账号支持启用停用、积分刷新与明细、凭证刷新、昵称同步、代理出口绑定、导出与删除。Qoder 的聊天通道已接入：显式点名 `provider=qoder`（`?provider=` 或 `X-Provider`）的 `/v1/chat/completions`、`/v1/completions`、`/v1/messages`、`/v1/responses` 会走 Qoder 上游（COSY 协议），与 WorkBuddy 共用同一套流式 / 非流式响应；没有显式提示时，只有「Qoder 目录认识、WorkBuddy 目录不认识」的模型名才会兜底到 Qoder，其余保持原来的 WorkBuddy 路径。没有可用 Qoder 账号时返回 503（`no usable account ...`），不会悄悄并入 WorkBuddy 流量。
+
 ---
 
 ## 四、客户端配置与接入
@@ -345,6 +358,8 @@ export ANTHROPIC_API_KEY="你在看板设置中添加并绑定的API_Key"
 ## 五、看板与接口一览
 
 访问 `http://127.0.0.1:8788/` 使用集成看板：顶部页签默认是「网关与账号 / 数据看板 / 智能体配置 / 设置 / 运行日志」，每个主页面左侧有一条按页面区块现场生成的导航（点击直达、滚动高亮、地址栏带锚点，可收起成窄轨）。
+
+页面头部还有 **WorkBuddy / Qoder 提供商切换**：切换后看板的账号、积分、统计、默认出口与模型清单一并跟着提供商走（每个提供商各自记着自己的国内 / 国际出口），面板对服务端的每个请求都显式带 `?provider=`。直接用 API 时同样可以显式指定：账号、用量（含 `/usage/analytics`、`/usage/timeseries`、`/usage/remaining`、`/usage/by-account`）与模型清单端点接受 `?provider=workbuddy|qoder`（或 `X-Provider` 头）；**不提示时行为与此前完全一致**（WorkBuddy 口径），所以既有客户端无需改动。聊天端点也认这个提示：显式 `provider=qoder` 走 Qoder 上游；不提示时按模型归属兜底——Qoder 目录认识、WorkBuddy 目录不认识的模型名走 Qoder，其余仍是原来的 WorkBuddy 路径。看板也认 `?provider=qoder` 这样的 URL 参数（只钉住本次会话的视图，不改服务端状态）。
 
 账号多起来之后（国际版十几个），账号列表与「当前禁用」总览会把网关页挤下去。设置页的「账号独立成一个页签」默认关闭，账号区就留在「网关与账号」页（位置与拆分前一致）；打开后它们和签到记录一起成为独立的「账号」页：添加 / 导入 / 导出、启用停用、凭证与积分刷新、代理出口绑定都在那里，顶部页签变成「网关 / 账号 / 数据看板 / 智能体配置 / 设置 / 运行日志」。页内的「签到与活跃记录」读 `GET /activity/history`，可按**区间 / 任务 / 结果 / 账号**筛选（筛选在服务端做），一行一次真实尝试，列出 时间 · 账号 · 区域 · 任务 · 来源 · 结果 · 说明，最新在前；超过一页时用「加载更多」往下翻，上限 1000 行——「这个账号昨天到底签成了没有」不用再去调度器日志里翻。
 

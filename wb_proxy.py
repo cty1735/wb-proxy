@@ -71,6 +71,8 @@ import wb_webtools
 import wb_identity
 import wb_prompt
 import wb_modelsdev
+import wb_qoder
+import wb_qoder_chat
 import wb_probes
 import wb_updates
 IS_WINDOWS = os.name == "nt"
@@ -150,6 +152,14 @@ def port_owner_hint(port):
         return "netstat -ano | findstr :%d" % port
     return "lsof -nP -iTCP:%d -sTCP:LISTEN" % port
 CURRENT_REALM = os.environ.get("WB_PROXY_DEFAULT_REALM", "intl")
+#: 提供者维度（workbuddy | qoder），与 CURRENT_REALM 平行的全局开关：面板头部的
+#: WorkBuddy/Qoder 切换改它并落盘，账号列表 / 积分 / 统计 / 默认出口 / 模型清单
+#: 都跟着它走。聊天链路永远拿不到 qoder 账号（池的选择方法按 provider 过滤）。
+CURRENT_PROVIDER = wb_accounts.normalize_provider(
+    os.environ.get("WB_PROXY_DEFAULT_PROVIDER", wb_accounts.DEFAULT_PROVIDER))
+#: 每个提供者各自记住的默认出口：从 Qoder 切回 WorkBuddy 时不该把 Qoder 选过的
+#: 出口带回来（两边账号的可用区域本来就不同）。
+PROVIDER_REALMS = {provider: CURRENT_REALM for provider in wb_accounts.PROVIDERS}
 def detect_model_realm(model_id):
     if not model_id:
         return CURRENT_REALM
@@ -529,6 +539,43 @@ def row_matches_realm(row, realm):
     # behaviour compared every row's realm against the string "all".
     if not realm or realm == "all": return True
     return row_realm(row) == realm
+
+
+def row_provider(row):
+    """The provider a log row belongs to.
+
+    Rows written since the provider dimension exists carry the field (only
+    non-WorkBuddy rows write it, so WorkBuddy rows stay byte-identical to the
+    old log format). Older rows are attributed by their account, exactly like
+    row_provider's realm sibling; anything that cannot be resolved is
+    WorkBuddy, which is the only provider that has ever written to the log.
+    """
+    p = row.get("provider")
+    if p:
+        return wb_accounts.normalize_provider(p)
+    acct_uid = row.get("account")
+    if acct_uid and POOL:
+        acc = POOL.get(acct_uid)
+        if acc:
+            return acc.provider
+    return wb_accounts.DEFAULT_PROVIDER
+
+
+def row_matches_provider(row, provider):
+    # None means every provider, same contract as row_matches_realm.
+    if not provider or provider == "all": return True
+    return row_provider(row) == wb_accounts.normalize_provider(provider)
+def provider_scope(provider, fallback=None):
+    """Map a caller-supplied provider onto a log filter.
+
+    "all" means every provider and becomes None (no filtering at all). An
+    empty or missing value falls back to `fallback`; the panel passes the
+    selected provider explicitly, so the legacy default (None = every row)
+    keeps every pre-provider call site on its old path byte for byte.
+    """
+    if provider == "all":
+        return None
+    return provider or fallback
 def realm_scope(realm, fallback=None):
     """Map a caller-supplied realm onto a log filter.
 
@@ -717,6 +764,11 @@ def record_usage(model, usage, stream=None, elapsed_ms=None, ttft_ms=None, gen_m
         row["account"] = account
     acc = POOL.get(account) if (account and POOL) else None
     row["realm"] = acc.realm if acc else CURRENT_REALM
+    # Provider: only non-WorkBuddy rows write the field, so a WorkBuddy log
+    # stays byte-identical to the format that predates the dimension (a
+    # missing field reads as WorkBuddy everywhere, see row_provider).
+    if acc is not None and acc.provider != wb_accounts.DEFAULT_PROVIDER:
+        row["provider"] = acc.provider
     # Always written, even when the caller presented no key. The empty value is
     # what separates "ran without a key" from rows written before the field
     # existed; the dashboard reports those as two different buckets, and a
@@ -769,12 +821,16 @@ def _persist_usage(row, fail_label):
 
 def record_error(model, status, message, elapsed_ms=None, account=None,
                  usage=None, stream=None, ttft_ms=None, gen_ms=None, fp=None,
-                 outcome="failed", key=None):
+                 outcome="failed", key=None, provider=None):
     """Record one failed request as exactly one JSONL row.
 
     Passing the account uid records which account the request was bound to, so
     per-realm success rates attribute the failure by fact instead of falling
     back to guessing from the model name.
+
+    provider attributes failures that never reached an account - an empty Qoder
+    pool or an unknown Qoder model are the first of those. It is only written
+    when it is not the WorkBuddy default; see record_usage for the same rule.
 
     The usage argument carries whatever the upstream had already reported when
     a stream broke. An aborted stream used to write an error row AND a usage
@@ -813,6 +869,14 @@ def record_error(model, status, message, elapsed_ms=None, account=None,
         row["account"] = account
         acc = POOL.get(account) if POOL else None
         row["realm"] = acc.realm if acc else CURRENT_REALM
+        if acc is not None and acc.provider != wb_accounts.DEFAULT_PROVIDER:
+            row["provider"] = acc.provider
+    elif provider:
+        # 显式点名的非 workbuddy 提供商（如空池 / 未知模型的 Qoder 失败）：没有
+        # 账号可查时按调用方给的值归属；workbuddy 不缺省写字段（旧格式逐字不变）。
+        prov = wb_accounts.normalize_provider(provider)
+        if prov != wb_accounts.DEFAULT_PROVIDER:
+            row["provider"] = prov
     row["key"] = key or ""
     _persist_usage(row, "error persist failed")
     dur = f" {elapsed_ms:.0f}ms" if elapsed_ms is not None else ""
@@ -861,55 +925,67 @@ _perf_cache = {}
 _perf_lock = threading.Lock()
 
 
-def _perf_stats_scope(sample, realm, range, since, until):
-    """(过滤用的 realm, since, until, 缓存键) —— perf_stats() 与它的 ETag 共用。
+def _perf_stats_scope(sample, realm, range, since, until, provider=None):
+    """(过滤用的 realm, provider, since, until, 缓存键) —— perf_stats() 与它的 ETag 共用。
 
     抽出来只为一件事：取数和派生 ETag 必须走**同一套**键。两边各写一份的话，
     只要有一处不同（比如一处 realm_scope、一处原始 realm），tag 就会落到另一条
     缓存条目上，客户端拿到的是一个不描述当前响应体的校验符。
     """
     r = realm_scope(realm, CURRENT_REALM)
+    p = provider_scope(provider)
     lo, hi = range_window(range, since, until)
     try:
         # The key carries the resolved bounds rather than a today/all flag:
         # this week and this month overlap, so a flag cannot tell them apart
         # and one window's latency would be served under the other's label.
-        key = (int(sample), r or "all",
+        key = (int(sample), r or "all", p or "all",
                lo if lo is not None else -1, hi if hi is not None else -1)
     except Exception:
-        key = (5000, r or "all",
+        key = (5000, r or "all", p or "all",
                lo if lo is not None else -1, hi if hi is not None else -1)
-    return r, lo, hi, key
+    return r, p, lo, hi, key
 
 
-def perf_stats(sample=5000, realm=None, ttl=None, range=None, since=None, until=None):
+def perf_stats(sample=5000, realm=None, ttl=None, range=None, since=None, until=None,
+               provider=None):
     """Cached wrapper: parsing thousands of rows is CPU-heavy, and the
     dashboard polls this endpoint every few seconds.
 
     Rebuilds under the lock so a burst of pollers cannot each start their own
     scan of the log. The rebuild itself is incremental: _perf_stats_incremental
     keeps a ring of the last `sample` rows per (sample, realm, window) key and
-    only folds the bytes appended since the last rebuild (see there)."""
+    only folds the bytes appended since the last rebuild (see there).
+
+    带 provider 过滤时走 _perf_stats_uncached 直扫：增量环的历史条目没有行级
+    provider 归属，无法事后过滤；直扫只读日志末尾 sample 行（本就有界），TTL
+    缓存照旧兜住轮询。
+    """
     ttl = _STATS_TTL if ttl is None else ttl
-    r, lo, hi, key = _perf_stats_scope(sample, realm, range, since, until)
+    r, p, lo, hi, key = _perf_stats_scope(sample, realm, range, since, until, provider)
     now = time.time()
     with _perf_lock:
         hit = _perf_cache.get(key)
         if hit is not None and (now - hit[0]) < ttl:
             return hit[1]
-        data = _perf_stats_incremental(key, key[0], r, lo, hi)
+        if p:
+            data = _perf_stats_uncached(sample, r, lo, hi, provider=p)
+        else:
+            data = _perf_stats_incremental(key, key[0], r, lo, hi)
         _perf_cache[key] = (time.time(), data)
     return data
 
 
-def perf_stats_etag(sample=5000, realm=None, range=None, since=None, until=None):
+def perf_stats_etag(sample=5000, realm=None, range=None, since=None, until=None,
+                    provider=None):
     """perf_stats() 当前缓存条目的 ETag；条目还不存在时返回 None。
 
     _json_cached() 会在取数前后各调用一次并比对，两次一致才把 tag 发出去
     （见那里的注释）。所以这里只回答"此刻这条缓存条目的戳是什么"，调用方不需要
     自己安排调用顺序。
     """
-    _r, _lo, _hi, key = _perf_stats_scope(sample, realm, range, since, until)
+    _r, _p, _lo, _hi, key = _perf_stats_scope(sample, realm, range, since, until,
+                                              provider)
     with _perf_lock:
         hit = _perf_cache.get(key)
     if hit is None:
@@ -917,7 +993,7 @@ def perf_stats_etag(sample=5000, realm=None, range=None, since=None, until=None)
     return _cache_etag("perf", repr(key), hit[0])
 
 
-def _perf_stats_uncached(sample=5000, realm=None, since=None, until=None):
+def _perf_stats_uncached(sample=5000, realm=None, since=None, until=None, provider=None):
     """Latency percentiles + derived rates, computed from the JSONL log."""
     ttfts, gens, walls, rates, hits, tok_rates = [], [], [], [], [], []
     total = ok = err = aborted = 0
@@ -957,6 +1033,8 @@ def _perf_stats_uncached(sample=5000, realm=None, since=None, until=None):
         if sample_from is None:
             sample_from = r.get("at")
         if realm and not row_matches_realm(r, realm):
+            continue
+        if provider and not row_matches_provider(r, provider):
             continue
         # Same window as the usage snapshot, so the latency and speed columns
         # of the matrix describe the same requests as its token columns.
@@ -1991,6 +2069,9 @@ _remaining_state_lock = threading.Lock()
 # 载荷缓存（与上面的折叠状态分开两把锁：重建要持状态锁做扫描，命中缓存不该等它）。
 _remaining_cache = {"at": 0.0, "built_at": 0.0, "data": None}
 _remaining_cache_lock = threading.Lock()
+# 按提供商过滤的载荷各存一条（键 = provider）：过滤视图与全量视图的行集
+# 不同，绝不能共用一条缓存。provider=None 仍走上面那一条，行为逐字节不变。
+_remaining_provider_cache = {}
 # estimate-daily.json 的解析缓存：单键元组一次赋值（(路径, mtime_ns, size),
 # days），读侧不加锁也不会看到半份缓存；写盘路径主动换掉它，外部改动靠 stat
 # 变化发现。路径也在戳里：--usage-dir 换目录后不会被旧目录的戳骗过去。
@@ -2615,7 +2696,7 @@ def _remaining_archive_segments(state, events, start, end):
     return segments
 
 
-def _remaining_budgets(events, realm_of, now, daily):
+def _remaining_budgets(events, realm_of, now, daily, uids=None):
     """(realm, model) -> 近 3 天加权的窗口预算估计。
 
     样本按撞线当天的本地日期分桶，取最近 3 天（今天/昨天/前天）：今天用内存
@@ -2626,12 +2707,17 @@ def _remaining_budgets(events, realm_of, now, daily):
 
     载荷里保留 avg/min/max/n（min/max 取各天账号均值的极值，n 为各天账号数
     之和），并新增 days 列出各天构成（{day, w, avg, n}）供面板/排查用。
+
+    uids 非空时只折这些账号的样本（provider 过滤视图）。昨天/前天的归档表
+    没有账号维度，那两天仍是全局口径——这是记录在案的限制，不在这里假装能分。
     """
     keys = _estimate_day_keys(now)
     per_day = {}
     samples = {}
     for event in events:
         if event["sample"] <= 0 or _local_day_key(event["at"]) != keys[0]:
+            continue
+        if uids is not None and event["account"] not in uids:
             continue
         realm = event["realm"] or realm_of.get(event["account"], "")
         samples.setdefault((realm, event["model"]), {}) \
@@ -2671,7 +2757,7 @@ def _remaining_budgets(events, realm_of, now, daily):
     return budgets
 
 
-def _remaining_payload(now=None, accounts=None):
+def _remaining_payload(now=None, accounts=None, provider=None):
     """Per-account remaining usage against the estimated per-model budget.
 
     Refreshes the fold and builds the payload in one pass under the state
@@ -2694,31 +2780,49 @@ def _remaining_payload(now=None, accounts=None):
     跨天归档：本地日期与 state["day"] 不同（或重启后为空）时，在状态锁内把
     刚过去的那天算成 {预算, 分段}，本次构建的估算立刻把它并进视图；文件写盘
     在锁外（见 _estimate_daily_sync）。
+
+    过滤视图（provider 非 None）只报告该提供商的账号，且不触发跨天归档、
+    不写共享 checkpoint：归档与 checkpoint 都是全局口径的产物。
     """
+    provider = wb_accounts.provider_filter(provider)
     now = time.time() if now is None else now
     if accounts is None:
         accounts = list(POOL.accounts) if POOL else []
     accounts = [a for a in accounts
-                if getattr(a, "enabled", True) and getattr(a, "uid", "")]
+                if getattr(a, "enabled", True) and getattr(a, "uid", "")
+                and (not provider or getattr(a, "provider", "") == provider)]
     with _remaining_state_lock:
         state = _remaining_state
         _remaining_refresh(state)
         realm_of = {a.uid: (getattr(a, "realm", "") or "") for a in accounts}
-        archived = _remaining_archive_due(state, now, realm_of)
-        daily = _estimate_daily_view(_estimate_daily_read(), archived)
-        payload = _remaining_payload_locked(state, now, accounts, realm_of, daily)
+        if provider:
+            # 过滤视图不触发跨天归档：归档会写共享的 estimate-daily.json 并推进
+            # state["day"]，而这里的账号表只含一个提供商，代表不了全局口径。
+            # 归档表也只有 (realm, model) 维度（没有账号/提供商），所以视图里
+            # 昨天/前天的预算仍是全局估计（见 _remaining_budgets 的说明）。
+            archived = None
+            daily = _estimate_daily_read()
+        else:
+            archived = _remaining_archive_due(state, now, realm_of)
+            daily = _estimate_daily_view(_estimate_daily_read(), archived)
+        payload = _remaining_payload_locked(state, now, accounts, realm_of, daily,
+                                            provider=provider)
         offset = state["log"].get("offset") or 0
     # 归档与 checkpoint 的写盘都在锁外做（见 checkpoint 一节）：写盘要逐把读
     # 各份状态，在状态锁里再取别的状态锁会构成锁序环。折叠失败的那次 offset
-    # 已归零，落盘函数会跳过。
-    _estimate_daily_sync(archived, now)
-    _usage_cache_maybe_save("remaining", offset)
+    # 已归零，落盘函数会跳过。过滤视图不写盘：共享 checkpoint 只记无过滤状态。
+    if not provider:
+        _estimate_daily_sync(archived, now)
+        _usage_cache_maybe_save("remaining", offset)
     return payload
 
 
-def _remaining_payload_locked(state, now, accounts, realm_of, daily):
+def _remaining_payload_locked(state, now, accounts, realm_of, daily, provider=None):
     """The payload itself; caller holds the state lock and has refreshed."""
-    budgets = _remaining_budgets(state["events"], realm_of, now, daily)
+    # provider 过滤视图只把该提供商账号的撞线样本折进预算：没有这一层，另一
+    # 个提供商的样本会以空 realm 的口径混进 budgets，出现在载荷里。
+    budgets = _remaining_budgets(state["events"], realm_of, now, daily,
+                                 uids=set(realm_of) if provider else None)
     # strftime/localtime is one of the few per-row costs left (30 rows ≈ 0.12ms,
     # 74% of the build) and rows overwhelmingly share their window start / reset
     # clock - so format each distinct second once per payload.
@@ -2910,7 +3014,7 @@ def _remaining_payload_locked(state, now, accounts, realm_of, daily):
     }
 
 
-def remaining_usage(ttl=None):
+def remaining_usage(ttl=None, provider=None):
     """Cached payload: the panel polls every 5s, the numbers change far slower.
 
     Within the TTL the last payload is returned as is - no rescan of either
@@ -2918,28 +3022,51 @@ def remaining_usage(ttl=None):
     rebuilds. The TTL is deliberately short (WB_REMAINING_TTL, 15s default):
     long enough to serve several polls per rebuild, short enough that a cap or
     a burst of usage shows up while the operator is looking at the panel.
+
+    provider 过滤视图各存一条自己的缓存（键 = provider）：它折的行集与全量
+    视图不同，不能共用条目；None 时仍是原来那一条。
     """
+    provider = wb_accounts.provider_filter(provider)
     ttl = _REMAINING_TTL if ttl is None else ttl
     now = time.time()
+    if not provider:
+        with _remaining_cache_lock:
+            entry = _remaining_cache
+            if entry["data"] is not None and (now - entry["at"]) < ttl:
+                return entry["data"]
+        # 重建在缓存锁外：它自己会拿状态锁扫描，命中等它的调用不该被拖住。
+        data = _remaining_payload()
+        with _remaining_cache_lock:
+            _remaining_cache.update({"at": time.time(), "built_at": time.time(),
+                                     "data": data})
+        return data
     with _remaining_cache_lock:
-        entry = _remaining_cache
-        if entry["data"] is not None and (now - entry["at"]) < ttl:
+        entry = _remaining_provider_cache.get(provider)
+        if entry is not None and entry["data"] is not None \
+                and (now - entry["at"]) < ttl:
             return entry["data"]
-    # 重建在缓存锁外：它自己会拿状态锁扫描，命中等它的调用不该被拖住。
-    data = _remaining_payload()
+    data = _remaining_payload(provider=provider)
     with _remaining_cache_lock:
-        _remaining_cache.update({"at": time.time(), "built_at": time.time(),
-                                 "data": data})
+        _remaining_provider_cache[provider] = {
+            "at": time.time(), "built_at": time.time(), "data": data}
     return data
 
 
-def remaining_usage_etag():
+def remaining_usage_etag(provider=None):
     """ETag of the current /usage/remaining cache entry, or None.
 
     与 usage_by_account_etag() 同款：键是常量（这个视图只有一条缓存），配对
     调用由 _json_cached() 保证。轮询在 TTL 内命中同一份载荷 → 同一枚校验符
-    → 304；重建后自动换戳。
+    → 304；重建后自动换戳。过滤视图按提供商各有一条缓存与一枚校验符。
     """
+    provider = wb_accounts.provider_filter(provider)
+    if provider:
+        with _remaining_cache_lock:
+            entry = _remaining_provider_cache.get(provider)
+            if entry is None or entry["data"] is None:
+                return None
+            built_at = entry["built_at"]
+        return _cache_etag("remaining", provider, built_at)
     with _remaining_cache_lock:
         entry = _remaining_cache
         if entry["data"] is None:
@@ -3056,21 +3183,24 @@ def free_models_by_realm():
     return out
 
 
-def _usage_snapshot_scope(realm, range, since, until):
-    """(过滤用的 realm, since, until, 缓存键) —— usage_snapshot() 与它的 ETag 共用。
+def _usage_snapshot_scope(realm, range, since, until, provider=None):
+    """(过滤用的 realm, provider, since, until, 缓存键) —— usage_snapshot() 与它的 ETag 共用。
 
     同 _perf_stats_scope()：键只允许有一个来源，否则 ETag 可能指向另一条缓存。
     """
     r = realm_scope(realm, CURRENT_REALM)
+    p = provider_scope(provider)
     lo, hi = range_window(range, since, until)
     # Bounds, not a today/all flag: this week and this month overlap, so a
     # flag would let one window serve the other's totals from the cache.
-    key = "%s|%s|%s" % (r or "all",
-                        lo if lo is not None else "", hi if hi is not None else "")
-    return r, lo, hi, key
+    key = "%s|%s|%s|%s" % (r or "all", p or "all",
+                           lo if lo is not None else "",
+                           hi if hi is not None else "")
+    return r, p, lo, hi, key
 
 
-def usage_snapshot(realm=None, ttl=None, range=None, since=None, until=None):
+def usage_snapshot(realm=None, ttl=None, range=None, since=None, until=None,
+                   provider=None):
     """Cached wrapper: the dashboard polls this every few seconds.
 
     The rebuild happens while holding the lock on purpose. Releasing it first
@@ -3079,23 +3209,24 @@ def usage_snapshot(realm=None, ttl=None, range=None, since=None, until=None):
     of the same file.
     """
     ttl = _STATS_TTL if ttl is None else ttl
-    r, lo, hi, key = _usage_snapshot_scope(realm, range, since, until)
+    r, p, lo, hi, key = _usage_snapshot_scope(realm, range, since, until, provider)
     now = time.time()
     with _snap_lock:
         hit = _snap_cache.get(key)
         if hit is not None and (now - hit[0]) < ttl:
             return hit[1]
-        data = _usage_snapshot_uncached(r, since=lo, until=hi)
+        data = _usage_snapshot_uncached(r, since=lo, until=hi, provider=p)
         _snap_cache[key] = (time.time(), data)
     return data
 
 
-def usage_snapshot_etag(realm=None, range=None, since=None, until=None):
+def usage_snapshot_etag(realm=None, range=None, since=None, until=None, provider=None):
     """usage_snapshot() 当前缓存条目的 ETag；条目不存在时返回 None。
 
     配对调用（取数前后各一次、一致才发）由 _json_cached() 负责，理由见那里。
     """
-    _r, _lo, _hi, key = _usage_snapshot_scope(realm, range, since, until)
+    _r, _p, _lo, _hi, key = _usage_snapshot_scope(realm, range, since, until,
+                                                  provider)
     with _snap_lock:
         hit = _snap_cache.get(key)
     if hit is None:
@@ -3912,15 +4043,15 @@ def _row_cost_remember(key, pricing, cost):
     memo[key] = _cost_entry(pricing, cost)
 
 
-def _fold_usage_snapshot(row, snap, r, since, until, pricing_on=None, also=None,
+def _fold_usage_snapshot(row, snap, r, p, since, until, pricing_on=None, also=None,
                          pricing=None, priced=None):
     """Fold one parsed row into a usage snapshot.
 
     One definition for both callers: the all-time fold (fed only the rows past
     its offset) and the windowed one (fed the whole file, out-of-window lines
-    dropped before the parse). The realm and window tests come first, so every
-    total below - requests, tokens, per-model and per-account breakdowns -
-    describes the same slice of the log.
+    dropped before the parse). The realm/provider and window tests come first,
+    so every total below - requests, tokens, per-model and per-account
+    breakdowns - describes the same slice of the log.
 
     pricing_on 是本次扫描开头问过一次的总开关：聚合只读 known/cny（_fold_cost
     再读 disabled），悬停明细构造出来就被丢掉，所以整扫不建明细、开关也不逐行
@@ -3940,6 +4071,8 @@ def _fold_usage_snapshot(row, snap, r, since, until, pricing_on=None, also=None,
     只有推进状态的那条折叠传它；窗口半/冷扫描传 None，一行都不记。
     """
     if r and not row_matches_realm(row, r):
+        return
+    if p and not row_matches_provider(row, p):
         return
     at = row.get("at") or 0
     if since and at < since:
@@ -4008,7 +4141,7 @@ _usage_snap_state = {}
 _usage_snap_state_lock = threading.Lock()
 
 
-def _usage_snap_state_advance(r, pricing_on):
+def _usage_snap_state_advance(r, p, pricing_on):
     """（不折叠）取/建状态、采纳 checkpoint、判废归零、记身份指纹。
 
     调用方必须已持有 _usage_snap_state_lock。返回本次扫描取到的价表代次
@@ -4028,14 +4161,22 @@ def _usage_snap_state_advance(r, pricing_on):
 
     采纳/判废只有这一段定义：_usage_snap_state_ready（all-time 折叠）与
     窗口路径的冷热判定共用它，两边的规则因此不会漂移。
+
+    状态按 (realm, provider) 分键：provider 过滤决定折叠看见哪些行，两个
+    provider 的折叠绝不能互相继承对方的行。带 provider 过滤的状态不进
+    checkpoint（采纳与落盘都跳过）：checkpoint 档按 realm 记账，没有 provider
+    维度，adopt 一个未过滤的 offset 会把过滤前已经数过的行直接跳过。跳过
+    只是每次进程启动重折一遍（正确性不受影响），provider 维度的 checkpoint
+    留待后续。
     """
-    state = _usage_snap_state.get(r)
+    key = (r, p)
+    state = _usage_snap_state.get(key)
     if state is None:
-        state = _usage_snap_state[r] = {"snap": None, "offset": 0, "key": None,
-                                        "pricing": None, "realm": None,
-                                        "tail": b"", "days": {}, "days_floor": None,
-                                        "hours_floor_at": None,
-                                        "hits": [], "hits_overflow": False}
+        state = _usage_snap_state[key] = {"snap": None, "offset": 0, "key": None,
+                                          "pricing": None, "realm": None,
+                                          "tail": b"", "days": {}, "days_floor": None,
+                                          "hours_floor_at": None,
+                                          "hits": [], "hits_overflow": False}
     pricing = _pricing_inputs(pricing_on)
     realm = _realm_inputs()
     log_key = _usage_log_key()
@@ -4045,7 +4186,8 @@ def _usage_snap_state_advance(r, pricing_on):
                                       and pricing[0]) else None
     if state["snap"] is None:
         # 全新状态（进程刚起来）：先问 checkpoint，问不到才从零折起。
-        if not _usage_cache_adopt_snapshot(r, state, log_key, pricing, realm):
+        # provider 过滤状态不问 checkpoint（见 docstring），直接冷折。
+        if p or not _usage_cache_adopt_snapshot(r, state, log_key, pricing, realm):
             state.update({"snap": _empty_stats(), "offset": 0, "tail": b"",
                           "days": {}, "days_floor": None, "hours_floor_at": None,
                           "hits": [], "hits_overflow": False, "pricing": fresh})
@@ -4059,7 +4201,7 @@ def _usage_snap_state_advance(r, pricing_on):
     return pricing
 
 
-def _usage_snap_state_cold(r, pricing_on):
+def _usage_snap_state_cold(r, p, pricing_on):
     """窗口请求现在会不会付一次全量重折？True = 会（窗口改走冷扫描）。
 
     调用方必须已持有 _usage_snap_state_lock。判定就是 all-time 折叠的前半段
@@ -4072,12 +4214,12 @@ def _usage_snap_state_cold(r, pricing_on):
     冷态。重折发生之后，走不走这条路给出的字节完全相同（冷扫描与日桶/小时
     桶之和本就是同一批行、同一个求和口径，见两个冷路径函数的 docstring）。
     """
-    _usage_snap_state_advance(r, pricing_on)
-    return _usage_snap_state[r]["offset"] <= 0
+    _usage_snap_state_advance(r, p, pricing_on)
+    return _usage_snap_state[(r, p)]["offset"] <= 0
 
 
-def _usage_snap_state_ready(r, pricing_on):
-    """把 `r` 的 all-time 折叠推进到文件尾；返回 (state, offset, error)。
+def _usage_snap_state_ready(r, p, pricing_on):
+    """把 (r, p) 的 all-time 折叠推进到文件尾；返回 (state, offset, error)。
 
     调用方必须已持有 _usage_snap_state_lock。日桶与 all-time 折叠共用这一次
     扫描（见 _fold_usage_snapshot 的 also），所以窗口半与 all-time 半描述的
@@ -4086,17 +4228,17 @@ def _usage_snap_state_ready(r, pricing_on):
     采纳 checkpoint 与判废归零在 _usage_snap_state_advance 里（窗口路径的
     冷热判定也用那一段，见 _usage_snap_state_cold），这里只管折到文件尾。
     """
-    pricing = _usage_snap_state_advance(r, pricing_on)
-    state = _usage_snap_state[r]
+    pricing = _usage_snap_state_advance(r, p, pricing_on)
+    state = _usage_snap_state[(r, p)]
     priced = state["pricing"]
 
     def fold(row):
         # 一行折三处：all-time 半 + 它所属那天的窗口半 + 那个小时的小时桶。
         # 过滤与算价在 _fold_usage_snapshot 里只做一次。
-        day = _usage_day_bucket(state, row, r, _day_snapshot_bucket)
+        day = _usage_day_bucket(state, row, r, p, _day_snapshot_bucket)
         hour = None if day is None else _usage_hour_bucket(state, row, day)
         extras = () if day is None else ((day,) if hour is None else (day, hour))
-        _fold_usage_snapshot(row, state["snap"], r, None, None, pricing_on,
+        _fold_usage_snapshot(row, state["snap"], r, p, None, None, pricing_on,
                              also=extras, pricing=pricing, priced=priced)
 
     offset, error = _scan_usage_from(state["offset"], fold)
@@ -4107,18 +4249,18 @@ def _usage_snap_state_ready(r, pricing_on):
     return state, offset, error
 
 
-def _usage_alltime_snapshot(r, pricing_on=None):
+def _usage_alltime_snapshot(r, p, pricing_on=None):
     """A private copy of the cached all-time fold for realm filter `r`
-    (None = every realm).
+    and provider filter `p` (None = every realm / every provider).
 
-    One state per realm: the filter decides which rows the fold ever sees, so
-    `intl` and `cn` are two folds and neither may inherit the other's rows.
-    The state holds the raw fold only - `started`, `since`, `accounts_map` and
-    the rest are re-derived on every call, exactly as the full scan re-derived
-    them.
+    One state per (realm, provider): the filters decide which rows the fold
+    ever sees, so two filters are two folds and neither may inherit the other's
+    rows. The state holds the raw fold only - `started`, `since`,
+    `accounts_map` and the rest are re-derived on every call, exactly as the
+    full scan re-derived them.
     """
     with _usage_snap_state_lock:
-        state, offset, error = _usage_snap_state_ready(r, pricing_on)
+        state, offset, error = _usage_snap_state_ready(r, p, pricing_on)
         if error is None:
             # Copied while the lock is held: the caller decorates what it
             # gets, and a concurrent refresh must never be seen half-applied.
@@ -4136,13 +4278,13 @@ def _usage_alltime_snapshot(r, pricing_on=None):
                           "hits": [], "hits_overflow": False})
     # 落盘决定在锁外做（见 checkpoint 一节）：写盘要逐把读三份状态，在状态
     # 锁里再取别的状态锁会构成锁序环。折叠失败的那次不写——它的 offset 已经
-    # 归零，落盘函数也会跳过。
-    if error is None:
+    # 归零，落盘函数也会跳过；provider 过滤状态不落盘（见 _usage_snap_state_advance）。
+    if error is None and not p:
         _usage_cache_maybe_save("snapshot", offset)
     return snap
 
 
-def _scan_usage_snapshot_window(r, since, until, pricing_on=None):
+def _scan_usage_snapshot_window(r, p, since, until, pricing_on=None):
     """One pass over the log, keeping only the rows inside the window.
 
     Nothing is carried over here - a window moves with the clock - but the
@@ -4163,7 +4305,7 @@ def _scan_usage_snapshot_window(r, since, until, pricing_on=None):
     snap = _empty_stats()
     _, error = _scan_usage_from(
         0,
-        lambda row: _fold_usage_snapshot(row, snap, r, since, until, pricing_on,
+        lambda row: _fold_usage_snapshot(row, snap, r, p, since, until, pricing_on,
                                          pricing=pricing),
         skip=lambda line: _line_outside_window(line, since or None,
                                                  until or None),
@@ -4174,7 +4316,7 @@ def _scan_usage_snapshot_window(r, since, until, pricing_on=None):
     return snap
 
 
-def _usage_snapshot_window_from_days(r, since, until, pricing_on):
+def _usage_snapshot_window_from_days(r, p, since, until, pricing_on):
     """窗口半快照 = 窗口内的日桶之和；日桶不可用时返回 None。
 
     先把 all-time 折叠推进到文件尾：日桶与它同一次扫描推进，窗口半与
@@ -4193,9 +4335,9 @@ def _usage_snapshot_window_from_days(r, since, until, pricing_on):
     预热器（见 _usage_snap_state_cold）。
     """
     with _usage_snap_state_lock:
-        if _usage_snap_state_cold(r, pricing_on):
+        if _usage_snap_state_cold(r, p, pricing_on):
             return None
-        state, offset, error = _usage_snap_state_ready(r, pricing_on)
+        state, offset, error = _usage_snap_state_ready(r, p, pricing_on)
         if error is not None:
             # 折叠失败时状态已经归零，日桶跟着清空：这一次退回整段扫描，
             # 与「没有缓存」时的行为一致。
@@ -4220,11 +4362,12 @@ def _usage_snapshot_window_from_days(r, since, until, pricing_on):
             if until_key is not None and key >= until_key:
                 break
             _add_usage_snapshot(snap, days[key])
-    _usage_cache_maybe_save("snapshot", offset)
+    if not p:
+        _usage_cache_maybe_save("snapshot", offset)
     return snap
 
 
-def _usage_snapshot_window_from_hours(r, since, until, pricing_on):
+def _usage_snapshot_window_from_hours(r, p, since, until, pricing_on):
     """窗口半快照 = 整点窗口内的小时桶之和；小时层不可用时返回 None。
 
     与日桶版同一条规矩：先把 all-time 折叠推进到文件尾（小时桶与它同一次
@@ -4260,9 +4403,9 @@ def _usage_snapshot_window_from_hours(r, since, until, pricing_on):
         if until_key is None:
             return None
     with _usage_snap_state_lock:
-        if _usage_snap_state_cold(r, pricing_on):
+        if _usage_snap_state_cold(r, p, pricing_on):
             return None
-        state, offset, error = _usage_snap_state_ready(r, pricing_on)
+        state, offset, error = _usage_snap_state_ready(r, p, pricing_on)
         if error is not None:
             log(f"usage snapshot read failed: {error}")
             state.update({"snap": None, "offset": 0, "tail": b"",
@@ -4304,11 +4447,12 @@ def _usage_snapshot_window_from_hours(r, since, until, pricing_on):
                     # 只取 at < until 的桶；那一刻有整秒行时上面已经退回。
                     break
                 _add_usage_snapshot(snap, sub)
-    _usage_cache_maybe_save("snapshot", offset)
+    if not p:
+        _usage_cache_maybe_save("snapshot", offset)
     return snap
 
 
-def _usage_snapshot_window(r, since, until, pricing_on=None):
+def _usage_snapshot_window(r, p, since, until, pricing_on=None):
     """窗口半快照：对齐窗口由日桶/小时桶相加，其余保持整段扫描。
 
     只有「两端都落在同一套格点上」的窗口拆得成存量桶的并集：起点是本地
@@ -4322,42 +4466,46 @@ def _usage_snapshot_window(r, since, until, pricing_on=None):
     if until is None:
         day_key = _window_day_key_safe(since)
         if day_key is not None and _usage_day_buckets_enabled():
-            snap = _usage_snapshot_window_from_days(r, since, None, pricing_on)
+            snap = _usage_snapshot_window_from_days(r, p, since, None, pricing_on)
             if snap is not None:
                 return snap
             # 日桶没盖住窗口起点（还没折过/被剪枝/折叠出错）：冷路径现折一份
             # 按日分组的窗口半，口径与日桶状态一致，两条路径的字节因此相同。
-            return _scan_usage_snapshot_window_days(r, since, None, pricing_on)
+            return _scan_usage_snapshot_window_days(r, p, since, None, pricing_on)
         if _usage_day_buckets_enabled() and _window_hour_key_safe(since) is not None:
-            snap = _usage_snapshot_window_from_hours(r, since, None, pricing_on)
+            snap = _usage_snapshot_window_from_hours(r, p, since, None, pricing_on)
             if snap is not None:
                 return snap
             # 小时层没盖住窗口起点（还没折过/被剪枝/那天的小时格点不成立）：
             # 冷路径现折一份按小时分组的窗口半，口径与小时桶状态一致。
-            return _scan_usage_snapshot_window_hours(r, since, None, pricing_on)
-        return _scan_usage_snapshot_window(r, since, until, pricing_on)
+            return _scan_usage_snapshot_window_hours(r, p, since, None, pricing_on)
+        return _scan_usage_snapshot_window(r, p, since, until, pricing_on)
     # 闭窗口：两端都落在格点上才有桶可借（与上面同一套格点校验）。
     if _usage_day_buckets_enabled():
         if (_window_day_key_safe(since) is not None
                 and _window_day_key_safe(until) is not None):
-            snap = _usage_snapshot_window_from_days(r, since, until, pricing_on)
+            snap = _usage_snapshot_window_from_days(r, p, since, until, pricing_on)
             if snap is not None:
                 return snap
-            return _scan_usage_snapshot_window_days(r, since, until, pricing_on)
+            return _scan_usage_snapshot_window_days(r, p, since, until, pricing_on)
         if (_window_hour_key_safe(since) is not None
                 and _window_hour_key_safe(until) is not None):
-            snap = _usage_snapshot_window_from_hours(r, since, until, pricing_on)
+            snap = _usage_snapshot_window_from_hours(r, p, since, until, pricing_on)
             if snap is not None:
                 return snap
-            return _scan_usage_snapshot_window_hours(r, since, until, pricing_on)
-    return _scan_usage_snapshot_window(r, since, until, pricing_on)
+            return _scan_usage_snapshot_window_hours(r, p, since, until, pricing_on)
+    return _scan_usage_snapshot_window(r, p, since, until, pricing_on)
 
 
-def _usage_snapshot_uncached(realm=None, since=None, until=None):
-    # None means every realm; usage_snapshot() has already mapped "all"
-    # onto it, so the filter below is simply skipped.
+def _usage_snapshot_uncached(realm=None, since=None, until=None, provider=None):
+    # None means every realm / every provider; usage_snapshot() has already
+    # mapped "all" onto it, so the filters below are simply skipped.
     r = realm
-    rep = POOL.representative(realm=r) if POOL else current_account()
+    p = provider
+    # 代表账号与账号计数跟着 provider 走：p 为空时保持旧调用（WorkBuddy
+    # 缺省），面板切到 Qoder 时才显式按 provider 过滤。
+    rep = (POOL.representative(realm=r, provider=p) if p
+           else POOL.representative(realm=r)) if POOL else current_account()
     # 总开关整扫只问一次，值一路传进折叠与价格指纹：每行重问一次就是每行一次
     # os.stat，2.7 万行上很可观（见 tests/_test_usage_aggregate_fold.py）。
     pricing_on = wb_pricing.pricing_enabled()
@@ -4365,25 +4513,32 @@ def _usage_snapshot_uncached(realm=None, since=None, until=None):
         # An open window covers every row, and the rows only ever arrive at
         # the end of the log, so the all-time totals are carried over from the
         # last fold and only the rows appended since then are read.
-        snap = _usage_alltime_snapshot(r, pricing_on)
+        snap = _usage_alltime_snapshot(r, p, pricing_on)
     else:
-        snap = _usage_snapshot_window(r, since, until, pricing_on)
+        snap = _usage_snapshot_window(r, p, since, until, pricing_on)
     snap["started"] = _usage.get("started", time.time())
     snap["since"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(snap.get("started", time.time())))
     snap["log_file"] = USAGE_LOG
     snap["realm"] = r or "all"
+    snap["provider"] = p or "all"
     # Cost figures are CNY; the panel divides by this rate to show USD
     # without a round trip.
     snap["usd_cny"] = wb_pricing.usd_cny()
-    snap["accounts_map"] = {a.uid: {"nickname": a.nickname, "realm": a.realm} for a in POOL.accounts} if POOL else {}
+    if p and POOL:
+        snap["accounts_map"] = {a.uid: {"nickname": a.nickname, "realm": a.realm}
+                                for a in POOL.accounts if a.provider == p}
+    else:
+        snap["accounts_map"] = {a.uid: {"nickname": a.nickname, "realm": a.realm} for a in POOL.accounts} if POOL else {}
     snap["account"] = {
         "uid": (rep.uid if rep else ""),
         "domain": (rep.domain if rep else ""),
         "issuer": (wb_accounts.jwt_issuer(rep.access_token) if rep else ""),
         "credential_file": (os.path.basename(rep.path) if rep and rep.path else ""),
         "expires_at": (rep.expires_at if rep else 0),
-        "accounts": (len(POOL.accounts) if POOL else 0),
-        "accounts_ready": (POOL.count_ready() if POOL else 0),
+        "accounts": ((len([a for a in POOL.accounts if a.provider == p]) if p
+                      else len(POOL.accounts)) if POOL else 0),
+        "accounts_ready": ((POOL.count_ready(provider=p) if p
+                            else POOL.count_ready()) if POOL else 0),
     }
     return snap
 def _tail_lines(path, max_lines, chunk=256 * 1024):
@@ -4444,25 +4599,30 @@ _count_lock = threading.Lock()
 # enough for a record total that only ever grows.
 _COUNT_TTL = float(os.environ.get("WB_COUNT_TTL", 30))
 
-# 增量计数的状态（offset/tail/n/n_realm），由 _count_state_lock 保护。
-# 与 by_account 折叠同一套位置校验（_usage_log_key + _log_offset_holds +
-# _log_tail_signature）：日志被截断、被替换或同尺寸重写时从零重数，宁多扫
-# 一次也不能给出错的页数。TTL 缓存按 realm 分键，这份状态则与 realm 无关
-# ——一次扫描同时维护总数与每个 realm 的计数，任何 realm 的查询都复用同一
-# 条进度，不再各自全量扫一遍。
+# 增量计数的状态（offset/tail/n/n_realm/n_provider/n_pair），由
+# _count_state_lock 保护。与 by_account 折叠同一套位置校验（_usage_log_key +
+# _log_offset_holds + _log_tail_signature）：日志被截断、被替换或同尺寸重写时
+# 从零重数，宁多扫一次也不能给出错的页数。TTL 缓存按 (realm, provider) 分键，
+# 这份状态则与过滤无关——一次扫描同时维护总数、每个 realm 的计数、每个非
+# workbuddy provider 的计数与 (realm, provider) 交叉计数，任何过滤组合的查询
+# 都复用同一条进度，不再各自全量扫一遍。
 _count_state_lock = threading.Lock()
-_count_state = {"offset": 0, "key": None, "tail": b"", "n": 0, "n_realm": {}}
+_count_state = {"offset": 0, "key": None, "tail": b"", "n": 0, "n_realm": {},
+                "n_provider": {}, "n_pair": {}}
 
 
 _series_cache = {}
 _series_lock = threading.Lock()
 
 
-def _usage_timeseries_scope(realm, range, since, until, bucket_seconds):
+def _usage_timeseries_scope(realm, range, since, until, bucket_seconds,
+                            provider=None):
     """(realm, lo, hi, step, 缓存键) —— usage_timeseries() 与它的 ETag 共用。
 
     lo/hi 是这次真正要扫的窗口（未钉住的边界在这里补成"现在/往前 24 小时"），
-    键只收**钉住的**边界，理由见下面 wrapper 里的注释。
+    键只收**钉住的**边界，理由见下面 wrapper 里的注释。provider 段只在开了
+    过滤时追加进键里：None 时键保持旧形状逐字节不变，旧客户端手上的 ETag
+    不会因为这次升级全部失效。
     """
     r = realm_scope(realm, CURRENT_REALM)
     lo, hi = range_window(range, since, until)
@@ -4491,16 +4651,21 @@ def _usage_timeseries_scope(realm, range, since, until, bucket_seconds):
     # would let one window serve the other's series from the cache. The
     # bucket step joins the key for the same reason: an explicit bucket
     # changes every bucket's width, and the auto-scaled one flips with the
-    # span, so two different steps are two different payloads.
+    # span, so two different steps are two different payloads. The provider
+    # filter joins them for the same reason as in every sibling cache: a
+    # filtered series folds a different set of rows and must never serve an
+    # unfiltered payload. When it is not set the key keeps its old shape.
     key = (r or "all",
            pinned_lo if pinned_lo is not None else "auto",
            pinned_hi if pinned_hi is not None else "auto",
            step)
+    if provider:
+        key += (provider,)
     return r, lo, hi, step, key
 
 
 def usage_timeseries(realm=None, range=None, since=None, until=None,
-                     bucket_seconds=None, ttl=None):
+                     bucket_seconds=None, ttl=None, provider=None):
     """Bucketed token/credit series for the analytics chart.
 
     Bucket size auto-scales with the window: minute (<=6h), hour (<=14d),
@@ -4509,34 +4674,40 @@ def usage_timeseries(realm=None, range=None, since=None, until=None,
     credit (money already spent). The most recent credited requests ride
     along so the panel can show a credit history without another endpoint.
 
+    The provider filter follows the cache-key rule every sibling reader
+    uses: the panel passes the provider it is showing, provider=None keeps
+    the pre-provider behaviour (every provider) byte for byte.
+
     Cached wrapper: the Token chart polls this endpoint whenever the metrics
     tab is open, and one uncached call re-reads and re-parses the whole log.
     Same shared TTL as its siblings, and the rebuild runs under the lock so a
     burst of pollers cannot each start their own scan.
     """
+    provider = wb_accounts.provider_filter(provider)
     ttl = _STATS_TTL if ttl is None else ttl
     r, lo, hi, step, key = _usage_timeseries_scope(realm, range, since, until,
-                                                   bucket_seconds)
+                                                   bucket_seconds, provider)
     now = time.time()
     with _series_lock:
         hit = _series_cache.get(key)
         if hit is not None and (now - hit[0]) < ttl:
             return hit[1]
-        data = _usage_timeseries_uncached(r, lo, hi, step)
+        data = _usage_timeseries_uncached(r, lo, hi, step, provider)
         _series_cache[key] = (time.time(), data)
     return data
 
 
 def usage_timeseries_etag(realm=None, range=None, since=None, until=None,
-                          bucket_seconds=None):
+                          bucket_seconds=None, provider=None):
     """usage_timeseries() 当前缓存条目的 ETag；没有条目时返回 None。
 
     配对调用由 _json_cached() 负责。注意键里只有钉住的边界，所以"滚动窗口"这一类
     请求始终落在同一条目上：条目没重建，响应体（含它自己的 until / 桶边界）就逐
     字节不变，这正是可以放心回 304 的原因。
     """
+    provider = wb_accounts.provider_filter(provider)
     _r, _lo, _hi, _step, key = _usage_timeseries_scope(realm, range, since, until,
-                                                       bucket_seconds)
+                                                       bucket_seconds, provider)
     with _series_lock:
         hit = _series_cache.get(key)
     if hit is None:
@@ -4645,11 +4816,12 @@ def _line_outside_window_bytes(raw, lo, hi):
     return raw.isascii()
 
 
-def _usage_timeseries_scan(realm, lo, hi, step):
+def _usage_timeseries_scan(realm, lo, hi, step, provider=None):
     """One uncached pass over the log, folding rows into fixed-width buckets.
 
     这是窗口序列的兜底路径：日/小时桶切片不成立（见 _series_slice）时用它，
-    口径一字未改。
+    口径一字未改。realm 与 provider 过滤在最前面一起做（None = 不过滤）：
+    与切片路径的过滤位置一致（那条路在折叠时过滤，见 _fold_usage_series）。
     """
     buckets = {}
     # 窗口内 credit 前 50 条：大小 50 的最小堆，堆顶是当前的第 50 名。旧实现
@@ -4680,6 +4852,8 @@ def _usage_timeseries_scan(realm, lo, hi, step):
                 except Exception:
                     continue
                 if realm and not row_matches_realm(row, realm):
+                    continue
+                if provider and not row_matches_provider(row, provider):
                     continue
                 at = row.get("at") or 0
                 if at < lo or at > hi:
@@ -4727,13 +4901,17 @@ def _usage_timeseries_scan(realm, lo, hi, step):
     }
 
 
-def _usage_timeseries_uncached(realm, lo, hi, step):
+def _usage_timeseries_uncached(realm, lo, hi, step, provider=None):
     """窗口序列：优先由日/小时桶/分钟环切片，不成立时整段扫描。
 
     切片只在「桶宽与窗口对齐」时才是同一件事，所以先按桶宽判断要不要惊动
     状态：日/小时桶要求窗口起点是本地午夜，分钟环要求起点落在分钟格点上
     （lo 是 60 的整数倍）。两条都不成立的自定义区间根本不折状态，也就不会
     为它们白扫一遍。
+
+    provider 过滤走 (realm, provider) 分键的同一份状态：切片给出的序列与
+    整段扫描的行级过滤逐条一致（见 _usage_timeseries_scan）。provider 过滤
+    状态不落盘（见 _usage_series_state_ready）。
     """
     if step in (3600, 86400):
         day_key = _window_day_key(lo)
@@ -4747,7 +4925,7 @@ def _usage_timeseries_uncached(realm, lo, hi, step):
         day_key = None
     if day_key is not None and _usage_day_buckets_enabled():
         with _series_state_lock:
-            state, offset, error = _usage_series_state_ready(realm)
+            state, offset, error = _usage_series_state_ready(realm, provider)
             out = None
             if error is not None:
                 # 折叠失败：状态归零（下一次从零折起），这次退回整段扫描。
@@ -4758,14 +4936,15 @@ def _usage_timeseries_uncached(realm, lo, hi, step):
                               "offset": 0, "tail": b""})
             else:
                 out = _series_slice(state, realm, lo, hi, step, day_key)
-        if error is None:
+        # provider 过滤状态不落盘（见 _usage_series_state_ready）。
+        if error is None and not provider:
             _usage_cache_maybe_save("series", offset)
         if out is not None:
             return out
-    return _usage_timeseries_scan(realm, lo, hi, step)
+    return _usage_timeseries_scan(realm, lo, hi, step, provider)
 
 
-def count_usage_rows(realm=None):
+def count_usage_rows(realm=None, provider=None):
     """Cached row count - incremental, substring match instead of a full parse.
 
     Rows written before the `realm` field existed (they are all error rows)
@@ -4778,31 +4957,69 @@ def count_usage_rows(realm=None):
     rows appended since the last call, so a poll costs what the new traffic
     costs instead of what the whole log costs; the short TTL still keeps the
     number honest while removing even that from the poll path.
+
+    The provider dimension rides the same scan: only non-WorkBuddy rows write
+    the field, so a row without one is WorkBuddy (WorkBuddy = total minus the
+    declared non-WorkBuddy count), and a cross table keeps (realm, provider)
+    page totals honest when both filters are set. `provider` may be None/"all"
+    for no filtering, exactly like `realm`.
     """
     # 先归一化：桶键就是 realm 字符串本身，字面 "all" 会被当成一个永远不存在
     # 的桶（realm_scope 把它映射成 None = 总数）。
     realm = realm_scope(realm)
+    provider = wb_accounts.provider_filter(provider)
     r = realm or ""
+    p = provider or ""
     now = time.time()
     with _count_lock:
-        hit = _count_cache.get(r)
+        hit = _count_cache.get((r, p))
         if hit is not None and (now - hit[0]) < _COUNT_TTL:
             return hit[1]
-    n = _count_usage_rows_uncached(realm)
+    n = _count_usage_rows_uncached(realm, provider)
     with _count_lock:
-        _count_cache[r] = (time.time(), n)
+        _count_cache[(r, p)] = (time.time(), n)
     return n
 
 
-# `"realm"` 的键文本。旧实现拿 `'"realm": "<值>"'` / `'"realm":"<值>"'` 两个
-# needle 做子串命中，新实现按同一对间距从行里取字段值（见 _count_usage_line）
-# ——口径逐字相同，只是不再为每个 realm 各扫一遍文件。
+# `"realm"` / `"provider"` 的键文本。旧实现拿 `'"realm": "<值>"'` /
+# `'"realm":"<值>"'` 两个 needle 做子串命中，新实现按同一对间距从行里取字段
+# 值（见 _count_declared_values）——口径逐字相同，只是不再为每个 realm 各扫
+# 一遍文件；provider 沿用同一把尺子。
 _REALM_KEY = '"realm"'
 _REALM_KEY_LEN = len(_REALM_KEY)
+_PROVIDER_KEY = '"provider"'
+_PROVIDER_KEY_LEN = len(_PROVIDER_KEY)
+
+
+def _count_declared_values(line, key, key_len):
+    """行里某个键声明过的值（每处声明一个，值原样，不归一）。
+
+    只认旧 needle 覆盖的两种间距（`"k": "x"` 与 `"k":"x"`）——间距再花哨的
+    写法旧实现本来就匹配不到任何桶，这里也不为它建桶；值读到下一个引号为止
+    （查询用的值不带引号，字符串里的转义引号也拼不出键文本本身，不会误判）。
+    同一行重复声明该键（手改过的行）按每一处声明的值各返回一次，与旧 needle
+    子串命中的行为一致。
+    """
+    values = []
+    pos = line.find(key)
+    while pos >= 0:
+        end = pos + key_len
+        if line.startswith(': "', end):
+            start = end + 3
+        elif line.startswith(':"', end):
+            start = end + 2
+        else:
+            start = -1
+        if start >= 0:
+            quote = line.find('"', start)
+            if quote >= 0:
+                values.append(line[start:quote])
+        pos = line.find(key, end)
+    return values
 
 
 def _count_usage_line(state, line):
-    """折一行：总数 + 这一行声明的 realm 桶。
+    """折一行：总数 + 这一行声明的 realm / provider 桶。
 
     总数数的是**所有非空行**（包括解析不了的行），与旧实现一致。带 realm
     字段的行按字段值归桶：取值只认旧 needle 覆盖的两种间距（`"realm": "x"`
@@ -4813,32 +5030,53 @@ def _count_usage_line(state, line):
     声明的值各计一次，与旧 needle 子串命中的行为一致；只有完全没有该字段的
     老行（都是错误行）才解析 JSON 走 row_realm() 的账号/模型回退——旧实现
     每次查询都要为它们付一次 json.loads，这里只在折叠时付一次。
+
+    provider 桶只收**显式声明的非 workbuddy 值**（归一后，同一行同一值只计
+    一次）：行里没这个字段就是 workbuddy——workbuddy 的行数由「总数 − 非
+    workbuddy 声明数」得出，与「只写非 workbuddy 行」的日志格式（旧行完全
+    无此字段）逐字对齐。n_pair 把 realm 与 provider 交叉记账，两个过滤同时
+    给定时页数才数得准；声明了 realm 却解析不出（非 JSON 的老坏行）的行只在
+    总额与 provider 桶里，与 realm 桶的口径一致。
+
+    索引折叠（_recent_index_fold_line）用只带 n/n_realm 的 shim 调用这里：
+    provider 桶缺席时整个 provider 记账跳过——索引不服务 provider 过滤的
+    查询（见 recent_usage），没有理由为它多扫一遍每一行。
     """
     state["n"] += 1
     counts = state["n_realm"]
-    pos = line.find(_REALM_KEY)
-    if pos < 0:
-        # 没有 realm 字段（老错误行）：解析回退。解析不了就只算进总数。
+    providers = state.get("n_provider")
+    pairs = state.get("n_pair") if providers is not None else None
+    provs = ()
+    if providers is not None:
+        found = []
+        for value in _count_declared_values(line, _PROVIDER_KEY,
+                                           _PROVIDER_KEY_LEN):
+            prov = wb_accounts.normalize_provider(value)
+            if prov != wb_accounts.DEFAULT_PROVIDER and prov not in found:
+                found.append(prov)
+        for prov in found:
+            providers[prov] = providers.get(prov, 0) + 1
+        provs = found
+    realms = _count_declared_values(line, _REALM_KEY, _REALM_KEY_LEN)
+    if _REALM_KEY not in line:
+        # 没有 realm 字段（老错误行）：解析回退。解析不了就只算进总数
+        # （provider 桶上面已经记过）。注意判据是「键文本整个不在」而不是
+        # 「没解析出声明」：间距异常的 `"realm"` 旧实现匹配不到任何桶、也不会
+        # 走 JSON 回退，这里保持逐字相同。
         try:
             realm = row_realm(json.loads(line))
         except Exception:
             return
         counts[realm] = counts.get(realm, 0) + 1
+        if pairs is not None:
+            for prov in provs:
+                pairs[(realm, prov)] = pairs.get((realm, prov), 0) + 1
         return
-    while pos >= 0:
-        end = pos + _REALM_KEY_LEN
-        if line.startswith(': "', end):
-            start = end + 3
-        elif line.startswith(':"', end):
-            start = end + 2
-        else:
-            start = -1
-        if start >= 0:
-            quote = line.find('"', start)
-            if quote >= 0:
-                value = line[start:quote]
-                counts[value] = counts.get(value, 0) + 1
-        pos = line.find(_REALM_KEY, end)
+    for value in realms:
+        counts[value] = counts.get(value, 0) + 1
+        if pairs is not None:
+            for prov in provs:
+                pairs[(value, prov)] = pairs.get((value, prov), 0) + 1
 
 
 def _count_usage_scan(state):
@@ -4878,22 +5116,30 @@ def _count_usage_scan(state):
     return offset, None
 
 
-def _count_usage_rows_uncached(realm=None):
-    """增量计数：把折叠推进到文件尾，返回 realm 对应的行数。
+def _count_usage_rows_uncached(realm=None, provider=None):
+    """增量计数：把折叠推进到文件尾，返回 (realm, provider) 对应的行数。
 
-    状态按「本进程数到哪」记账（offset/tail/n/n_realm），每次调用只数新增
-    的字节；位置校验不过（截断、换文件、同尺寸重写）才从零重数。realm 为
-    空返回总行数，否则返回该 realm 桶里的行数。
+    状态按「本进程数到哪」记账（offset/tail/n/n_realm/n_provider/n_pair），
+    每次调用只数新增的字节；位置校验不过（截断、换文件、同尺寸重写）才从零
+    重数。过滤都为空返回总行数；只给 realm 返回该 realm 桶里的行数；只给
+    provider 返回该 provider 的行数；两个都给返回交叉桶里的行数。没写
+    provider 字段的行都是 workbuddy（见 _count_usage_line），所以 workbuddy
+    = 总数 − 非 workbuddy 声明数、realm 桶同理。
     """
+    realm = realm_scope(realm)
+    provider = wb_accounts.provider_filter(provider)
     state = _count_state
     with _count_state_lock:
         log_key = _usage_log_key()
         if not _log_resume_ok(state, log_key):
-            state.update({"offset": 0, "tail": b"", "n": 0, "n_realm": {}})
+            state.update({"offset": 0, "tail": b"", "n": 0, "n_realm": {},
+                          "n_provider": {}, "n_pair": {}})
         state["key"] = log_key
         offset, error = _count_usage_scan(state)
         n = state["n"]
         counts = state["n_realm"]
+        providers = state["n_provider"]
+        pairs = state["n_pair"]
         if error is None:
             state["offset"] = offset
             state["tail"] = _log_tail_signature(offset)
@@ -4904,10 +5150,20 @@ def _count_usage_rows_uncached(realm=None):
             # 第一块里时整次报 0、落在后面时给部分数；新实现稳定地给出坏行
             # 之前的行数，任何情况下都不会更差。
             log("usage count failed: %s" % error)
-            state.update({"offset": 0, "tail": b"", "n": 0, "n_realm": {}})
+            state.update({"offset": 0, "tail": b"", "n": 0, "n_realm": {},
+                          "n_provider": {}, "n_pair": {}})
+        if not provider:
+            if not realm:
+                return n
+            return counts.get(realm, 0)
+        if provider == wb_accounts.DEFAULT_PROVIDER:
+            if not realm:
+                return n - sum(providers.values())
+            declared = sum(v for (rr, _p), v in pairs.items() if rr == realm)
+            return counts.get(realm, 0) - declared
         if not realm:
-            return n
-        return counts.get(realm, 0)
+            return providers.get(provider, 0)
+        return pairs.get((realm, provider), 0)
 
 
 # ---------------------------------------------------------------------------
@@ -5533,12 +5789,13 @@ def _recent_index_read(start, realm, skip, take):
     return rows
 
 
-def _recent_backward_page(realm, page, limit):
+def _recent_backward_page(realm, page, limit, provider=None):
     """老路：从尾部按 256KB 块往回读，凑够 page*limit 条再切片。
 
     页深越大读得越多（realm 过滤命中率低时要读回整个文件），所以索引可用时
     不走这里；索引答不了（半行、坏字节、池没就绪……）时它是唯一的正确答案，
-    逐字保留原实现的行为。
+    逐字保留原实现的行为。provider 过滤只能走这条路（索引不按 provider 记
+    账），两个过滤各自过围栏：row_matches_realm + row_matches_provider。
     """
     target_count = page * limit
     matching = []
@@ -5565,13 +5822,17 @@ def _recent_backward_page(realm, page, limit):
                         continue
                     if realm and not row_matches_realm(item, realm):
                         continue
+                    if provider and not row_matches_provider(item, provider):
+                        continue
                     matching.append(item)
                     if len(matching) >= target_count:
                         break
             if len(matching) < target_count and buf.strip():
                 try:
                     item = json.loads(buf.strip().decode("utf-8", "replace"))
-                    if not realm or row_matches_realm(item, realm):
+                    if ((not realm or row_matches_realm(item, realm))
+                            and (not provider
+                                 or row_matches_provider(item, provider))):
                         matching.append(item)
                 except Exception:
                     pass
@@ -5584,7 +5845,7 @@ def _recent_backward_page(realm, page, limit):
     return matching[start_idx:end_idx]
 
 
-def recent_usage(limit=100, realm=None, page=1):
+def recent_usage(limit=100, realm=None, page=1, provider=None):
     """Paginated rows from the tail of the log (page 1 is latest).
 
     Reading backward in chunks keeps this in the millisecond range while
@@ -5593,6 +5854,10 @@ def recent_usage(limit=100, realm=None, page=1):
     索引可用时页从索引直接定位（见上面那一节）：页数标签与页内容都来自同一次
     扫描，读取量是页大小量级；索引答不了就整段退回 _recent_backward_page()，
     两条路的输出逐字相同。
+
+    provider 过滤时索引整个绕过（索引只按 realm 记账，见 _recent_index_*）：
+    页数标签来自 count_usage_rows(realm, provider) 的交叉桶，页内容仍由
+    _recent_backward_page() 反向读——有 provider 过滤时本来就退不回索引。
     """
     try:
         limit = max(1, int(limit))
@@ -5603,7 +5868,9 @@ def recent_usage(limit=100, realm=None, page=1):
     except Exception:
         page = 1
     realm = realm_scope(realm)
-    index = _recent_index_ready(realm_filtered=bool(realm))
+    provider = wb_accounts.provider_filter(provider)
+    index = None if provider else _recent_index_ready(
+        realm_filtered=bool(realm))
     page_rows = None
     if index is not None:
         total = _recent_index_total(index, realm)
@@ -5613,10 +5880,10 @@ def recent_usage(limit=100, realm=None, page=1):
         if page_rows is None:
             index = None
     if index is None:
-        total = count_usage_rows(realm)
+        total = count_usage_rows(realm, provider)
         total_pages = max(1, (total + limit - 1) // limit) if total > 0 else 1
         page = min(page, total_pages)
-        page_rows = _recent_backward_page(realm, page, limit)
+        page_rows = _recent_backward_page(realm, page, limit, provider)
     # Equivalent-token cost per row at OpenRouter list prices, computed here
     # so every consumer of /usage/recent gets the same number. Each row is
     # priced against the version that was in force when it happened, and says
@@ -5679,31 +5946,87 @@ def realm_state_file():
 
 
 def load_persisted_realm():
-    global CURRENT_REALM
+    """Restore the persisted provider/realm switch.
+
+    Current format:
+        {"provider": "qoder", "realm": "cn",
+         "realms": {"workbuddy": "intl", "qoder": "cn"}, ...}
+
+    `realms` is each provider's remembered exit; `realm` mirrors the active
+    provider's one so an older build reading the file still finds the value it
+    understands. Legacy files hold only {"realm": "..."}: the value predates
+    the provider dimension, so it is applied to both providers (the two only
+    ever shared one switch back then).
+    """
+    global CURRENT_REALM, CURRENT_PROVIDER
     path = realm_state_file()
     if os.path.isfile(path):
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 d = json.load(fh)
-                r = d.get("realm")
-                if r in ("intl", "cn"):
-                    CURRENT_REALM = r
-                    return CURRENT_REALM
+            r = d.get("realm")
+            if r in ("intl", "cn"):
+                CURRENT_REALM = r
+                for provider in wb_accounts.PROVIDERS:
+                    PROVIDER_REALMS[provider] = r
+            p = d.get("provider")
+            if p in wb_accounts.PROVIDERS:
+                CURRENT_PROVIDER = p
+            realms = d.get("realms")
+            if isinstance(realms, dict):
+                for provider in wb_accounts.PROVIDERS:
+                    value = realms.get(provider)
+                    if value in ("intl", "cn"):
+                        PROVIDER_REALMS[provider] = value
+            # 活跃提供商的出口以 PROVIDER_REALMS 为真源（realms 段可能比
+            # 顶层 realm 新）。
+            CURRENT_REALM = PROVIDER_REALMS.get(CURRENT_PROVIDER, CURRENT_REALM)
+            return CURRENT_REALM
         except Exception as e:
             log("could not load active realm: %s" % e)
     return CURRENT_REALM
-def save_persisted_realm(realm):
-    global CURRENT_REALM
+def save_persisted_realm(realm, provider=None):
+    """Persist the provider/realm switch (either dimension may be None).
+
+    `realm` updates the realm dimension (and the active provider's memory);
+    `provider` also switches the global provider. The file keeps the legacy
+    top-level "realm" plus the provider fields, so both old and new readers
+    find what they need.
+    """
+    global CURRENT_REALM, CURRENT_PROVIDER
+    if provider is not None:
+        # 先切提供商，再记出口：这次给的 realm 属于目标提供商，记到旧的头上
+        # 会把两边的记忆换错（切回来时看到的出口是对方的）。
+        CURRENT_PROVIDER = wb_accounts.normalize_provider(provider)
+    if realm is not None and realm not in ("intl", "cn"):
+        return CURRENT_REALM
     if realm in ("intl", "cn"):
         CURRENT_REALM = realm
-        try:
-            os.makedirs(ACCOUNTS_DIR, exist_ok=True)
-            with open(realm_state_file(), "w", encoding="utf-8") as fh:
-                json.dump({"realm": realm, "updated_at": time.time(), "updated_iso": time.strftime("%Y-%m-%d %H:%M:%S")}, fh, indent=2)
-            log("persisted active realm '%s' to disk" % realm)
-        except Exception as exc:
-            log("failed to persist active realm: %s" % exc)
+        PROVIDER_REALMS[CURRENT_PROVIDER] = realm
+    try:
+        os.makedirs(ACCOUNTS_DIR, exist_ok=True)
+        with open(realm_state_file(), "w", encoding="utf-8") as fh:
+            json.dump({
+                "provider": CURRENT_PROVIDER,
+                "realm": CURRENT_REALM,
+                "realms": {p: PROVIDER_REALMS.get(p, CURRENT_REALM)
+                           for p in wb_accounts.PROVIDERS},
+                "updated_at": time.time(),
+                "updated_iso": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }, fh, indent=2)
+        log("persisted active realm '%s' (provider=%s) to disk"
+            % (CURRENT_REALM, CURRENT_PROVIDER))
+    except Exception as exc:
+        log("failed to persist active realm: %s" % exc)
     return CURRENT_REALM
+def switch_provider(provider):
+    """Switch the global provider dimension (panel header) and persist it.
+
+    The realm follows the provider's own memory: switching from WorkBuddy cn
+    to Qoder and back must not drag an exit the other side never chose.
+    """
+    p = wb_accounts.normalize_provider(provider)
+    return save_persisted_realm(PROVIDER_REALMS.get(p, CURRENT_REALM), p)
 API_KEY = None
 SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT
 def import_desktop_accounts(realm=None):
@@ -5721,11 +6044,15 @@ def import_desktop_accounts(realm=None):
 def desktop_credential_scan():
     """Read-only scan of the desktop client credentials on this machine."""
     return wb_accounts.scan_desktop_credentials()
-def account_views(realm=None):
-    """List view of every account, including a live readiness flag."""
+def account_views(realm=None, provider=None):
+    """List view of every account, including a live readiness flag.
+
+    `provider` follows list_public(): None/"all" keeps every provider, a
+    concrete value narrows the list to it.
+    """
     if not POOL:
         return []
-    return POOL.list_public(realm=realm)
+    return POOL.list_public(realm=realm, provider=provider)
 
 # --------------------------------------------------------- 积分获取历史（发放记录）
 # 上游对每个账号返回一份积分包清单（免费套餐、每日活跃奖励的 Bonus Pack、活动包…），
@@ -6015,30 +6342,55 @@ def proxy_slots_view():
 
 
 _byacct_cache = {"at": 0.0, "data": None}
+# 按提供商过滤的视图各一条缓存（键 = provider）：过滤视图的行集与全量视图
+# 不同，不能共用条目；provider=None 仍走上面那一条，行为逐字节不变。
+_byacct_provider_cache = {}
 _byacct_lock = threading.Lock()
 
 
-def usage_by_account(ttl=None):
+def usage_by_account(ttl=None, provider=None):
     """Cached wrapper: full aggregation over the whole log is expensive.
 
-    Rebuilds under the lock, same reasoning as usage_snapshot."""
+    Rebuilds under the lock, same reasoning as usage_snapshot.
+
+    provider 过滤：每个提供商一条自己的缓存与增量折叠状态（见
+    _usage_by_account_buckets）；None 时走原来那一条。
+    """
+    provider = wb_accounts.provider_filter(provider)
     ttl = _STATS_TTL if ttl is None else ttl
     now = time.time()
+    if not provider:
+        with _byacct_lock:
+            if _byacct_cache["data"] is not None and (now - _byacct_cache["at"]) < ttl:
+                return _byacct_cache["data"]
+            data = _usage_by_account_uncached()
+            _byacct_cache["at"] = time.time()
+            _byacct_cache["data"] = data
+        return data
     with _byacct_lock:
-        if _byacct_cache["data"] is not None and (now - _byacct_cache["at"]) < ttl:
-            return _byacct_cache["data"]
-        data = _usage_by_account_uncached()
-        _byacct_cache["at"] = time.time()
-        _byacct_cache["data"] = data
+        entry = _byacct_provider_cache.get(provider)
+        if entry is not None and entry["data"] is not None \
+                and (now - entry["at"]) < ttl:
+            return entry["data"]
+        data = _usage_by_account_uncached(provider=provider)
+        _byacct_provider_cache[provider] = {"at": time.time(), "data": data}
     return data
 
 
-def usage_by_account_etag():
+def usage_by_account_etag(provider=None):
     """usage_by_account() 当前缓存条目的 ETag；没有条目时返回 None。
 
-    这个视图只有一条缓存（没有窗口/区域参数），所以键是常量。配对调用由
-    _json_cached() 负责。
+    这个视图只有一条缓存（没有窗口/区域参数），所以键是常量；过滤视图按
+    提供商各有一条缓存与一枚校验符。配对调用由 _json_cached() 负责。
     """
+    provider = wb_accounts.provider_filter(provider)
+    if provider:
+        with _byacct_lock:
+            entry = _byacct_provider_cache.get(provider)
+            if entry is None or entry["data"] is None:
+                return None
+            built_at = entry["at"]
+        return _cache_etag("by-account", provider, built_at)
     with _byacct_lock:
         if _byacct_cache["data"] is None:
             return None
@@ -6047,6 +6399,10 @@ def usage_by_account_etag():
 
 
 _byacct_state = {"buckets": None, "offset": 0, "key": None, "tail": b""}
+# 过滤视图的增量折叠状态：每个提供商一份，与全量状态同构。它们不参与
+# checkpoint（采纳与落盘都跳过）：checkpoint 文件只存无过滤的全量折叠，
+# 过滤状态要是也写进去，下一个进程会把「只折了一个提供商」的桶当成全量。
+_byacct_provider_state = {}
 # The wrapper above holds _byacct_lock while it rebuilds and then calls in
 # here, and _usage_by_account_uncached() is also called straight from the
 # bench and the tests; a lock of its own keeps the refresh from re-entering
@@ -6082,13 +6438,40 @@ def _fold_usage_by_account(row, buckets):
     models[model] = models.get(model, 0) + 1
 
 
-def _usage_by_account_buckets():
+def _usage_by_account_buckets(provider=None):
     """The cached per-account fold, refreshed and copied for the caller.
 
     The copy matters: _usage_by_account_uncached() replaces each bucket's
     `models` dict with a sorted list, and the next refresh must still find the
     counts dict where it left it.
+
+    过滤视图（provider 非 None）用自己那份增量状态，只折匹配的行，且不
+    采纳/写盘 checkpoint（见 _byacct_provider_state 的说明）。
     """
+    provider = wb_accounts.provider_filter(provider)
+    if provider:
+        with _byacct_state_lock:
+            log_key = _usage_log_key()
+            state = _byacct_provider_state.get(provider)
+            if state is None:
+                state = _byacct_provider_state[provider] = {
+                    "buckets": {}, "offset": 0, "key": None, "tail": b""}
+            elif not _log_resume_ok(state, log_key):
+                state.update({"buckets": {}, "offset": 0, "tail": b""})
+            state["key"] = log_key
+            offset, error = _scan_usage_from(
+                state["offset"],
+                lambda row: (_fold_usage_by_account(row, state["buckets"])
+                             if row_matches_provider(row, provider) else None))
+            if error is None:
+                state["offset"] = offset
+                state["tail"] = _log_tail_signature(offset)
+            else:
+                # 半折进去的那一行可能已经算过：整份过滤状态重来，与全量
+                # 视图的处置一致。
+                log("usage_by_account(%s) failed: %s" % (provider, error))
+                state.update({"buckets": {}, "offset": 0, "tail": b""})
+            return {k: dict(v) for k, v in state["buckets"].items()}
     with _byacct_state_lock:
         log_key = _usage_log_key()
         if _byacct_state["buckets"] is None:
@@ -6117,14 +6500,16 @@ def _usage_by_account_buckets():
     return out
 
 
-def _usage_by_account_uncached():
+def _usage_by_account_uncached(provider=None):
     """Aggregate the JSONL log per account id.
 
     Incremental: the fold is carried over and refreshed with the rows appended
     since the last call, so this costs what the new traffic costs instead of
     what the whole log costs.
+
+    provider 非 None 时用该提供商自己的增量折叠状态（只折匹配的行）。
     """
-    buckets = _usage_by_account_buckets()
+    buckets = _usage_by_account_buckets(provider)
     out = sorted(buckets.values(), key=lambda b: -b["total_tokens"])
     for item in out:
         item["models"] = sorted(item["models"].items(), key=lambda kv: -kv[1])[:5]
@@ -6133,20 +6518,27 @@ _analytics_cache = {}
 _analytics_lock = threading.Lock()
 
 
-def _analytics_scope(realm, range, since, until):
+def _analytics_scope(realm, range, since, until, provider=None):
     """(since, until, 缓存键) —— compute_usage_analytics() 与它的 ETag 共用。
 
     注意键里用的是**原始** realm（`realm or "all"`），与这个接口一直以来的键
     一致；折叠时用 realm_scope(realm) 另有其义。两者都不能顺手"统一"，否则就是
-    换了一条缓存键。
+    换了一条缓存键。provider 段只在开了过滤时插进键里：None 时键保持旧形状逐
+    字节不变，旧客户端手上的 ETag 不会因为这次升级全部失效。
     """
     lo, hi = range_window(range, since, until)
-    cache_key = "%s|%s|%s" % (realm or "all",
-                              lo if lo is not None else "", hi if hi is not None else "")
+    if provider:
+        cache_key = "%s|%s|%s|%s" % (realm or "all", provider,
+                                     lo if lo is not None else "",
+                                     hi if hi is not None else "")
+    else:
+        cache_key = "%s|%s|%s" % (realm or "all",
+                                  lo if lo is not None else "", hi if hi is not None else "")
     return lo, hi, cache_key
 
 
-def compute_usage_analytics(ttl=None, realm=None, range=None, since=None, until=None):
+def compute_usage_analytics(ttl=None, realm=None, range=None, since=None, until=None,
+                            provider=None):
     """Cached analytics payload.
 
     Unlike perf_stats/usage_snapshot/usage_by_account this used to run
@@ -6156,26 +6548,32 @@ def compute_usage_analytics(ttl=None, realm=None, range=None, since=None, until=
 
     The window joins the cache key for the same reason it does in the other
     readers: the payload's window bucket is what the KPI cards print, and this
-    week and this month overlap, so one entry cannot serve both.
+    week and this month overlap, so one entry cannot serve both. The provider
+    filter joins it for the same reason as ever: a filtered fold sees a
+    different set of rows and must never serve the unfiltered payload.
     """
+    provider = wb_accounts.provider_filter(provider)
     ttl = _STATS_TTL if ttl is None else ttl
     now = time.time()
-    lo, hi, cache_key = _analytics_scope(realm, range, since, until)
+    lo, hi, cache_key = _analytics_scope(realm, range, since, until, provider)
     with _analytics_lock:
         entry = _analytics_cache.get(cache_key)
         if entry is not None and (now - entry["at"]) < ttl:
             return entry["data"]
-        data = _compute_usage_analytics_uncached(realm=realm_scope(realm), since=lo, until=hi)
+        data = _compute_usage_analytics_uncached(realm=realm_scope(realm), since=lo,
+                                                 until=hi, provider=provider)
         _analytics_cache[cache_key] = {"at": time.time(), "data": data}
     return data
 
 
-def usage_analytics_etag(realm=None, range=None, since=None, until=None):
+def usage_analytics_etag(realm=None, range=None, since=None, until=None,
+                         provider=None):
     """compute_usage_analytics() 当前缓存条目的 ETag；无条目返回 None。
 
     配对调用由 _json_cached() 负责，理由见那里。
     """
-    _lo, _hi, cache_key = _analytics_scope(realm, range, since, until)
+    provider = wb_accounts.provider_filter(provider)
+    _lo, _hi, cache_key = _analytics_scope(realm, range, since, until, provider)
     with _analytics_lock:
         entry = _analytics_cache.get(cache_key)
     if entry is None:
@@ -6294,7 +6692,7 @@ def _bump_analytics_models(tgt, m_id, vals, is_err, cost_cny):
 
 
 def _fold_usage_analytics(row, realm, maps, half, pricing_on=None, also=None,
-                          pricing=None, priced=None):
+                          pricing=None, priced=None, provider=None):
     """Fold one parsed row into one half of the analytics payload.
 
     `maps` holds the four maps that half folds into and `half` names the stat
@@ -6316,8 +6714,13 @@ def _fold_usage_analytics(row, realm, maps, half, pricing_on=None, also=None,
 
     `priced` 是本次扫描要填的「用到的价」记录（见「用到的价」状态指纹一节），
     只有推进状态的那条折叠传它；窗口半/冷扫描传 None。
+
+    realm 与 provider 过滤在最前面一起做（None 表示对应维度不过滤）：两个
+    过滤器决定这行会不会进任何一份统计，位置与 _fold_usage_snapshot 一致。
     """
     if realm and not row_matches_realm(row, realm):
+        return
+    if provider and not row_matches_provider(row, provider):
         return
     # Only a genuine gateway/upstream failure is an error. A client
     # cancellation is not: its token counts are incomplete, and folding them
@@ -6392,17 +6795,17 @@ _analytics_state = {}
 _analytics_state_lock = threading.Lock()
 
 
-def _analytics_all_time(realm, pricing_on=None):
-    """The cached all-time fold for one realm filter; returns (maps, offset).
+def _analytics_all_time(realm, pricing_on=None, provider=None):
+    """The cached all-time fold for one (realm, provider) filter; returns (maps, offset).
 
-    One state per realm: the filter decides which rows the fold ever sees, so
-    two realms are two folds and neither may inherit the other's rows. Only
-    the all-time half is cached - the windowed half moves with the clock - and
-    the offset comes back with it so a windowed pass can stop where the fold
-    stopped.
+    One state per (realm, provider): the filters decide which rows the fold
+    ever sees, so two filters are two folds and neither may inherit the other's
+    rows. Only the all-time half is cached - the windowed half moves with the
+    clock - and the offset comes back with it so a windowed pass can stop where
+    the fold stopped.
     """
     with _analytics_state_lock:
-        state, offset, error = _analytics_state_ready(realm, pricing_on)
+        state, offset, error = _analytics_state_ready(realm, pricing_on, provider)
         if error is None:
             # Copied under the lock, same rule as the snapshot state: what
             # the caller decorates must not be the live fold.
@@ -6418,12 +6821,13 @@ def _analytics_all_time(realm, pricing_on=None):
             maps = state["maps"]
             state.update({"maps": _new_analytics_maps(), "offset": 0, "tail": b"",
                           "days": {}, "days_floor": None, "max_at": 0})
-    if error is None:
+    # provider 过滤状态不落盘（见 _analytics_state_advance）。
+    if error is None and not provider:
         _usage_cache_maybe_save("analytics", offset)
     return maps, offset
 
 
-def _analytics_state_advance(realm, pricing_on=None):
+def _analytics_state_advance(realm, pricing_on=None, provider=None):
     """（不折叠）取/建状态、采纳 checkpoint、判废归零、记指纹。
 
     调用方必须已持有 _analytics_state_lock。返回本次扫描取到的价表代次
@@ -6432,16 +6836,24 @@ def _analytics_state_advance(realm, pricing_on=None):
     状态刚建、刚被价表 / realm / 日志判废、或 checkpoint 采纳失败。与
     snapshot 侧同一套分工：采纳/判废只有这一段定义，_analytics_state_ready
     与窗口路径的冷热判定（_analytics_state_cold）共用它，两边不会漂移。
+
+    状态按 (realm, provider) 分键：provider 过滤决定折叠看见哪些行，两个
+    provider 的折叠绝不能互相继承对方的行。带 provider 过滤的状态不进
+    checkpoint（采纳与落盘都跳过）：checkpoint 档按 realm 记账，没有 provider
+    维度，adopt 一个未过滤的 offset 会把过滤前已经数过的行直接跳过。跳过只是
+    每次进程启动重折一遍（正确性不受影响），provider 维度的 checkpoint 留待
+    后续——与 snapshot 侧同一条规矩。
     """
-    state = _analytics_state.get(realm)
+    key = (realm, provider)
+    state = _analytics_state.get(key)
     if state is None:
-        state = _analytics_state[realm] = {"maps": _new_analytics_maps(),
-                                           "offset": 0, "key": None,
-                                           "pricing": None, "realm": None,
-                                           "tail": b"", "days": {},
-                                           "days_floor": None, "max_at": 0,
-                                           "hours_keep": True,
-                                           "hits": [], "hits_overflow": False}
+        state = _analytics_state[key] = {"maps": _new_analytics_maps(),
+                                         "offset": 0, "key": None,
+                                         "pricing": None, "realm": None,
+                                         "tail": b"", "days": {},
+                                         "days_floor": None, "max_at": 0,
+                                         "hours_keep": True,
+                                         "hits": [], "hits_overflow": False}
     pricing = _pricing_inputs(pricing_on)
     realm_inputs = _realm_inputs()
     log_key = _usage_log_key()
@@ -6449,7 +6861,9 @@ def _analytics_state_advance(realm, pricing_on=None):
                                       and pricing[0]) else None
     if state["key"] is None:
         # 全新状态（进程刚起来）：先问 checkpoint，问不到才从零折起。
-        if not _usage_cache_adopt_analytics(realm, state, log_key, pricing, realm_inputs):
+        # provider 过滤状态不问 checkpoint（见 docstring），直接冷折。
+        if provider or not _usage_cache_adopt_analytics(realm, state, log_key,
+                                                        pricing, realm_inputs):
             state.update({"maps": _new_analytics_maps(), "offset": 0, "tail": b"",
                           "days": {}, "days_floor": None, "max_at": 0,
                           "hits": [], "hits_overflow": False, "pricing": fresh})
@@ -6463,27 +6877,27 @@ def _analytics_state_advance(realm, pricing_on=None):
     return pricing
 
 
-def _analytics_state_cold(realm, pricing_on=None):
+def _analytics_state_cold(realm, pricing_on=None, provider=None):
     """窗口请求现在会不会付一次全量重折？True = 会（窗口改走冷扫描）。
 
     调用方必须已持有 _analytics_state_lock。语义与 _usage_snap_state_cold
     逐条相同：判定不折叠、不写结果，窗口请求不会把状态冻在冷态（offset 仍是
     0，下一个 all-time 半的请求照样从零折到文件尾），重折之后两边字节一致。
     """
-    _analytics_state_advance(realm, pricing_on)
-    return _analytics_state[realm]["offset"] <= 0
+    _analytics_state_advance(realm, pricing_on, provider)
+    return _analytics_state[(realm, provider)]["offset"] <= 0
 
 
-def _analytics_state_ready(realm, pricing_on=None):
-    """把 `realm` 的 all-time 折叠推进到文件尾；返回 (state, offset, error)。
+def _analytics_state_ready(realm, pricing_on=None, provider=None):
+    """把 (realm, provider) 的 all-time 折叠推进到文件尾；返回 (state, offset, error)。
 
     调用方必须已持有 _analytics_state_lock。日桶、小时子表与 all-time 折叠
     共用这一次扫描（见 _fold_usage_analytics 的 also），窗口半与 all-time 半
     因此描述同一段字节。
 
     `hours_keep` 标记这份状态要维护小时子表（剪枝线比日桶短，见
-    _prune_day_buckets）；`max_at` 是折过的最大 at（含 realm 不匹配的行），
-    小时窗口靠它判断窗口上界有没有切掉桶里的行。
+    _prune_day_buckets）；`max_at` 是折过的最大 at（含 realm/provider 不匹配
+    的行），小时窗口靠它判断窗口上界有没有切掉桶里的行。
 
     状态指纹是「折叠行真正用到的价」记录（T15，见「用到的价」状态指纹一节）：
     折叠时逐行更新（state["pricing"]），扫描成功后刷时间线投影摘要
@@ -6492,8 +6906,8 @@ def _analytics_state_ready(realm, pricing_on=None):
     采纳 checkpoint 与判废归零在 _analytics_state_advance 里（窗口路径的
     冷热判定也用那一段），这里只管折到文件尾。
     """
-    pricing = _analytics_state_advance(realm, pricing_on)
-    state = _analytics_state[realm]
+    pricing = _analytics_state_advance(realm, pricing_on, provider)
+    state = _analytics_state[(realm, provider)]
     priced = state["pricing"]
 
     def fold(row):
@@ -6502,7 +6916,7 @@ def _analytics_state_ready(realm, pricing_on=None):
         at = row.get("at") or 0
         if at > state["max_at"]:
             state["max_at"] = at
-        day = _usage_day_bucket(state, row, realm, _day_analytics_bucket)
+        day = _usage_day_bucket(state, row, realm, provider, _day_analytics_bucket)
         hour = _analytics_hour_bucket(day, at)
         if day is None:
             also = None
@@ -6512,7 +6926,7 @@ def _analytics_state_ready(realm, pricing_on=None):
             also = ((day, _ANALYTICS_WINDOW), (hour, _ANALYTICS_WINDOW))
         _fold_usage_analytics(
             row, realm, state["maps"], _ANALYTICS_ALL, pricing_on, also=also,
-            pricing=pricing, priced=priced)
+            pricing=pricing, priced=priced, provider=provider)
 
     offset, error = _scan_usage_from(state["offset"], fold)
     if error is None:
@@ -6522,7 +6936,7 @@ def _analytics_state_ready(realm, pricing_on=None):
     return state, offset, error
 
 
-def _analytics_window_from_days(realm, day_key, until, pricing_on):
+def _analytics_window_from_days(realm, day_key, until, pricing_on, provider=None):
     """窗口半 maps = 窗口内的日桶之和；日桶不可用时返回 None。
 
     先确保 all-time 折叠推进到文件尾：日桶与它同一次扫描推进，窗口半与
@@ -6540,9 +6954,9 @@ def _analytics_window_from_days(realm, day_key, until, pricing_on):
     （见 _analytics_state_cold）。
     """
     with _analytics_state_lock:
-        if _analytics_state_cold(realm, pricing_on):
+        if _analytics_state_cold(realm, pricing_on, provider):
             return None
-        state, offset, error = _analytics_state_ready(realm, pricing_on)
+        state, offset, error = _analytics_state_ready(realm, pricing_on, provider)
         if error is not None:
             log("compute_usage_analytics failed: %s" % error)
             state.update({"maps": _new_analytics_maps(), "offset": 0, "tail": b"",
@@ -6564,7 +6978,9 @@ def _analytics_window_from_days(realm, day_key, until, pricing_on):
             if until_key is not None and key >= until_key:
                 break
             _add_analytics_window_maps(maps, days[key])
-    _usage_cache_maybe_save("analytics", offset)
+    # provider 过滤状态不落盘（见 _analytics_state_advance）。
+    if not provider:
+        _usage_cache_maybe_save("analytics", offset)
     return maps
 
 
@@ -6590,7 +7006,7 @@ def _analytics_window_from_days(realm, day_key, until, pricing_on):
 # ---------------------------------------------------------------------------
 
 
-def _analytics_window_from_hours(realm, since, until, pricing_on):
+def _analytics_window_from_hours(realm, since, until, pricing_on, provider=None):
     """窗口半 maps = 窗口内的小时桶之和；小时层不可用时返回 None。
 
     成立条件（缺一不可，任何一条不成立就退回扫描——正确性优先）：
@@ -6609,9 +7025,9 @@ def _analytics_window_from_hours(realm, since, until, pricing_on):
     预热器（见 _analytics_state_cold）。
     """
     with _analytics_state_lock:
-        if _analytics_state_cold(realm, pricing_on):
+        if _analytics_state_cold(realm, pricing_on, provider):
             return None
-        state, offset, error = _analytics_state_ready(realm, pricing_on)
+        state, offset, error = _analytics_state_ready(realm, pricing_on, provider)
         if error is not None:
             log("compute_usage_analytics failed: %s" % error)
             state.update({"maps": _new_analytics_maps(), "offset": 0, "tail": b"",
@@ -6659,11 +7075,13 @@ def _analytics_window_from_hours(realm, since, until, pricing_on):
                     # 只取 at < until 的桶；那一刻有整秒行时上面已经退回。
                     break
                 _add_analytics_window_maps(maps, sub)
-    _usage_cache_maybe_save("analytics", offset)
+    # provider 过滤状态不落盘（见 _analytics_state_advance）。
+    if not provider:
+        _usage_cache_maybe_save("analytics", offset)
     return maps
 
 
-def _analytics_window(realm, since, until, stop_at, pricing_on):
+def _analytics_window(realm, since, until, stop_at, pricing_on, provider=None):
     """窗口半 analytics：对齐窗口由日桶/小时桶相加，其余保持整段扫描。
 
     与 _usage_snapshot_window 同一条规矩，外加一层小时桶：起点是本地午夜、
@@ -6676,24 +7094,27 @@ def _analytics_window(realm, since, until, stop_at, pricing_on):
     until_day = None if until is None else _window_day_key_safe(until)
     if (day_key is not None and _usage_day_buckets_enabled()
             and (until is None or until_day is not None)):
-        maps = _analytics_window_from_days(realm, day_key, until, pricing_on)
+        maps = _analytics_window_from_days(realm, day_key, until, pricing_on,
+                                           provider)
         if maps is not None:
             return maps
         # 日桶没盖住窗口起点：冷路径现折一份按日分组的窗口半，口径一致。
         return _scan_usage_analytics_window_days(realm, since, until, stop_at,
-                                                 pricing_on)
+                                                 pricing_on, provider)
     if _window_hour_aligned(since) and _usage_day_buckets_enabled():
-        maps = _analytics_window_from_hours(realm, since, until, pricing_on)
+        maps = _analytics_window_from_hours(realm, since, until, pricing_on,
+                                            provider)
         if maps is not None:
             return maps
         # 小时层没盖住：冷路径现折一份按小时分组的窗口半，口径与小时层一致。
         return _scan_usage_analytics_window_hours(realm, since, until, stop_at,
-                                                  pricing_on)
+                                                  pricing_on, provider)
     return _scan_usage_analytics_window(realm, since, until, stop_at=stop_at,
-                                        pricing_on=pricing_on)
+                                        pricing_on=pricing_on, provider=provider)
 
 
-def _scan_usage_analytics_window(realm, since, until, stop_at=None, pricing_on=None):
+def _scan_usage_analytics_window(realm, since, until, stop_at=None, pricing_on=None,
+                                 provider=None):
     """One pass over the log, folding only the rows inside the window.
 
     The all-time half is not rebuilt here - it comes from the incremental fold
@@ -6715,7 +7136,7 @@ def _scan_usage_analytics_window(realm, since, until, stop_at=None, pricing_on=N
         if until is not None and at > until:
             return
         _fold_usage_analytics(row, realm, maps, _ANALYTICS_WINDOW, pricing_on,
-                              pricing=pricing)
+                              pricing=pricing, provider=provider)
 
     _, error = _scan_usage_from(
         0, fold, stop_at=stop_at,
@@ -7212,16 +7633,18 @@ def _day_series_bucket(key, day_start):
     return bucket
 
 
-def _usage_day_bucket(state, row, r, factory):
+def _usage_day_bucket(state, row, r, p, factory):
     """这一行该折进哪个日桶；必要时新建（顺带剪枝），不该折时返回 None。
 
     行的归属只看它自己的 at：补写/迟到的行必须落进它时间戳所属的那天。
-    realm 不匹配的行折叠本来就会跳过，这里也不为它建桶；总开关关掉时连
-    日桶都不折（窗口路径也不会用它们，见 _usage_day_buckets_enabled）。
+    realm / provider 不匹配的行折叠本来就会跳过，这里也不为它建桶；总开关
+    关掉时连日桶都不折（窗口路径也不会用它们，见 _usage_day_buckets_enabled）。
     """
     if not _usage_day_buckets_enabled():
         return None
     if r and not row_matches_realm(row, r):
+        return None
+    if p and not row_matches_provider(row, p):
         return None
     at = row.get("at") or 0
     key = _local_day_key(at)
@@ -7490,7 +7913,7 @@ def _copy_analytics_window_maps(maps):
     return out
 
 
-def _scan_usage_snapshot_window_days(r, since, until, pricing_on=None):
+def _scan_usage_snapshot_window_days(r, p, since, until, pricing_on=None):
     """窗口半的冷路径：整段扫一遍，先按日分桶再相加。
 
     日桶状态不可用（还没折过、被剪枝、折叠出错）时走这里。结果必须与日桶
@@ -7517,7 +7940,7 @@ def _scan_usage_snapshot_window_days(r, since, until, pricing_on=None):
         bucket = days.get(key)
         if bucket is None:
             bucket = days[key] = _empty_stats()
-        _fold_usage_snapshot(row, bucket, r, None, None, pricing_on,
+        _fold_usage_snapshot(row, bucket, r, p, None, None, pricing_on,
                              pricing=pricing)
 
     _, error = _scan_usage_from(
@@ -7534,7 +7957,7 @@ def _scan_usage_snapshot_window_days(r, since, until, pricing_on=None):
     return snap
 
 
-def _scan_usage_snapshot_window_hours(r, since, until, pricing_on=None):
+def _scan_usage_snapshot_window_hours(r, p, since, until, pricing_on=None):
     """窗口半的冷路径：整段扫一遍，先按小时分桶再相加。
 
     小时层状态不可用（还没折过、被剪枝、折叠出错、那天的格点不成立）时走
@@ -7568,7 +7991,7 @@ def _scan_usage_snapshot_window_hours(r, since, until, pricing_on=None):
         bucket = hours.get((key, hour))
         if bucket is None:
             bucket = hours[(key, hour)] = _empty_stats()
-        _fold_usage_snapshot(row, bucket, r, None, None, pricing_on,
+        _fold_usage_snapshot(row, bucket, r, p, None, None, pricing_on,
                              pricing=pricing)
 
     _, error = _scan_usage_from(
@@ -7586,7 +8009,7 @@ def _scan_usage_snapshot_window_hours(r, since, until, pricing_on=None):
 
 
 def _scan_usage_analytics_window_days(realm, since, until, stop_at=None,
-                                      pricing_on=None):
+                                      pricing_on=None, provider=None):
     """窗口半 analytics 的冷路径：按日分桶再相加（见 snapshot 版）。"""
     pricing = _pricing_inputs(pricing_on)
     days = {}
@@ -7602,7 +8025,7 @@ def _scan_usage_analytics_window_days(realm, since, until, stop_at=None,
         if maps is None:
             maps = days[key] = _new_analytics_maps()
         _fold_usage_analytics(row, realm, maps, _ANALYTICS_WINDOW, pricing_on,
-                              pricing=pricing)
+                              pricing=pricing, provider=provider)
 
     _, error = _scan_usage_from(
         0, fold, stop_at=stop_at,
@@ -7617,7 +8040,7 @@ def _scan_usage_analytics_window_days(realm, since, until, stop_at=None,
 
 
 def _scan_usage_analytics_window_hours(realm, since, until, stop_at=None,
-                                       pricing_on=None):
+                                       pricing_on=None, provider=None):
     """窗口半 analytics 的冷路径（起点整小时）：按小时分桶再相加。
 
     小时层不可用（还没折过、被剪枝、折叠出错、until 切在桶中间）时走这里。
@@ -7649,7 +8072,7 @@ def _scan_usage_analytics_window_hours(realm, since, until, stop_at=None,
         if maps is None:
             maps = hours[hour] = _new_analytics_maps()
         _fold_usage_analytics(row, realm, maps, _ANALYTICS_WINDOW, pricing_on,
-                              pricing=pricing)
+                              pricing=pricing, provider=provider)
 
     _, error = _scan_usage_from(
         0, fold, stop_at=stop_at,
@@ -7790,14 +8213,21 @@ def _prune_series_minutes(state):
         del minutes[key]
 
 
-def _fold_usage_series(row, r, state):
-    """一行折进时间序列状态：日桶 + 小时桶 + 分钟环 + credit 缓冲。"""
+def _fold_usage_series(row, r, state, provider=None):
+    """一行折进时间序列状态：日桶 + 小时桶 + 分钟环 + credit 缓冲。
+
+    provider 非 None 时只折匹配的行——过滤状态与切片结果必须和整段扫描的
+    行级过滤逐条一致（见 _usage_timeseries_scan）。过滤放在 max_at 之前：
+    另一个提供商的行不能把这条状态的覆盖线推高。
+    """
+    if provider and not row_matches_provider(row, provider):
+        return
     at = row.get("at") or 0
     if at > state["max_at"]:
         # 折过的最大 at：窗口上界（hi=now）只要不低于它，存量桶就都在窗口内。
         # 越界的行（时钟回拨/补写）会让它偏大，那只是更保守，方向安全。
         state["max_at"] = at
-    bucket = _usage_day_bucket(state, row, r, _day_series_bucket)
+    bucket = _usage_day_bucket(state, row, r, None, _day_series_bucket)
     if bucket is None:
         return
     _feed_series_bucket(bucket, row)
@@ -7824,20 +8254,25 @@ def _fold_usage_series(row, r, state):
         _series_credit_push(state["credits"], row, at)
 
 
-def _usage_series_state_ready(r):
+def _usage_series_state_ready(r, provider=None):
     """把 `r` 的时间序列状态推进到文件尾；返回 (state, offset, error)。
 
     调用方必须已持有 _series_state_lock。时间序列折叠不算价，所以状态只带
     realm 指纹（行没有 realm 字段时 row_realm() 会读它）。
+
+    状态按 (realm, provider) 分键：provider 过滤视图的行集与全量视图不同，
+    不能共用一份折叠。过滤状态不采纳、也不写 checkpoint（文件里存的是全量
+    口径，拿它当过滤状态会把另一个提供商的行算进来），见调用点的落盘判断。
 
     状态里的 `minutes_from` 是分钟环的完整线：从零折起（含 refold）时它是
     None（环对整份日志完整）；采用了一份没有分钟环的旧 checkpoint 时，环只
     对采用点之后折进来的行完整，那条线就是采用时的 max_at（见
     _usage_cache_adopt_series）。
     """
-    state = _series_state.get(r)
+    key = r if not provider else (r, provider)
+    state = _series_state.get(key)
     if state is None:
-        state = _series_state[r] = {
+        state = _series_state[key] = {
             "days": {}, "days_floor": None, "max_at": 0, "credits": [],
             "minutes": {}, "minutes_from": None,
             "hits": [], "hits_overflow": False,
@@ -7846,7 +8281,8 @@ def _usage_series_state_ready(r):
     log_key = _usage_log_key()
     if state["key"] is None:
         # 全新状态（进程刚起来）：先问 checkpoint，问不到才从零折起。
-        if not _usage_cache_adopt_series(r, state, log_key, realm):
+        # 过滤状态不问：checkpoint 只有全量折叠。
+        if provider or not _usage_cache_adopt_series(r, state, log_key, realm):
             state.update({"days": {}, "days_floor": None, "max_at": 0,
                           "credits": [], "minutes": {}, "minutes_from": None,
                           "hits": [], "hits_overflow": False,
@@ -7858,7 +8294,7 @@ def _usage_series_state_ready(r):
                       "offset": 0, "tail": b""})
     state.update({"realm": realm, "key": log_key})
     offset, error = _scan_usage_from(
-        state["offset"], lambda row: _fold_usage_series(row, r, state))
+        state["offset"], lambda row: _fold_usage_series(row, r, state, provider))
     if error is None:
         state["offset"] = offset
         state["tail"] = _log_tail_signature(offset)
@@ -8204,11 +8640,13 @@ def _build_key_rows(key_map, realm=None):
     return out
 
 
-def _enrich_accounts_from_pool(acct_map, realm=None):
+def _enrich_accounts_from_pool(acct_map, realm=None, provider=None):
     """Attach nickname/realm/credits for accounts that saw no traffic."""
     if POOL:
         for a in POOL.accounts:
             if realm and a.realm != realm:
+                continue
+            if provider and a.provider != provider:
                 continue
             if a.uid in acct_map:
                 acct_map[a.uid]["nickname"] = a.nickname
@@ -8241,11 +8679,12 @@ def _finalize_analytics_stat(stat_obj):
         stat_obj["elapsed_ms_avg"] = round(stat_obj["elapsed_sum"] / stat_obj["elapsed_n"]) if stat_obj["elapsed_n"] > 0 else 0
         return stat_obj
 
-def _compute_usage_analytics_uncached(realm=None, since=None, until=None):
+def _compute_usage_analytics_uncached(realm=None, since=None, until=None,
+                                      provider=None):
     """Detailed analytics for Token, Cache, and Reasoning metrics page."""
     # 与 /usage 快照同一条规矩：一次扫描里总开关只问一次，值传进折叠与指纹。
     pricing_on = wb_pricing.pricing_enabled()
-    all_maps, offset = _analytics_all_time(realm, pricing_on)
+    all_maps, offset = _analytics_all_time(realm, pricing_on, provider)
     if since is None and until is None:
         # An open window covers every row, so the windowed half is the
         # all-time fold over again; the merge copies the two apart.
@@ -8255,12 +8694,13 @@ def _compute_usage_analytics_uncached(realm=None, since=None, until=None):
         # the day buckets that fold advanced (or, failing that, from a pass
         # that stops where that fold stopped), so one page never mixes two
         # reads.
-        win_maps = _analytics_window(realm, since, until, offset, pricing_on)
+        win_maps = _analytics_window(realm, since, until, offset, pricing_on,
+                                     provider)
     parts = _merge_analytics_halves(all_maps, win_maps)
     acct_map = parts["accts"]
     model_map = parts["models"]
     key_map = parts["keys"]
-    _enrich_accounts_from_pool(acct_map, realm=realm)
+    _enrich_accounts_from_pool(acct_map, realm=realm, provider=provider)
     all_summary = parts["summary"]
     window_summary = parts["window_summary"]
     _finalize_analytics_stat(all_summary)
@@ -9584,6 +10024,10 @@ def _usage_cache_collect_kind(kind):
         done = 0
         with _series_state_lock:
             for realm, state in _series_state.items():
+                if isinstance(realm, tuple):
+                    # provider 过滤状态不落盘（见 _usage_series_state_ready）：
+                    # 文件里的折叠只有全量口径。
+                    continue
                 entry = _usage_cache_series_entry(realm, state)
                 if entry is not None:
                     entries.append(entry)
@@ -10237,7 +10681,20 @@ def note_bundled_reasoning(realm, live, entries):
     shown = ", ".join(missing[:6]) + (" ..." if len(missing) > 6 else "")
     log("catalog    : bundled table fills in reasoning controls the live "
         "catalogue omits for %d model(s): %s" % (len(missing), shown))
-def catalog_meta(realm=None):
+def _catalog_cache_key(realm, provider=None):
+    """模型目录缓存键：WorkBuddy 沿用 realm 本身（旧键逐字不变），其余带前缀。
+
+    两类目录分账存：同一个 realm 的 WorkBuddy 清单与 Qoder 清单是两份东西，
+    共用键会互相顶掉。
+    """
+    p = wb_accounts.provider_filter(provider)
+    r = realm or CURRENT_REALM
+    if not p or p == wb_accounts.DEFAULT_PROVIDER:
+        return r
+    return "%s:%s" % (p, r)
+
+
+def catalog_meta(realm=None, provider=None):
     """The provenance of the last list built for a realm, for the panel.
 
     {"source": "remote" | "endpoint" | "cache" | "legacy" | "bundled",
@@ -10245,13 +10702,55 @@ def catalog_meta(realm=None):
      "file_mtime": unix seconds of the desktop cache file's own write
                    (only for the config-file sources), else None}
     """
-    r = realm or CURRENT_REALM
+    key = _catalog_cache_key(realm, provider)
     with _lock:
-        meta = _catalog_meta.get(r)
+        meta = _catalog_meta.get(key)
         return dict(meta) if meta else None
 
 
-def fetch_models(realm=None):
+def _fetch_qoder_models(realm):
+    """Qoder 目录：wb_qoder 的模型清单（远端 COSY 列表，失败回内置快照）。
+
+    与 WorkBuddy 目录同款：300s 内存缓存 + _catalog_lock（一次上游走查不会
+    被并发的 /v1/models 放大成一批），缓存与来源都记在 "qoder:<realm>" 键上。
+    账号可取（该 realm 有 Qoder 代表账号）时走远端列表，否则用内置快照。
+    """
+    key = _catalog_cache_key(realm, "qoder")
+    r = realm or CURRENT_REALM
+    with _lock:
+        c = _models_cache.get(key) or {"at": 0.0, "data": None}
+        if c["data"] and time.time() - c["at"] < 300:
+            return c["data"]
+    with _catalog_lock:
+        with _lock:
+            c = _models_cache.get(key) or {"at": 0.0, "data": None}
+            if c["data"] and time.time() - c["at"] < 300:
+                return c["data"]
+        account = (POOL.representative(realm=r, provider="qoder")
+                   if POOL else None)
+        try:
+            models, source = wb_qoder.available_models(
+                r,
+                access_token=account.access_token if account else None,
+                auth=account.qoder_auth if account else None,
+                data_dir=ACCOUNTS_DIR, log=log)
+        except Exception as exc:
+            log("qoder catalog: %s failed (%s)" % (r, exc))
+            models, source = wb_qoder.static_models(r), "bundled"
+        entries = [(m["id"], wb_qoder.model_entry_meta(m)) for m in models]
+        if source == "remote":
+            note_remote_catalog(r, provider="qoder")
+        with _lock:
+            _models_cache[key] = {"at": time.time(), "data": entries}
+            _catalog_meta[key] = {"source": source, "fetched_at": time.time(),
+                                  "file_mtime": None}
+        return entries
+
+
+def fetch_models(realm=None, provider=None):
+    """模型清单：按提供商分账（WorkBuddy = 旧路径，Qoder = wb_qoder 目录）。"""
+    if wb_accounts.provider_filter(provider) == "qoder":
+        return _fetch_qoder_models(realm)
     r = realm or CURRENT_REALM
     with _lock:
         c = _models_cache.get(r) or {"at": 0.0, "data": None}
@@ -10293,6 +10792,65 @@ def fetch_models(realm=None):
             _catalog_meta[r] = {"source": source, "fetched_at": time.time(),
                                 "file_mtime": file_mtime}
         return entries
+def _model_in_qoder_catalog(model):
+    """Qoder 目录（内存缓存或内置快照）里有没有这个 id。
+
+    只读缓存与内置清单：兜底判断发生在每个聊天请求上，绝不能因此发一次上游
+    目录请求。缓存键是 "qoder:<realm>"，两个 realm 都看（请求没带 realm 时
+    无从知道该看哪一份）。
+    """
+    name = str(model or "").strip()
+    if not name:
+        return False
+    for r in ("intl", "cn"):
+        with _lock:
+            entry = _models_cache.get(_catalog_cache_key(r, "qoder"))
+        for mid, _meta in (entry or {}).get("data") or ():
+            if str(mid) == name:
+                return True
+        for item in wb_qoder.static_models(r):
+            if item.get("id") == name or item.get("key") == name:
+                return True
+    return False
+
+
+def _model_in_workbuddy_catalog(model):
+    """WorkBuddy 目录（内存缓存或内置清单）里有没有这个 id。"""
+    name = str(model or "").strip()
+    if not name:
+        return False
+    lowered = name.lower()
+    for r in ("intl", "cn", "all"):
+        with _lock:
+            entry = _models_cache.get(r)
+        for mid, _meta in (entry or {}).get("data") or ():
+            if str(mid).strip().lower() == lowered:
+                return True
+    for table_name in ("STATIC_INTL_MODELS", "STATIC_CN_MODELS", "STATIC_MODELS"):
+        for item in getattr(wb_catalog, table_name, None) or ():
+            if isinstance(item, dict) and \
+                    str(item.get("id") or "").strip().lower() == lowered:
+                return True
+    return False
+
+
+def qoder_provider_hint_for_model(model):
+    """没有显式 provider 提示时，按模型归属判断要不要走 Qoder。
+
+    保守规则：Qoder 目录认识、WorkBuddy 目录不认识 -> qoder；其余（包括两边
+    都认识的）一律交给原来的 WorkBuddy 路径。这样老客户端不改一个字，Qoder
+    独有模型名也不会再被送进 WorkBuddy 账号池。两边都只查内存缓存与内置
+    快照，不发上游。
+    """
+    if not model:
+        return None
+    if _model_in_workbuddy_catalog(model):
+        return None
+    if _model_in_qoder_catalog(model):
+        return "qoder"
+    return None
+
+
 def model_entry(mid, meta):
     """Build a rich /v1/models entry from the desktop app catalog metadata.
     The OpenAI spec only names id/object/created/owned_by, so capability data is
@@ -10305,7 +10863,7 @@ def model_entry(mid, meta):
         "id": mid,
         "object": "model",
         "created": int(time.time()),
-        "owned_by": "workbuddy",
+        "owned_by": meta.get("ownedBy") or "workbuddy",
     }
     name = meta.get("name")
     if name:
@@ -10667,8 +11225,60 @@ CATALOG_REFRESH_COOLDOWN = 30.0
 _catalog_refresh_at = {}
 
 
-def refresh_catalog(realm):
-    """手动刷新：立即向上游拉一次该 realm 的目录并发布到 /v1/models。
+def _refresh_qoder_catalog(realm, provider="qoder"):
+    """Qoder 的手动刷新：用该 realm 的代表账号拉一次模型清单（COSY 签名）。
+
+    与 WorkBuddy 那路共用冷却表与 _catalog_lock，但冷却键带提供商前缀，两边
+    互不占用；没有可用账号时给出明确提示（面板直接展示），拉不到就保留旧
+    清单。
+    """
+    if realm not in ("intl", "cn"):
+        return {"ok": False, "realm": None, "source": None, "count": 0,
+                "msg": "realm 必须是 intl 或 cn"}
+    key = _catalog_cache_key(realm, provider)
+    now = time.time()
+    with _lock:
+        wait = CATALOG_REFRESH_COOLDOWN - (now - _catalog_refresh_at.get(key, 0.0))
+        if wait > 0:
+            return {"ok": False, "realm": realm, "source": None, "count": 0,
+                    "cooldown": True, "retry_after": round(wait, 1),
+                    "msg": "刷新太频繁：约 %d 秒后可再试" % max(1, int(wait + 0.5))}
+        # 先登记再拉取：失败也进冷却，连点的高频重试在这里就被拦住。
+        _catalog_refresh_at[key] = now
+    with _catalog_lock:
+        account = (POOL.representative(realm=realm, provider=provider)
+                   if POOL else None)
+        if account is None:
+            return {"ok": False, "realm": realm, "source": None, "count": 0,
+                    "msg": "没有可用的 Qoder 账号：先在「%s」区添加一个再刷新"
+                           % realm}
+        try:
+            models, source = wb_qoder.available_models(
+                realm, access_token=account.access_token,
+                auth=account.qoder_auth, data_dir=ACCOUNTS_DIR, force=True,
+                log=log)
+        except Exception as exc:
+            log("catalog refresh: qoder %s failed (%s)" % (realm, exc))
+            models, source = [], "bundled"
+        if source != "remote" or not models:
+            log("catalog refresh: qoder %s kept the previous list (upstream gave none)"
+                % realm)
+            return {"ok": False, "realm": realm, "source": None, "count": 0,
+                    "msg": "上游未返回可用目录（账号不可用或网络异常），已保留现有清单"}
+        entries = [(m["id"], wb_qoder.model_entry_meta(m)) for m in models]
+        with _lock:
+            _models_cache[key] = {"at": time.time(), "data": entries}
+            _catalog_meta[key] = {"source": "remote", "fetched_at": time.time(),
+                                  "file_mtime": None}
+    log("catalog refresh: qoder %s updated from the model list endpoint (%d models)"
+        % (realm, len(entries)))
+    note_remote_catalog(realm, provider=provider)
+    return {"ok": True, "realm": realm, "source": "remote", "count": len(entries),
+            "msg": "已从上游 API 更新 Qoder 清单，共 %d 个模型" % len(entries)}
+
+
+def refresh_catalog(realm, provider=None):
+    """手动刷新：立即向上游拉一次该「提供商×realm」的目录并发布到 /v1/models。
 
     与自动链（fetch_models 缓存过期后）共用同一条取数管线：
     fetch_remote_product_config 只挑该 realm 的代表账号、只打该 realm 的
@@ -10676,12 +11286,16 @@ def refresh_catalog(realm):
     绝无跨区取数）；_catalog_lock 与自动链互斥，不会并发打到上游；失败
     时不清旧缓存——清单保持可用，等用户或自动链下次再拉。与自动链的一个
     差别：这里不读桌面缓存文件，拉不到就说拉不到（手动按钮要的是「这次
-    真的从上游 API 取到了」的如实反馈）。
+    真的从上游 API 取到了」的如实反馈）。Qoder 走 _refresh_qoder_catalog，
+    同样的冷却/隔离纪律。
 
     返回面板可直接展示的 dict（任何情况都不抛异常）：
       {"ok": bool, "realm": str|None, "source": "remote"|None,
        "count": int, "cooldown": bool?, "retry_after": float?, "msg": str}
     """
+    p = wb_accounts.provider_filter(provider)
+    if p and p != wb_accounts.DEFAULT_PROVIDER:
+        return _refresh_qoder_catalog(realm, p)
     if realm not in ("intl", "cn"):
         return {"ok": False, "realm": None, "source": None, "count": 0,
                 "msg": "realm 必须是 intl 或 cn"}
@@ -10729,36 +11343,46 @@ CATALOG_DAILY_INTERVAL = 24 * 3600
 _catalog_last_remote = {}
 
 
-def note_remote_catalog(realm, when=None):
-    """记下该 realm 最近一次成功从上游 API 拿到目录的时刻。"""
+def note_remote_catalog(realm, when=None, provider=None):
+    """记下该「提供商×realm」最近一次成功从上游 API 拿到目录的时刻。
+
+    WorkBuddy 的键就是 realm 本身（旧键逐字不变），其余带提供商前缀。
+    """
     if realm not in ("intl", "cn"):
         return
+    key = _catalog_cache_key(realm, provider)
     with _lock:
-        _catalog_last_remote[realm] = when if when is not None else time.time()
+        _catalog_last_remote[key] = when if when is not None else time.time()
 
 
-def catalog_daily_due(now=None):
+def catalog_daily_due(now=None, provider=None):
     """到期的 realm 列表：距上次成功 API 获取 ≥ 24h（从未成功过也算到期）。"""
     now = now if now is not None else time.time()
+    p = wb_accounts.provider_filter(provider)
     with _lock:
         return [r for r in ("intl", "cn")
-                if now - _catalog_last_remote.get(r, 0.0) >= CATALOG_DAILY_INTERVAL]
+                if now - _catalog_last_remote.get(_catalog_cache_key(r, p), 0.0)
+                >= CATALOG_DAILY_INTERVAL]
 
 
 def catalog_daily_pass(now=None):
-    """每日兜底的一轮：只为到期的 realm 触发一次刷新。
+    """每日兜底的一轮：只为到期的「提供商×realm」触发一次刷新。
 
     与手动刷新共用 refresh_catalog（同一把 _catalog_lock、同一个 30s 冷却、
-    同样的 realm 隔离），失败保留旧数据。没有可用账号的 realm 静默跳过——
+    同样的 realm 隔离），失败保留旧数据。没有可用账号的组合静默跳过——
     不是错误，等有账号了下一轮再看，也不留日志噪声。
     """
     done = []
-    for realm in catalog_daily_due(now):
-        if POOL is None or POOL.representative(realm=realm) is None:
-            continue
-        out = refresh_catalog(realm)
-        log("catalog daily: %s -> %s" % (realm, out.get("msg")))
-        done.append((realm, out))
+    for provider in wb_accounts.PROVIDERS:
+        for realm in catalog_daily_due(now, provider):
+            if POOL is None or POOL.representative(realm=realm,
+                                                   provider=provider) is None:
+                continue
+            out = refresh_catalog(realm, provider)
+            label = (realm if provider == wb_accounts.DEFAULT_PROVIDER
+                     else "%s/%s" % (provider, realm))
+            log("catalog daily: %s -> %s" % (label, out.get("msg")))
+            done.append((realm, out))
     return done
 
 
@@ -12221,6 +12845,25 @@ def build_upstream_body(payload):
     return body
 
 
+def qoder_chat_request(payload):
+    """把请求体整理成 Qoder 能吃的 chat 形状。
+
+    /v1/completions 是网关一直提供的别名，多数客户端仍发 chat 形状；但旧版
+    OpenAI completions 只给 prompt。这里把 prompt 补成一条 user 消息，别让
+    上游收到空对话。已有 messages 时原样使用。
+    """
+    req = dict(payload) if isinstance(payload, dict) else {}
+    if req.get("messages"):
+        return req
+    prompt = req.get("prompt")
+    if prompt is None:
+        return req
+    if isinstance(prompt, list):
+        prompt = "\n".join(str(p) for p in prompt if p is not None)
+    req["messages"] = [{"role": "user", "content": str(prompt)}]
+    return req
+
+
 def model_catalog_meta(model):
     """The catalog metadata dict for a model, or {}.
 
@@ -12787,6 +13430,176 @@ def _apply_stream_idle_timeout(response, seconds):
         return False
 
 
+class QoderUpstreamAdapter:
+    """把 Qoder 的 OpenAI 增量块包装成下游管线认的 SSE 字节流。
+
+    网关的聊天管线（_chat_stream_response / aggregate_stream /
+    _messages_* / _responses_*）只认「带 read1() 的字节源」：它们按行解析
+    `data: {...}`，[DONE] 由下游自己写。Qoder 的流是 COSY envelope，
+    wb_qoder_chat.iter_openai_chunks() 已经把它翻译成 OpenAI chunk 序列，
+    这里只做序列化。
+
+    生成器里的异常原样从 read1() 冒出来，交给调用方的 except 按「上游断流」
+    记账——与 WorkBuddy 的 HTTPResponse 行为一致。
+    """
+
+    def __init__(self, resp, model):
+        self._raw = resp
+        self._chunks = wb_qoder_chat.iter_openai_chunks(resp, model)
+        self._pending = b""
+        self._done = False
+
+    def read1(self, size=-1):
+        while not self._pending and not self._done:
+            try:
+                chunk = next(self._chunks)
+            except StopIteration:
+                self._done = True
+                break
+            self._pending = ("data: %s\n\n" % json.dumps(
+                chunk, ensure_ascii=False)).encode("utf-8")
+        if not self._pending:
+            return b""
+        if size is None or size < 0:
+            data, self._pending = self._pending, b""
+            return data
+        data, self._pending = self._pending[:size], self._pending[size:]
+        return data
+
+    # iter_sse_lines 优先用 read1()；read() 只是给按文件对象用的调用方兜底。
+    def read(self, size=-1):
+        return self.read1(size)
+
+    def close(self):
+        try:
+            if hasattr(self._raw, "close"):
+                self._raw.close()
+        except Exception:
+            pass
+        finally:
+            self._chunks = iter(())
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+        return False
+
+
+def open_qoder_upstream(payload, session_key=None, target_realm=None):
+    """Qoder 版的 open_upstream：选号、构造 COSY 请求、返回 (adapter, account, effort)。
+
+    错误语义与 open_upstream 对齐：没有可用账号 -> RuntimeError("no usable
+    account ...")（调用方映射 503）；429 -> RateLimited；401 -> 刷新凭证后对
+    同一个账号重试一次；5xx 与网络错误换号；其余 4xx 原样抛出。
+    """
+    realm = target_realm or CURRENT_REALM
+    if POOL is None:
+        raise RuntimeError("no usable account for realm '%s': the account pool "
+                           "is empty" % realm)
+    model = str(payload.get("model") or "")
+    total = max(1, POOL.count_ready(realm, model=model, provider="qoder"))
+    header_timeout, idle_timeout = upstream_timeouts()
+    tried = set()
+    charged = set()
+    last_error = None
+    last_uid = None
+    last_429 = None
+    last_429_detail = ""
+
+    def charge(account, message):
+        # 一次请求对一个账号最多记一笔，与 open_upstream 的 charged 同一用意。
+        if account.uid in charged:
+            return
+        charged.add(account.uid)
+        account.note_failure(message)
+
+    for _attempt in range(max(2, total) + 1):
+        account = POOL.pick_for_session(realm=realm, session_key=session_key,
+                                        exclude=tried, model=model,
+                                        provider="qoder")
+        if account is None:
+            break
+        if account.realm != realm:
+            if session_key and POOL:
+                POOL.affinity.demote(session_key, account.uid)
+            continue
+        tried.add(account.uid)
+        last_uid = account.uid
+        resolved = wb_qoder_chat.resolve_model_config(
+            realm, model, access_token=account.access_token,
+            auth=account.qoder_auth, data_dir=ACCOUNTS_DIR,
+            proxy=account.proxy)
+        if resolved is None:
+            raise RuntimeError(
+                "Qoder 目录里没有模型 '%s'（%s）：从 /v1/models?provider=qoder "
+                "里挑一个，或先刷新目录" % (model, realm))
+        identity = {
+            "user_id": str(account.qoder_auth.get("userId") or account.uid),
+            "access_token": account.access_token,
+            "name": account.qoder_auth.get("name") or "",
+            "email": account.qoder_auth.get("email") or "",
+            "machineId": account.qoder_auth.get("machineId") or "",
+            "realm": realm,
+        }
+        # 一次账号机会里最多两条请求：401 时刷新凭证，拿新 token 再打一次同号。
+        for attempt in (1, 2):
+            built = wb_qoder_chat.build_chat_request(
+                payload, resolved, identity, session_id=session_key,
+                data_dir=ACCOUNTS_DIR)
+            req = urllib.request.Request(built["url"], data=built["body"],
+                                         method="POST",
+                                         headers=built["headers"])
+            try:
+                resp = wb_accounts.urlopen(req, timeout=header_timeout,
+                                           proxy=account.proxy)
+                _apply_stream_idle_timeout(resp, idle_timeout)
+                account.note_success(model=model)
+                return (QoderUpstreamAdapter(resp, model), account,
+                        built.get("effort"))
+            except urllib.error.HTTPError as exc:
+                if exc.code == 401 and attempt == 1:
+                    if not account.refresh():
+                        last_error = exc
+                        break
+                    identity["access_token"] = account.access_token
+                    continue
+                if exc.code == 429:
+                    try:
+                        last_429_detail = exc.read(400).decode("utf-8", "replace")
+                    except Exception:
+                        last_429_detail = ""
+                    last_429 = exc
+                    last_error = exc
+                    break
+                if exc.code >= 500:
+                    charge(account, "HTTP %d" % exc.code)
+                    last_error = exc
+                    break
+                raise
+            except Exception as exc:
+                if is_transient(exc):
+                    charge(account, "connection: %s" % exc_detail(exc, 120))
+                    last_error = exc
+                    break
+                raise
+    if last_429 is not None:
+        exc = RateLimited(last_429, last_429_detail,
+                          wait=retry_after_seconds(model, realm))
+        exc.account_uid = last_uid
+        raise exc
+    if last_error is not None:
+        try:
+            last_error.account_uid = last_uid
+        except Exception:
+            pass
+        raise last_error
+    raise RuntimeError(
+        "no usable account for realm '%s': no enabled Qoder account is ready%s"
+        % (realm, pool_unavailable_detail(realm, model, provider="qoder")))
+
+
 def open_upstream(payload, session_key=None, target_realm=None, prebuilt_body=None):
     # Refresh the daily guards before picking. The scan underneath is
     # incremental and TTL-cached, so this is a stat() plus a cached dict on
@@ -13150,7 +13963,7 @@ def open_upstream(payload, session_key=None, target_realm=None, prebuilt_body=No
                        "expired or parked by the daily token limit%s"
                        % (realm, pool_unavailable_detail(realm, model)))
 
-def pool_unavailable_detail(realm, model=None):
+def pool_unavailable_detail(realm, model=None, provider=None):
     """把该区域每个账号不可用的原因拼成一句，附在「没有可用账号」后面。
 
     这句话以前只列了四种可能（停用 / 冷却 / 过期 / 日限额），而 v1.6.16 之后
@@ -13163,7 +13976,9 @@ def pool_unavailable_detail(realm, model=None):
     """
     if POOL is None:
         return ""
-    accounts = [a for a in POOL.accounts if a.realm == realm]
+    want = wb_accounts.provider_filter(provider)
+    accounts = [a for a in POOL.accounts
+                if a.realm == realm and (not want or a.provider == want)]
     if not accounts:
         return "；该区域没有任何账号"
     reasons = []
@@ -14186,8 +15001,13 @@ def _responses_input_to_messages(payload):
     return messages
 
 
-def responses_to_chat(payload):
-    """Translate a Responses API request body into a Chat Completions body."""
+def responses_to_chat(payload, web_tools=True):
+    """Translate a Responses API request body into a Chat Completions body.
+
+    web_tools=False 时不安装网关自己的 web 工具（_web_tools 标记与代跑回路）：
+    Qoder 上游没有对应的回填通道（follow_up_with_tool_results 固定回
+    WorkBuddy），装了只会让客户端看到没人执行的工具调用。
+    """
     messages = _responses_input_to_messages(payload)
     chat = {"model": payload.get("model"), "messages": messages}
     for key in ("temperature", "top_p", "seed"):
@@ -14220,7 +15040,7 @@ def responses_to_chat(payload):
     # function（见 wb_webtools.install_tool_defs）。
     # 看板开关关闭时原样透传，客户端自己的同名工具不受影响。
     # 用合并后的清单：工具可能整份都在 additional_tools 里，只看顶层会漏。
-    if local_web_tools_enabled():
+    if web_tools and local_web_tools_enabled():
         wants = wb_webtools.client_wants_web(raw_tools)
         if wants["search"] or wants["fetch"]:
             chat["tools"] = wb_webtools.install_tool_defs(chat.get("tools") or [], wants)
@@ -16086,6 +16906,52 @@ class Handler(BaseHTTPRequestHandler):
             return parse_qs(urlparse(self.path).query).get("realm", [None])[0]
         except Exception:
             return None
+    def _request_provider(self, hint=None):
+        """Pick the provider dimension this request asks for.
+
+        Only explicit hints count: ?provider= on the request line (or a value
+        the caller already parsed out of it) and the X-Provider header. The
+        global switch is deliberately NOT a fallback here: it is a dashboard
+        view state, and letting it leak into request handling would mean a
+        panel left on Qoder silently re-routes plain WorkBuddy traffic. The
+        panel passes the provider it is showing on every call; a request
+        without a hint keeps exactly the pre-provider behaviour (chat falls
+        back to the model's own catalogue, see qoder_provider_hint_for_model).
+
+        Returns the raw value (or None) - "all" and names are mapped by each
+        endpoint with provider_filter()/provider_scope(), so "all" survives
+        as "no filter" instead of being normalized into WorkBuddy. `hint` is
+        either the raw ?provider= value or the whole pre-parsed query dict.
+        """
+        if isinstance(hint, dict):
+            values = hint.get("provider") or []
+            hint = (values[0] if values else "") or None
+        if hint:
+            return hint
+        header = (self.headers.get("X-Provider") or "").strip()
+        if header:
+            return header
+        try:
+            values = parse_qs(urlparse(self.path).query).get("provider") or []
+        except Exception:
+            values = []
+        return (values[0] or None) if values else None
+
+    def _chat_provider(self, payload):
+        """这个聊天请求该走哪个提供商。
+
+        显式提示（?provider= / X-Provider）优先；没有提示时按模型归属兜底：
+        Qoder 目录认识、WorkBuddy 目录不认识 -> qoder，否则保持原来的
+        WorkBuddy 路径。兜底只看目录缓存与内置快照，不发上游（见
+        qoder_provider_hint_for_model）。
+        """
+        explicit = wb_accounts.provider_filter(self._request_provider())
+        if explicit:
+            return explicit
+        model = payload.get("model") if isinstance(payload, dict) else None
+        return (qoder_provider_hint_for_model(model)
+                or wb_accounts.DEFAULT_PROVIDER)
+
     def _authorized(self):
         if self._key_ok():
             return True
@@ -16171,7 +17037,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/realm":
             return self._get_realm()
         if path in ("/v1/models", "/models"):
-            return self._get_v1_models()
+            return self._get_v1_models(query)
         if path in ("/usage", "/v1/usage"):
             return self._get_v1_usage(query)
         if path == "/usage/recent":
@@ -16179,7 +17045,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/accounts/credits/detail":
             return self._get_account_credits_detail(query)
         if path == "/accounts/credits":
-            return self._get_accounts_credits()
+            return self._get_accounts_credits(query)
         if path == "/accounts/credits/grants":
             return self._get_account_credits_grants()
         if path == "/accounts":
@@ -16191,9 +17057,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/usage/analytics":
             return self._get_usage_analytics(query)
         if path == "/usage/by-account":
-            return self._get_usage_by_account()
+            return self._get_usage_by_account(query)
         if path == "/usage/remaining":
-            return self._get_usage_remaining()
+            return self._get_usage_remaining(query)
         if path == "/usage/perf":
             return self._get_usage_perf(query)
         if path == "/usage/timeseries":
@@ -16223,7 +17089,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/settings/reveal":
             return self._get_settings_reveal(query)
         if path == "/agents":
-            return self._get_agents()
+            return self._get_agents(query)
         if path == "/agents/available":
             # 看板启动时用这个廉价判定决定要不要显示入口：不 import
             # wb_agents、不做任何探测（issue #246）。
@@ -16254,8 +17120,13 @@ class Handler(BaseHTTPRequestHandler):
             # Report the realm actually in use; this used to be the
             # literal "intl" and drifted from the panel switch.
             "realm": CURRENT_REALM,
+            "provider": CURRENT_PROVIDER,
+            "providers": list(wb_accounts.PROVIDERS),
+            "realms": dict(PROVIDER_REALMS),
             "accounts": len(POOL.accounts) if POOL else 0,
-            "accounts_ready": POOL.count_ready() if POOL else 0,
+            # 全提供商合计：这个字段的旧含义就是「所有（当时只有 workbuddy）
+            # 账号里有几个能用」，加上 provider 维度后按同样口径合计。
+            "accounts_ready": POOL.count_ready(provider=None) if POOL else 0,
             "api_key_required": auth_required(),
         }
         if self._key_ok():
@@ -16271,28 +17142,43 @@ class Handler(BaseHTTPRequestHandler):
     # differ in whether they append "/v1" themselves.
 
     def _get_realm(self):
-        return self._json(200, {"current": CURRENT_REALM, "options": ["intl", "cn"]})
+        # realm 与 provider 一起给出：面板启动时先读这里恢复「当前提供商 +
+        # 它记着的出口」，再发各自的 ?provider=/&realm= 请求。
+        return self._json(200, {
+            "current": CURRENT_REALM,
+            "options": ["intl", "cn"],
+            "provider": CURRENT_PROVIDER,
+            "providers": list(wb_accounts.PROVIDERS),
+            "realms": dict(PROVIDER_REALMS),
+        })
 
-    def _get_v1_models(self):
+    def _get_v1_models(self, query=None):
         if not self._authorized():
             return
+        # 模型清单跟着提供商走：?provider=qoder（或 X-Provider）取 Qoder 目录，
+        # 没有提示时保持旧口径（WorkBuddy）——外部客户端的模型发现不该被看板
+        # 的切换状态影响。provider="all" 也没有可合并的清单，同样按缺省处理。
+        req_provider = (wb_accounts.provider_filter(self._request_provider(query))
+                        or wb_accounts.DEFAULT_PROVIDER)
         req_realm = self._request_realm() or CURRENT_REALM
         try:
-            entries = fetch_models(realm=req_realm)
+            entries = fetch_models(realm=req_realm, provider=req_provider)
         except Exception as exc:
             return self._error(502, str(exc))
         # Level 4 is best effort: warm the local cache in the background at
         # most once per cooldown; offline deployments just keep the fallback.
-        try:
-            wb_modelsdev.refresh_async(ACCOUNTS_DIR, log=log)
-        except Exception:
-            pass
+        if req_provider == wb_accounts.DEFAULT_PROVIDER:
+            try:
+                wb_modelsdev.refresh_async(ACCOUNTS_DIR, log=log)
+            except Exception:
+                pass
         data = [model_entry(mid, meta) for mid, meta in entries]
         payload = {"object": "list", "data": data,
-                   "realm": req_realm or CURRENT_REALM}
+                   "realm": req_realm or CURRENT_REALM,
+                   "provider": req_provider}
         # 来源说明（面板展示用）：这批清单是上游 API 实时取的，还是读的
         # 本机桌面缓存文件/内置快照，以及各自的时间戳。
-        meta = catalog_meta(req_realm)
+        meta = catalog_meta(req_realm, req_provider)
         if meta:
             payload["catalog"] = meta
         return self._json(200, payload)
@@ -16301,15 +17187,21 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorized():
             return
         req_realm = query.get('realm', [None])[0] or self.headers.get('X-Realm') or CURRENT_REALM
+        # provider 只认显式提示（同 _request_provider）：没有提示就是旧口径，
+        # 看板每次都会把当前提供商显式带上。analytics / timeseries / remaining
+        # 的 provider 维度是 stage 2（见各自端点处的 TODO）。
+        req_provider = wb_accounts.provider_filter(self._request_provider(query))
         req_range, req_since, req_until = range_query(query)
         # 取数与取校验符必须看到同一套参数（否则 tag 落到另一条缓存条目上），
         # 但"先取戳、再取数、再取一次戳"的配对顺序由 _json_cached 保证。
         return self._json_cached(
             200,
             lambda: usage_snapshot(realm=req_realm, range=req_range,
-                                   since=req_since, until=req_until),
+                                   since=req_since, until=req_until,
+                                   provider=req_provider),
             lambda: usage_snapshot_etag(realm=req_realm, range=req_range,
-                                        since=req_since, until=req_until))
+                                        since=req_since, until=req_until,
+                                        provider=req_provider))
 
     def _get_usage_recent(self, query):
         if not self._authorized():
@@ -16323,7 +17215,9 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             page = 1
         req_realm = query.get('realm', [None])[0] or self.headers.get('X-Realm') or CURRENT_REALM
-        return self._json(200, recent_usage(limit, realm=req_realm, page=page))
+        req_provider = wb_accounts.provider_filter(self._request_provider(query))
+        return self._json(200, recent_usage(limit, realm=req_realm, page=page,
+                                            provider=req_provider))
 
     def _get_activity_history(self, query):
         """账号每日活动的结构化历史（issue #34）。只读，供面板的签到记录用。
@@ -16348,13 +17242,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(400, str(exc), "invalid_request_error")
         return self._json(200, payload)
 
-    def _get_accounts_credits(self):
+    def _get_accounts_credits(self, query=None):
         if not self._authorized():
             return
+        # 积分刷新跟着提供商走：Qoder 的一次刷新不该去锤 WorkBuddy 的计费端点
+        # （反之亦然）。没有 provider 提示时保持旧行为（全部账号）。
+        provider = wb_accounts.provider_filter(
+            self._request_provider(query if query is not None else {}))
         # Refresh credits for all accounts
         for a in (POOL.accounts if POOL else []):
+            if provider and a.provider != provider:
+                continue
             a.fetch_credits()
-        return self._json(200, {"accounts": account_views()})
+        return self._json(200, {"accounts": account_views(provider=provider),
+                                "provider": provider or "all"})
 
     def _get_account_credits_grants(self):
         """积分获取历史：只读账号积分快照，不发上游请求。
@@ -16374,10 +17275,13 @@ class Handler(BaseHTTPRequestHandler):
         refresh = (query.get("refresh") or ["0"])[0] in ("1", "true", "yes")
         if not POOL:
             return self._json(200, {"ok": False, "error": "账号池未初始化"})
-        account = POOL.get(uid) if uid else None
+        provider = wb_accounts.provider_filter(self._request_provider(query))
+        account = POOL.get(uid, provider=provider) if uid else None
         if not account:
-            if POOL.accounts:
-                account = POOL.accounts[0]
+            pool = [a for a in POOL.accounts
+                    if not provider or a.provider == provider]
+            if pool:
+                account = pool[0]
             else:
                 return self._json(200, {"ok": False, "error": "未找到指定账号"})
 
@@ -16407,10 +17311,15 @@ class Handler(BaseHTTPRequestHandler):
         # Fold the usage log before building the view, so the 日限额 badge and
         # the parked count describe right now instead of the last request.
         apply_daily_guards()
+        req_realm = query.get('realm', [None])[0] or CURRENT_REALM
+        req_provider = wb_accounts.provider_filter(self._request_provider(query))
         return self._json(200, {
-            "accounts": account_views(realm=query.get('realm', [None])[0] or CURRENT_REALM),
+            "accounts": account_views(realm=req_realm, provider=req_provider),
             "storage": ACCOUNTS_DIR,
-            "usable": POOL.count_ready() if POOL else 0,
+            "usable": (POOL.count_ready(provider=req_provider) if req_provider
+                       else POOL.count_ready()) if POOL else 0,
+            "provider": req_provider or "all",
+            "realm": req_realm,
         })
 
     def _get_accounts_export(self, query):
@@ -16423,18 +17332,21 @@ class Handler(BaseHTTPRequestHandler):
         realm = (query.get("realm") or [None])[0] or None
         if realm not in ("intl", "cn"):
             realm = None
+        provider = wb_accounts.provider_filter(self._request_provider(query))
         include_secrets = (query.get("secrets") or ["1"])[0] not in ("0", "false", "no")
         uids = []
         for raw in query.get("uid") or []:
             uids.extend(part.strip() for part in str(raw).split(",") if part.strip())
+        pool = [a for a in (POOL.accounts if POOL else [])
+                if not provider or a.provider == provider]
         if uids:
-            known = {a.uid for a in (POOL.accounts if POOL else [])}
+            known = {a.uid for a in pool}
             missing = [u for u in uids if u not in known]
             if missing:
                 return self._error(404, "no such account: %s" % ", ".join(missing[:5]),
                                    "invalid_request_error")
         doc = wb_accounts.build_export_document(
-            POOL.accounts if POOL else [],
+            pool,
             realm=realm,
             include_secrets=include_secrets,
             uids=uids or None,
@@ -16447,7 +17359,10 @@ class Handler(BaseHTTPRequestHandler):
                 label = uids[0][:8]
             else:
                 label = realm + "-" if realm else ""
-            name = "workbuddy-accounts-%s%s.json" % (label, stamp)
+            # 文件名跟着提供商：Qoder 的导出不要和 WorkBuddy 的混在一起看不出
+            # 区别；没有提示时保持旧名前缀。
+            prefix = "qoder" if provider == "qoder" else "workbuddy"
+            name = "%s-accounts-%s%s.json" % (prefix, label, stamp)
             return self._download(name, doc)
         return self._json(200, doc)
 
@@ -16460,32 +17375,45 @@ class Handler(BaseHTTPRequestHandler):
     def _get_usage_analytics(self, query):
         if not self._authorized():
             return
+        # 提供商维度与 /usage、/usage/perf 同一套口径：显式 ?provider= 优先，
+        # 不带时保持旧的「全部提供商合计」（与面板切换无关）。
+        req_provider = wb_accounts.provider_filter(self._request_provider(query))
         req_realm = query.get("realm", [None])[0] or None
         req_range, req_since, req_until = range_query(query)
         return self._json_cached(
             200,
             lambda: compute_usage_analytics(realm=req_realm, range=req_range,
-                                            since=req_since, until=req_until),
+                                            since=req_since, until=req_until,
+                                            provider=req_provider),
             lambda: usage_analytics_etag(realm=req_realm, range=req_range,
-                                         since=req_since, until=req_until))
+                                         since=req_since, until=req_until,
+                                         provider=req_provider))
 
-    def _get_usage_by_account(self):
+    def _get_usage_by_account(self, query=None):
         if not self._authorized():
             return
-        return self._json_cached(200,
-                                 lambda: {"accounts": usage_by_account()},
-                                 usage_by_account_etag)
+        req_provider = wb_accounts.provider_filter(self._request_provider(query))
+        return self._json_cached(
+            200,
+            lambda: {"accounts": usage_by_account(provider=req_provider)},
+            lambda: usage_by_account_etag(provider=req_provider))
 
-    def _get_usage_remaining(self):
+    def _get_usage_remaining(self, query=None):
         if not self._authorized():
             return
         # 载荷挂短 TTL（WB_REMAINING_TTL，默认 15 秒）+ ETag：面板 5 秒一轮的
         # 轮询在 TTL 内命中同一条缓存 → 校验符不变 → 304，重建与重传都省掉。
-        return self._json_cached(200, remaining_usage, remaining_usage_etag)
+        # 提供商过滤视图各有一条自己的缓存（键 = provider）。
+        req_provider = wb_accounts.provider_filter(self._request_provider(query))
+        return self._json_cached(
+            200,
+            lambda: remaining_usage(provider=req_provider),
+            lambda: remaining_usage_etag(provider=req_provider))
 
     def _get_usage_timeseries(self, query):
         if not self._authorized():
             return
+        req_provider = wb_accounts.provider_filter(self._request_provider(query))
         req_realm = (query.get('realm', [None])[0]
                      or self.headers.get('X-Realm') or CURRENT_REALM)
         req_range, req_since, req_until = range_query(query)
@@ -16498,10 +17426,12 @@ class Handler(BaseHTTPRequestHandler):
             200,
             lambda: usage_timeseries(realm=req_realm, range=req_range,
                                      since=req_since, until=req_until,
-                                     bucket_seconds=bucket_seconds),
+                                     bucket_seconds=bucket_seconds,
+                                     provider=req_provider),
             lambda: usage_timeseries_etag(realm=req_realm, range=req_range,
                                           since=req_since, until=req_until,
-                                          bucket_seconds=bucket_seconds))
+                                          bucket_seconds=bucket_seconds,
+                                          provider=req_provider))
 
     def _get_usage_perf(self, query):
         if not self._authorized():
@@ -16511,24 +17441,31 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             sample = 5000
         req_realm = query.get('realm', [None])[0] or self.headers.get('X-Realm') or CURRENT_REALM
+        req_provider = wb_accounts.provider_filter(self._request_provider(query))
         req_range, req_since, req_until = range_query(query)
         return self._json_cached(
             200,
             lambda: perf_stats(sample, realm=req_realm, range=req_range,
-                               since=req_since, until=req_until),
+                               since=req_since, until=req_until,
+                               provider=req_provider),
             lambda: perf_stats_etag(sample, realm=req_realm, range=req_range,
-                                    since=req_since, until=req_until))
+                                    since=req_since, until=req_until,
+                                    provider=req_provider))
 
     def _get_tasks(self, query):
         if not self._authorized():
             return
-        cn_accounts = [a for a in (POOL.accounts if POOL else []) if a.realm == "cn" and a.enabled]
+        cn_accounts = [a for a in (POOL.accounts if POOL else [])
+                       if a.realm == "cn"
+                       and a.provider == wb_accounts.DEFAULT_PROVIDER
+                       and a.enabled]
         if not cn_accounts:
             return self._json(200, {"tasks": [], "summary": {}, "accounts": [], "msg": "未找到可用的国内版账号"})
         uid = (query.get("uid") or [None])[0]
         acc = None
         if uid and uid != "all":
-            target = POOL.get(uid) if POOL else None
+            target = (POOL.get(uid, provider=wb_accounts.DEFAULT_PROVIDER)
+                      if POOL else None)
             if target and target.realm == "cn":
                 acc = target
         if not acc:
@@ -17359,22 +18296,29 @@ class Handler(BaseHTTPRequestHandler):
             host = "127.0.0.1"
         return "http://%s:%d/v1" % (host, int(port or 0))
 
-    def _agents_models(self):
-        """Flat model list for the picker; bundled intl+cn catalog, deduped.
+    def _agents_models(self, provider=None):
+        """Flat model list for the picker; bundled catalog, deduped.
 
         Live sources stay out of this path on purpose: the panel must answer
         even when the upstream is down, so a failure here is simply a shorter
-        list, never an error.
+        list, never an error. provider=qoder 时列 Qoder 目录（内置快照兜底）。
         """
+        provider = wb_accounts.provider_filter(provider)
         models = []
         seen = set()
         try:
             try:
-                entries = fetch_models()
+                entries = fetch_models(provider=provider)
             except Exception:
                 entries = []
             if entries:
                 sources = ((mid, meta) for mid, meta in entries)
+            elif provider == "qoder":
+                sources = (
+                    (item.get("id"), wb_qoder.model_entry_meta(item))
+                    for item in wb_qoder.static_models(CURRENT_REALM)
+                    if isinstance(item, dict)
+                )
             else:
                 sources = (
                     (item.get("id"), item)
@@ -17441,7 +18385,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
         return
 
-    def _get_agents(self):
+    def _get_agents(self, query=None):
         if not self._agents_client_allowed():
             # 远程看板（服务端 / Docker / OpenWrt）：一键配置改的是网关所在
             # 机器的配置目录，到不了用户自己的电脑，直接按不可用返回。
@@ -17464,7 +18408,9 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200, {
             "enabled": True,
             "clients": list(wb_agents.overview(ACCOUNTS_DIR).values()),
-            "models": self._agents_models(),
+            "models": self._agents_models(
+                provider=wb_accounts.provider_filter(
+                    self._request_provider(query))),
             "keys": keys,
             "global_key_set": bool(API_KEY),
             "auth_required": auth_required(),
@@ -17659,6 +18605,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._route_accounts_login_start(payload)
         if path == "/accounts/login/cancel":
             return self._route_accounts_login_cancel(payload)
+        if path == "/accounts/login/pat":
+            return self._route_accounts_login_pat(payload)
         if path == "/accounts/import/desktop":
             return self._route_accounts_import_desktop(payload)
         if path == "/accounts/refresh":
@@ -17682,6 +18630,8 @@ class Handler(BaseHTTPRequestHandler):
         """切换出站身分（cli <-> workbuddy），并即时回传结果。
 
         官方有两套身分、两条配额线。某条满了可以切到另一条继续用。
+        WorkBuddy 专属：uid 查找与批量目标都钉在 workbuddy 上（Qoder 没有
+        出站身分这东西）。
         """
         target = str(payload.get("product") or "").strip().lower()
         uid = payload.get("uid")
@@ -17692,11 +18642,14 @@ class Handler(BaseHTTPRequestHandler):
                                "invalid_request_error")
 
         if uid:
-            targets = [POOL.get(uid)]
+            targets = [POOL.get(uid, provider=wb_accounts.DEFAULT_PROVIDER)]
         elif realm and realm != "all":
-            targets = [a for a in POOL.accounts if a.realm == realm]
+            targets = [a for a in POOL.accounts
+                       if a.realm == realm
+                       and a.provider == wb_accounts.DEFAULT_PROVIDER]
         else:
-            targets = list(POOL.accounts)
+            targets = [a for a in POOL.accounts
+                       if a.provider == wb_accounts.DEFAULT_PROVIDER]
 
         changed = []
         for account in targets:
@@ -17729,12 +18682,17 @@ class Handler(BaseHTTPRequestHandler):
     def _route_accounts_credits_fetch(self, payload):
         uid = payload.get("uid")
         realm = payload.get("realm")
+        provider = wb_accounts.provider_filter(
+            self._request_provider(payload.get("provider")))
         if uid:
-            targets = [POOL.get(uid)]
+            targets = [POOL.get(uid, provider=provider)]
         elif realm and realm != "all":
-            targets = [a for a in POOL.accounts if a.realm == realm]
+            targets = [a for a in POOL.accounts
+                       if a.realm == realm
+                       and (not provider or a.provider == provider)]
         else:
-            targets = list(POOL.accounts)
+            targets = [a for a in POOL.accounts
+                       if not provider or a.provider == provider]
         results = []
         for account in targets:
             if account is None:
@@ -17742,7 +18700,9 @@ class Handler(BaseHTTPRequestHandler):
             res = account.fetch_credits()
             results.append({"uid": account.uid, "ok": res.get("ok", False),
                             "credits": account.credits, "error": res.get("error", "")})
-        return self._json(200, {"results": results, "accounts": account_views()})
+        return self._json(200, {"results": results,
+                                "accounts": account_views(provider=provider),
+                                "provider": provider or "all"})
 
     def _route_account_credits_detail(self, payload):
         if not self._authorized():
@@ -17751,7 +18711,9 @@ class Handler(BaseHTTPRequestHandler):
         refresh = payload.get("refresh", True)
         if not POOL:
             return self._json(200, {"ok": False, "error": "账号池未初始化"})
-        account = POOL.get(uid) if uid else None
+        provider = wb_accounts.provider_filter(
+            self._request_provider(payload.get("provider")))
+        account = POOL.get(uid, provider=provider) if uid else None
         if not account:
             return self._json(200, {"ok": False, "error": "未找到指定账号"})
 
@@ -17762,6 +18724,7 @@ class Handler(BaseHTTPRequestHandler):
                     "ok": False,
                     "uid": account.uid,
                     "nickname": account.nickname,
+                    "provider": account.provider,
                     "realm": account.realm,
                     "credits": account.credits,
                     "error": res.get("error", "获取积分明细失败")
@@ -17771,6 +18734,7 @@ class Handler(BaseHTTPRequestHandler):
             "ok": True,
             "uid": account.uid,
             "nickname": account.nickname,
+            "provider": account.provider,
             "realm": account.realm,
             "credits": account.credits
         })
@@ -17781,12 +18745,15 @@ class Handler(BaseHTTPRequestHandler):
         invalidate_tasks_cache()          # 跑完任务状态就变了，别再端旧快照
         uid = payload.get("uid")
         if uid and uid != "all":
-            target = POOL.get(uid)
+            target = POOL.get(uid, provider=wb_accounts.DEFAULT_PROVIDER)
             if not target or target.realm != "cn":
                 return self._json(200, {"ok": False, "msg": "未找到指定的国内版账号"})
             targets = [target]
         else:
-            targets = [a for a in POOL.accounts if a.realm == "cn" and a.enabled]
+            targets = [a for a in POOL.accounts
+                       if a.realm == "cn"
+                       and a.provider == wb_accounts.DEFAULT_PROVIDER
+                       and a.enabled]
         if not targets:
             return self._json(200, {"ok": False, "msg": "未找到已启用的国内版账号"})
         from wb_tasks import run_growth_tasks
@@ -17820,12 +18787,15 @@ class Handler(BaseHTTPRequestHandler):
         invalidate_tasks_cache()
         uid = payload.get("uid")
         if uid and uid != "all":
-            target = POOL.get(uid)
+            target = POOL.get(uid, provider=wb_accounts.DEFAULT_PROVIDER)
             if not target or target.realm != "cn":
                 return self._json(200, {"ok": False, "msg": "未找到指定的国内版账号"})
             targets = [target]
         else:
-            targets = [a for a in POOL.accounts if a.realm == "cn" and a.enabled]
+            targets = [a for a in POOL.accounts
+                       if a.realm == "cn"
+                       and a.provider == wb_accounts.DEFAULT_PROVIDER
+                       and a.enabled]
         if not targets:
             return self._json(200, {"ok": False, "msg": "未找到已启用的国内版账号"})
         from wb_tasks import run_streak_bonus
@@ -17846,12 +18816,15 @@ class Handler(BaseHTTPRequestHandler):
         invalidate_tasks_cache()          # 同上：旅行会改任务/体力状态
         uid = payload.get("uid")
         if uid and uid != "all":
-            target = POOL.get(uid)
+            target = POOL.get(uid, provider=wb_accounts.DEFAULT_PROVIDER)
             if not target or target.realm != "cn":
                 return self._json(200, {"ok": False, "msg": "未找到指定的国内版账号"})
             targets = [target]
         else:
-            targets = [a for a in POOL.accounts if a.realm == "cn" and a.enabled]
+            targets = [a for a in POOL.accounts
+                       if a.realm == "cn"
+                       and a.provider == wb_accounts.DEFAULT_PROVIDER
+                       and a.enabled]
         if not targets:
             return self._json(200, {"ok": False, "msg": "未找到已启用的国内版账号"})
         from wb_tasks import do_cat_travel
@@ -17923,13 +18896,15 @@ class Handler(BaseHTTPRequestHandler):
         """面板「刷新模型清单」：强制向上游拉一次指定版本的目录。
 
         版本（realm）由面板显式传当前视图的 intl/cn：每个版本只用自己的
-        代表账号与该版本的端点，绝不跨区。拉取同步执行（通常 1~3 秒；
-        上游丢包时两次 10s 尝试封顶），同一版本有 30s 冷却；无论成败都
-        以 200 + ok 标志回答，msg 给面板直接展示（与 /pricing/refresh
-        同一条面板惯例）。
+        代表账号与该版本的端点，绝不跨区。provider 缺省是 WorkBuddy（旧行为），
+        Qoder 由面板显式点名。拉取同步执行（通常 1~3 秒；上游丢包时两次 10s
+        尝试封顶），同一「提供商×版本」有 30s 冷却；无论成败都以 200 + ok 标志
+        回答，msg 给面板直接展示（与 /pricing/refresh 同一条面板惯例）。
         """
         realm = str((payload or {}).get("realm") or "").strip().lower()
-        return self._json(200, refresh_catalog(realm))
+        provider = wb_accounts.provider_filter(
+            self._request_provider((payload or {}).get("provider")))
+        return self._json(200, refresh_catalog(realm, provider))
 
     def _route_logs_clear(self, payload):
         clear_logs()
@@ -17983,15 +18958,39 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(403, "changing the upstream exit requires the "
                                     "panel session, not an API key",
                                "invalid_request_error")
+        # 一个端点管两把开关：{"realm": ...} 改出口（旧行为逐字保留），
+        # {"provider": ...} 改提供商（出口跟着该提供商记着的值走），两个都给
+        # 就一起改。非法值照旧静默忽略（旧端点对 realm 就是这样）。
+        new_provider = payload.get("provider")
         new_realm = payload.get("realm")
-        if new_realm in ("intl", "cn"):
-            save_persisted_realm(new_realm)
-        return self._json(200, {"ok": True, "current": CURRENT_REALM, "persisted": True})
+        provider = (wb_accounts.normalize_provider(new_provider)
+                    if new_provider in wb_accounts.PROVIDERS else None)
+        realm = new_realm if new_realm in ("intl", "cn") else None
+        if provider is not None or realm is not None:
+            if realm is None:
+                realm = PROVIDER_REALMS.get(provider or CURRENT_PROVIDER,
+                                            CURRENT_REALM)
+            save_persisted_realm(realm, provider)
+        return self._json(200, {
+            "ok": True,
+            "current": CURRENT_REALM,
+            "provider": CURRENT_PROVIDER,
+            "realms": dict(PROVIDER_REALMS),
+            "providers": list(wb_accounts.PROVIDERS),
+            "persisted": True,
+        })
 
     def _route_accounts_checkin(self, payload):
         uid = payload.get("uid")
         invalidate_tasks_cache()          # 签到会改连续打卡状态，成长任务快照随之作废
-        targets = [POOL.get(uid)] if uid else [a for a in (POOL.accounts if POOL else []) if a.realm == "cn"]
+        # 签到是 WorkBuddy 专属能力：uid 查找与批量目标都钉在 workbuddy 上，
+        # 一个乱入的 uid 不可能把签到打到 Qoder 账号上。
+        if uid:
+            targets = [POOL.get(uid, provider=wb_accounts.DEFAULT_PROVIDER)]
+        else:
+            targets = [a for a in (POOL.accounts if POOL else [])
+                       if a.realm == "cn"
+                       and a.provider == wb_accounts.DEFAULT_PROVIDER]
         results = []
         for account in targets:
             if account is None:
@@ -18006,9 +19005,11 @@ class Handler(BaseHTTPRequestHandler):
     def _route_accounts_daily_chat(self, payload):
         uid = payload.get("uid")
         if uid:
-            targets = [POOL.get(uid)]
+            targets = [POOL.get(uid, provider=wb_accounts.DEFAULT_PROVIDER)]
         else:
-            targets = [a for a in POOL.accounts if a.realm == "intl" and a.enabled]
+            targets = [a for a in POOL.accounts
+                       if a.realm == "intl"
+                       and a.provider == wb_accounts.DEFAULT_PROVIDER and a.enabled]
         results = []
         for account in targets:
             if account is None:
@@ -18030,9 +19031,11 @@ class Handler(BaseHTTPRequestHandler):
         """
         uid = payload.get("uid")
         if uid:
-            targets = [POOL.get(uid)]
+            targets = [POOL.get(uid, provider=wb_accounts.DEFAULT_PROVIDER)]
         else:
-            targets = [a for a in POOL.accounts if a.realm == "intl" and a.enabled]
+            targets = [a for a in POOL.accounts
+                       if a.realm == "intl"
+                       and a.provider == wb_accounts.DEFAULT_PROVIDER and a.enabled]
         results = []
         for account in targets:
             if account is None:
@@ -18047,12 +19050,48 @@ class Handler(BaseHTTPRequestHandler):
     def _route_accounts_login_start(self, payload):
         platform = payload.get("platform") or "CLI"
         target_realm = payload.get("realm") or CURRENT_REALM
+        # provider 缺省保持旧的 WorkBuddy 登录；Qoder 只在面板显式点名时走
+        # （国际=设备码，国内由面板直接改用 /accounts/login/pat）。
+        provider = wb_accounts.normalize_provider(
+            payload.get("provider") or self._request_provider()
+            or wb_accounts.DEFAULT_PROVIDER)
         try:
-            started = POOL.start_login(realm=target_realm, platform=platform)
+            started = POOL.start_login(realm=target_realm, platform=platform,
+                                       provider=provider)
         except Exception as exc:
             return self._error(502, "could not start login: %s" % exc)
-        log("oauth login started (realm=%s, platform=%s, state=%s)" % (target_realm, platform, started["state"][:8]))
+        log("oauth login started (provider=%s, realm=%s, platform=%s, state=%s)"
+            % (provider, target_realm, platform, started["state"][:8]))
         return self._json(200, started)
+
+    def _route_accounts_login_pat(self, payload):
+        """Qoder PAT 兑换登录：国内唯一入口，国际的设备码之外的兜底。
+
+        PAT 兑换是一次同步的上游请求（通常 1~3 秒），失败以 200 + ok=false
+        回答，msg/error 给面板直接展示（与 /accounts/login/start 的惯例一致：
+        启动失败才用 502）。
+        """
+        pat = str(payload.get("pat") or "").strip()
+        if not pat:
+            return self._error(400, "pat is required", "invalid_request_error")
+        realm = str(payload.get("realm") or CURRENT_REALM or "intl").strip().lower()
+        if realm not in ("intl", "cn"):
+            realm = "intl"
+        try:
+            account = POOL.add_qoder_pat(pat, realm=realm)
+        except wb_qoder.QoderError as exc:
+            log("qoder PAT login rejected: %s" % exc, level="WARN", tag="accounts")
+            return self._json(200, {"ok": False, "error": str(exc)})
+        except Exception as exc:
+            log("qoder PAT login failed: %s" % exc, level="WARN", tag="accounts")
+            return self._json(200, {"ok": False, "error": "PAT 兑换失败: %s" % exc})
+        log("qoder PAT login: account %s (realm=%s) added"
+            % (account.uid[:8], realm), tag="accounts")
+        return self._json(200, {
+            "ok": True,
+            "account": account.public(),
+            "accounts": account_views(provider="qoder"),
+        })
 
     def _route_accounts_login_cancel(self, payload):
         state = payload.get("state") or ""
@@ -18175,6 +19214,8 @@ class Handler(BaseHTTPRequestHandler):
         account = POOL.get(uid)
         if not account:
             return self._error(404, "no such account")
+        if account.provider != wb_accounts.DEFAULT_PROVIDER:
+            return self._qoder_account_test(account, payload)
         test_model = payload.get("model") or "deepseek-v4.1-flash"
         cfg = wb_accounts.get_realm_config(account.realm)
         chat_url = account.chat_base_url() + CHAT_PATH
@@ -18241,6 +19282,105 @@ class Handler(BaseHTTPRequestHandler):
                 "elapsed_ms": wall_ms,
             })
 
+    def _qoder_account_test(self, account, payload):
+        """Qoder 账号的连接测试：真发一条最小聊天请求。
+
+        返回形状与 WorkBuddy 分支一致（ok/model/elapsed_ms/reply 或
+        status/error），看板不用按提供商分叉。模型默认取该区目录里的第一个
+        （通常是 Auto，最稳），也可以在 payload 里指定。
+        """
+        realm = account.realm
+        catalog = wb_qoder.static_models(realm)
+        test_model = str(payload.get("model") or "").strip() or \
+            (catalog[0].get("id") if catalog else "")
+        if not test_model:
+            return self._json(200, {"ok": False, "uid": account.uid,
+                                    "status": 400,
+                                    "error": "Qoder 目录为空，无法选择测试模型",
+                                    "elapsed_ms": 0})
+        auth = getattr(account, "qoder_auth", None) or {}
+        identity = {
+            "user_id": str(auth.get("userId") or account.uid),
+            "access_token": account.access_token,
+            "name": auth.get("name") or "",
+            "email": auth.get("email") or "",
+            "machineId": auth.get("machineId") or "",
+            "realm": realm,
+        }
+        t0 = time.time()
+        try:
+            resolved = wb_qoder_chat.resolve_model_config(
+                realm, test_model, access_token=account.access_token,
+                auth=auth, data_dir=ACCOUNTS_DIR, proxy=account.proxy)
+            if resolved is None:
+                return self._json(200, {
+                    "ok": False, "uid": account.uid, "model": test_model,
+                    "status": 400,
+                    "error": "Qoder 目录里没有模型 '%s'" % test_model,
+                    "elapsed_ms": 0})
+            built = wb_qoder_chat.build_chat_request(
+                {"model": test_model,
+                 "messages": [{"role": "user", "content": "hi"}],
+                 "stream": False},
+                resolved, identity, session_id="account-test",
+                data_dir=ACCOUNTS_DIR)
+            req = urllib.request.Request(built["url"], data=built["body"],
+                                         method="POST",
+                                         headers=built["headers"])
+            with wb_accounts.urlopen(req, timeout=30,
+                                     proxy=account.proxy) as resp:
+                chat_obj = aggregate_stream(
+                    QoderUpstreamAdapter(resp, test_model), test_model, None)
+                wall_ms = int((time.time() - t0) * 1000)
+                choices = chat_obj.get("choices") or []
+                msg = (choices[0].get("message") or {}) if choices else {}
+                reply_text = (msg.get("content") or msg.get("reasoning_content")
+                              or "OK").strip()
+                if len(reply_text) > 80:
+                    reply_text = reply_text[:77] + "..."
+                account.note_success(model=test_model)
+                log(f"account test: uid={account.uid[:8]} model={test_model} "
+                    f"wall={wall_ms}ms ok=True", tag="accounts")
+                return self._json(200, {
+                    "ok": True,
+                    "uid": account.uid,
+                    "model": test_model,
+                    "elapsed_ms": wall_ms,
+                    "reply": reply_text,
+                })
+        except urllib.error.HTTPError as exc:
+            wall_ms = int((time.time() - t0) * 1000)
+            try:
+                detail = exc.read(400).decode("utf-8", "replace")
+            except Exception:
+                detail = ""
+            account.note_error(f"HTTP {exc.code}: {detail[:80]}",
+                               cooldown=60, detail=detail)
+            log(f"account test: uid={account.uid[:8]} model={test_model} "
+                f"wall={wall_ms}ms error={exc.code}", level="WARN",
+                tag="accounts")
+            return self._json(200, {
+                "ok": False,
+                "uid": account.uid,
+                "model": test_model,
+                "status": exc.code,
+                "error": f"HTTP {exc.code}: {detail[:150]}",
+                "elapsed_ms": wall_ms,
+            })
+        except Exception as exc:
+            wall_ms = int((time.time() - t0) * 1000)
+            account.note_error(str(exc)[:80], cooldown=60)
+            log(f"account test: uid={account.uid[:8]} model={test_model} "
+                f"wall={wall_ms}ms exc={exc}", level="WARN", tag="accounts")
+            return self._json(200, {
+                "ok": False,
+                "uid": account.uid,
+                "model": test_model,
+                "status": 500,
+                "error": str(exc),
+                "elapsed_ms": wall_ms,
+            })
+
     def _route_accounts_set(self, payload):
         uid = payload.get("uid")
         if not uid:
@@ -18291,8 +19431,15 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200, {"account": updated})
 
     def _route_accounts_set_all(self, payload):
-        POOL.set_all_enabled(bool(payload.get("enabled")))
-        return self._json(200, {"accounts": account_views()})
+        realm = payload.get("realm")
+        if realm not in ("intl", "cn"):
+            realm = None
+        provider = wb_accounts.provider_filter(
+            self._request_provider(payload.get("provider")))
+        POOL.set_all_enabled(bool(payload.get("enabled")), realm=realm,
+                             provider=provider)
+        return self._json(200, {"accounts": account_views(realm=realm,
+                                                          provider=provider)})
 
     def _route_accounts_delete(self, payload):
         uid = payload.get("uid")
@@ -18330,6 +19477,12 @@ class Handler(BaseHTTPRequestHandler):
         forced_realm = (payload.get("realm") or "").strip().lower() or None
         if forced_realm and forced_realm not in ("intl", "cn"):
             return self._error(400, "realm must be intl or cn", "invalid_request_error")
+        # provider 决定「裸行」（没自报 provider 的行）按哪个提供商归一化；
+        # 文档里自报 provider 的行以自报值为准（normalise_import_row 的
+        # declared-wins 规则）。没有提示时保持旧的 WorkBuddy 口径。
+        hint = payload.get("provider") or self._request_provider()
+        provider = wb_accounts.normalize_provider(hint or wb_accounts.DEFAULT_PROVIDER)
+        view_provider = wb_accounts.provider_filter(hint)
         if dry_run:
             # Validate every row without touching the pool so the caller can
             # see exactly what an import would do before committing to it.
@@ -18338,21 +19491,28 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {
                 "dryRun": True,
                 "count": len(rows),
-                "result": POOL.preview_import_rows(rows, realm=forced_realm, overwrite=overwrite),
-                "accounts": account_views(),
+                "result": POOL.preview_import_rows(rows, realm=forced_realm,
+                                                   overwrite=overwrite,
+                                                   provider=provider,
+                                                   data_dir=ACCOUNTS_DIR),
+                "accounts": account_views(provider=view_provider),
             })
-        report = POOL.import_rows(rows, realm=forced_realm, overwrite=overwrite)
+        report = POOL.import_rows(rows, realm=forced_realm, overwrite=overwrite,
+                                  provider=provider, data_dir=ACCOUNTS_DIR)
         log("account import: %d added, %d updated, %d skipped, %d invalid"
             % (len(report["added"]), len(report["updated"]),
                len(report["skipped"]), len(report["invalid"])))
         return self._json(200, {
             "count": len(rows),
             "result": report,
-            "accounts": account_views(),
+            "accounts": account_views(provider=view_provider),
         })
 
-    def _handle_responses(self, payload):
+    def _handle_responses(self, payload, provider=None):
         """Serve /v1/responses by translating to chat completions upstream."""
+        provider = wb_accounts.provider_filter(provider) \
+            or wb_accounts.DEFAULT_PROVIDER
+        qoder = provider == "qoder"
         # The gateway is stateless: it keeps no store of previous responses,
         # so it cannot replay a prior turn. Silently ignoring the field would
         # answer a follow-up as if it were a fresh conversation - the client
@@ -18375,7 +19535,10 @@ class Handler(BaseHTTPRequestHandler):
         all_tools = list(all_tools) if isinstance(all_tools, list) else []
         all_tools.extend(additional_tools_from_input(payload))
         custom_names = custom_tool_names(all_tools)
-        chat_req = responses_to_chat(payload)
+        # Qoder 没有网关侧代跑网路工具的回路（follow_up_with_tool_results 固定
+        # 回 WorkBuddy 上游），所以它的请求不安装 _web_tools 标记，客户端自己
+        # 宣告的 web 工具也按普通工具透传（wb_qoder_chat 只留 function 形状）。
+        chat_req = responses_to_chat(payload, web_tools=not qoder)
         ns_map = chat_req.pop("_namespace_map", None)
         # Echo these back on the response object; see chat_to_response.
         request_meta = {
@@ -18396,44 +19559,54 @@ class Handler(BaseHTTPRequestHandler):
         )
         try:
             req_realm = self._request_realm() or CURRENT_REALM
-            blocked = self._cross_realm_error(chat_req.get("model"), req_realm)
-            if blocked:
-                return self._error(400, blocked, "invalid_request_error")
-            banned = self._banned_model_error(chat_req.get("model"))
-            if banned:
-                return self._error(400, banned, "invalid_request_error")
+            if not qoder:
+                # WorkBuddy 专属守卫：跨区模型与封禁清单只对 WorkBuddy 目录
+                # 有意义。按 key 的模型白名单是网关自己的访问控制，两边都查。
+                blocked = self._cross_realm_error(chat_req.get("model"), req_realm)
+                if blocked:
+                    return self._error(400, blocked, "invalid_request_error")
+                banned = self._banned_model_error(chat_req.get("model"))
+                if banned:
+                    return self._error(400, banned, "invalid_request_error")
             key_blocked = self._key_model_error(chat_req.get("model"))
             if key_blocked:
                 return self._error(400, key_blocked, "invalid_request_error")
-            upstream, account, effort = open_upstream(
-                chat_req, session_key=session_key, target_realm=req_realm)
+            if qoder:
+                upstream, account, effort = open_qoder_upstream(
+                    chat_req, session_key=session_key, target_realm=req_realm)
+            else:
+                upstream, account, effort = open_upstream(
+                    chat_req, session_key=session_key, target_realm=req_realm)
         except ContentRejected as exc:
             record_error(model, 403, exc.detail[:200],
                          elapsed_ms=int((time.time() - t_start) * 1000),
                          account=getattr(exc, "account_uid", None),
-                         key=self._key_id())
+                         key=self._key_id(), provider=provider)
             return self._error(403, "upstream 403: %s" % (exc.detail or "content rejected"),
                                "invalid_request_error")
         except RateLimited as exc:
             t = time.time() - t_start
             record_error(model, 429, exc.detail[:200], elapsed_ms=int(t * 1000),
                          account=getattr(exc, "account_uid", None),
-                         key=self._key_id())
+                         key=self._key_id(), provider=provider)
             return self._rate_limited(exc)
         except urllib.error.HTTPError as exc:
             detail = exc.read(600).decode("utf-8", "replace")
             record_error(model, exc.code, detail,
                          elapsed_ms=int((time.time() - t_start) * 1000),
                          account=getattr(exc, "account_uid", None),
-                         key=self._key_id())
+                         key=self._key_id(), provider=provider)
             return self._error(exc.code, f"upstream {exc.code}: {detail}")
         except Exception as exc:
             message = str(exc)
-            record_error(model, 502, message,
+            # 空池是「暂时没有可用账号」（503，可重试），不是上游故障（502）：
+            # 日志行的 status 必须与真正发出去的状态码一致。
+            no_account = message.startswith("no usable account")
+            record_error(model, 503 if no_account else 502, message,
                          elapsed_ms=int((time.time() - t_start) * 1000),
                          account=getattr(exc, "account_uid", None),
-                         key=self._key_id())
-            if message.startswith("no usable account"):
+                         key=self._key_id(), provider=provider)
+            if no_account:
                 return self._error(503, message +
                                    " - add or enable one at the dashboard (/)")
             return self._error(502, f"upstream unreachable: {exc}")
@@ -18589,8 +19762,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._anthropic_error(400, str(exc), "invalid_request_error")
         return self._json(200, {"input_tokens": _anthropic_estimate_chat_tokens(chat)})
 
-    def _handle_messages(self, payload):
+    def _handle_messages(self, payload, provider=None):
         """Serve an Anthropic Messages request through the chat pipeline."""
+        provider = wb_accounts.provider_filter(provider) \
+            or wb_accounts.DEFAULT_PROVIDER
+        qoder = provider == "qoder"
         try:
             chat_req = messages_to_chat(payload)
         except ValueError as exc:
@@ -18609,22 +19785,28 @@ class Handler(BaseHTTPRequestHandler):
                chat_req.get("reasoning_effort"), len(chat_req.get("tools") or [])))
         try:
             req_realm = self._request_realm() or CURRENT_REALM
-            blocked = self._cross_realm_error(chat_req.get("model"), req_realm)
-            if blocked:
-                return self._anthropic_error(400, blocked, "invalid_request_error")
-            banned = self._banned_model_error(chat_req.get("model"))
-            if banned:
-                return self._anthropic_error(400, banned, "invalid_request_error")
+            if not qoder:
+                # WorkBuddy 专属守卫（见 _handle_responses 的同款说明）。
+                blocked = self._cross_realm_error(chat_req.get("model"), req_realm)
+                if blocked:
+                    return self._anthropic_error(400, blocked, "invalid_request_error")
+                banned = self._banned_model_error(chat_req.get("model"))
+                if banned:
+                    return self._anthropic_error(400, banned, "invalid_request_error")
             key_blocked = self._key_model_error(chat_req.get("model"))
             if key_blocked:
                 return self._anthropic_error(400, key_blocked, "invalid_request_error")
-            upstream, account, effort = open_upstream(
-                chat_req, session_key=session_key, target_realm=req_realm)
+            if qoder:
+                upstream, account, effort = open_qoder_upstream(
+                    chat_req, session_key=session_key, target_realm=req_realm)
+            else:
+                upstream, account, effort = open_upstream(
+                    chat_req, session_key=session_key, target_realm=req_realm)
         except ContentRejected as exc:
             record_error(model, 403, exc.detail[:200],
                          elapsed_ms=int((time.time() - t_start) * 1000),
                          account=getattr(exc, "account_uid", None),
-                         key=self._key_id())
+                         key=self._key_id(), provider=provider)
             return self._anthropic_error(403, "upstream 403: %s" %
                                           (exc.detail or "content rejected"),
                                           "permission_error")
@@ -18632,7 +19814,7 @@ class Handler(BaseHTTPRequestHandler):
             record_error(model, 429, exc.detail[:200],
                          elapsed_ms=int((time.time() - t_start) * 1000),
                          account=getattr(exc, "account_uid", None),
-                         key=self._key_id())
+                         key=self._key_id(), provider=provider)
             return self._anthropic_rate_limited(exc)
         except urllib.error.HTTPError as exc:
             try:
@@ -18642,17 +19824,18 @@ class Handler(BaseHTTPRequestHandler):
             record_error(model, exc.code, detail,
                          elapsed_ms=int((time.time() - t_start) * 1000),
                          account=getattr(exc, "account_uid", None),
-                         key=self._key_id())
+                         key=self._key_id(), provider=provider)
             return self._anthropic_error(exc.code,
                                          "upstream %s: %s" % (exc.code, detail))
         except Exception as exc:
             message = str(exc)
             low = message.lower()
-            status = 503 if ("no account" in low or "no enabled account" in low) else 502
+            status = 503 if ("no account" in low or "no enabled account" in low
+                             or "no usable account" in low) else 502
             record_error(model, status, message,
                          elapsed_ms=int((time.time() - t_start) * 1000),
                          account=getattr(exc, "account_uid", None),
-                         key=self._key_id())
+                         key=self._key_id(), provider=provider)
             if status == 503:
                 message += " - add or enable one at the dashboard (/)"
             return self._anthropic_error(status, message)
@@ -18845,7 +20028,8 @@ class Handler(BaseHTTPRequestHandler):
                              stream=payload.get("stream"), key=self._key_id())
                 return self._anthropic_error(503, message, "overloaded_error")
             try:
-                return self._handle_messages(payload)
+                return self._handle_messages(
+                    payload, provider=self._chat_provider(payload))
             finally:
                 _chat_slots.release()
         # Both OpenAI-shaped routes below can hold a thread for up to 600s.
@@ -18860,6 +20044,7 @@ class Handler(BaseHTTPRequestHandler):
             _chat_slots.release()
 
     def _dispatch_chat_post(self, path, payload):
+        provider = self._chat_provider(payload)
         # 先挡背景请求：Codex 自己发的（记忆整理／环境建议／自动复核）
         # 不算「使用者实际使用」，一律本地拒绝，不碰上游。
         if BLOCK_BACKGROUND_REQUESTS:
@@ -18873,7 +20058,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(400, background_request_message(reason),
                                    "invalid_request_error")
         if path in ("/v1/responses", "/responses"):
-            return self._handle_responses(payload)
+            return self._handle_responses(payload, provider=provider)
+        if provider == "qoder":
+            return self._dispatch_qoder_chat_post(payload)
         # Diagnostics: what the client actually asked for, and what we forward.
         # Only the knobs that change behaviour are logged - never message text.
         forwarded = build_upstream_body(payload)
@@ -18930,15 +20117,76 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(exc.code, f"upstream {exc.code}: {detail}")
         except Exception as exc:
             message = str(exc)
-            record_error(model, 502, message, elapsed_ms=int((time.time() - t_start) * 1000),
+            # Only a genuinely empty/cooling pool is a 503. A throttled model
+            # is reported as 429 by _rate_limited above instead. The log row
+            # must carry the status the client actually got.
+            no_account = message.startswith("no usable account")
+            record_error(model, 503 if no_account else 502, message,
+                         elapsed_ms=int((time.time() - t_start) * 1000),
                          account=getattr(exc, "account_uid", None),
                          key=self._key_id())
-            if message.startswith("no usable account"):
-                # Only a genuinely empty/cooling pool is a 503. A throttled model
-                # is reported as 429 by _rate_limited above instead.
+            if no_account:
                 return self._error(503, message +
                                    " - add or enable one at the dashboard (/)")
             return self._error(502, f"upstream unreachable: {exc}")
+        with upstream:
+            if want_stream:
+                return self._chat_stream_response(
+                    upstream, model, fp, account, t_start, effort=effort)
+            return self._chat_nonstream_response(
+                upstream, model, fp, account, t_start, effort=effort)
+
+    def _dispatch_qoder_chat_post(self, payload):
+        """Qoder 版 /v1/chat/completions（含 /v1/completions 别名）。
+
+        下游响应管线与 WorkBuddy 完全共用：适配器把 Qoder 流翻成 OpenAI
+        chunk，_chat_stream_response / _chat_nonstream_response 照旧处理。
+        Qoder 没有 WorkBuddy 的跨区/封禁概念，那两道守卫跳过；按 key 的模型
+        白名单是网关自己的访问控制，照常生效。
+        """
+        chat_req = qoder_chat_request(payload)
+        session_key = extract_session_key(self.headers, chat_req)
+        fp = prompt_fingerprint(chat_req.get("messages"))
+        want_stream = bool(chat_req.get("stream"))
+        model = chat_req.get("model") or "unknown"
+        t_start = time.time()
+        log("chat: provider=qoder model=%s stream=%s msgs=%d"
+            % (model, want_stream, len(chat_req.get("messages") or [])))
+        try:
+            key_blocked = self._key_model_error(model)
+            if key_blocked:
+                return self._error(400, key_blocked, "invalid_request_error")
+            req_realm = self._request_realm() or CURRENT_REALM
+            upstream, account, effort = open_qoder_upstream(
+                chat_req, session_key=session_key, target_realm=req_realm)
+        except RateLimited as exc:
+            record_error(model, 429, exc.detail[:200],
+                         elapsed_ms=int((time.time() - t_start) * 1000),
+                         account=getattr(exc, "account_uid", None),
+                         key=self._key_id(), provider="qoder")
+            return self._rate_limited(exc)
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read(600).decode("utf-8", "replace")
+            except Exception:
+                detail = str(exc)
+            record_error(model, exc.code, detail,
+                         elapsed_ms=int((time.time() - t_start) * 1000),
+                         account=getattr(exc, "account_uid", None),
+                         key=self._key_id(), provider="qoder")
+            return self._error(exc.code, "upstream %s: %s" % (exc.code, detail))
+        except Exception as exc:
+            message = str(exc)
+            status = 503 if message.startswith("no usable account") else 502
+            record_error(model, status, message,
+                         elapsed_ms=int((time.time() - t_start) * 1000),
+                         account=getattr(exc, "account_uid", None),
+                         key=self._key_id(), provider="qoder")
+            if status == 503:
+                return self._error(503, message +
+                                   " - add or enable a Qoder account at the "
+                                   "dashboard (/)")
+            return self._error(502, "upstream unreachable: %s" % exc)
         with upstream:
             if want_stream:
                 return self._chat_stream_response(
@@ -19329,9 +20577,13 @@ def _report_first_run(args):
 
 def _log_startup_summary(args, api_key_generated):
     rep = current_account()
-    log("accounts   : %d total, %d usable" % (len(POOL.accounts), POOL.count_ready()))
+    log("accounts   : %d total, %d usable" % (len(POOL.accounts),
+                                              POOL.count_ready(provider=None)))
     for account in POOL.accounts:
-        log("  - %s  %s  %s  %s" % (account.uid[:8], account.nickname or "(no name)",
+        # 非 workbuddy 的账号在行首标出提供商（旧行逐字不变）。
+        pre = ("" if account.provider == wb_accounts.DEFAULT_PROVIDER
+               else "%s " % account.provider)
+        log("  - %s%s  %s  %s  %s" % (pre, account.uid[:8], account.nickname or "(no name)",
                                     account.domain, wb_accounts._human_delta(
                                         (account.expires_at or 0) - time.time()) or "?"))
     log("store      : %s" % ACCOUNTS_DIR)
@@ -19342,9 +20594,14 @@ def _log_startup_summary(args, api_key_generated):
         log("catalog    : app cache not found - will use the model API instead")
     log(f"account    : {rep.uid if rep else chr(45)} @ {rep.domain if rep else chr(45)}")
     log(f"issuer     : {wb_accounts.jwt_issuer(rep.access_token) if rep else chr(45)}")
-    log("realm      : %s (%s)" % (
-        CURRENT_REALM,
-        "www.workbuddy.ai" if CURRENT_REALM == "intl" else "copilot.tencent.com"))
+    if CURRENT_PROVIDER == wb_accounts.DEFAULT_PROVIDER:
+        realm_host = ("www.workbuddy.ai" if CURRENT_REALM == "intl"
+                      else "copilot.tencent.com")
+    else:
+        realm_host = wb_accounts.provider_default_domain(CURRENT_PROVIDER,
+                                                         CURRENT_REALM)
+    log("provider   : %s" % wb_accounts.provider_display_name(CURRENT_PROVIDER))
+    log("realm      : %s (%s)" % (CURRENT_REALM, realm_host))
     log("user-agent : %s" % wb_accounts.USER_AGENT)
     if args.host == "0.0.0.0":
         ips = local_ip_addresses() or ["<this-pc-ip>"]

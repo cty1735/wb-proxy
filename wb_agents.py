@@ -772,7 +772,24 @@ def _apply_zcode(paths, ctx):
 
 
 def _hermes_home(home):
-    return os.environ.get("HERMES_HOME") or os.path.join(home, ".hermes")
+    """Hermes home dir: ``HERMES_HOME``, else Hermes' own platform default.
+
+    Hermes resolves an unset ``HERMES_HOME`` to ``~/.hermes`` on POSIX but to
+    ``%LOCALAPPDATA%\\hermes`` on Windows (see ``get_hermes_home`` in
+    ``hermes_constants.py``), where the Windows installer puts ``config.yaml``,
+    ``.env`` and ``bin/hermes.exe``. Probing only ``~/.hermes`` therefore missed
+    every native Windows install. ``HERMES_DATA_DIR_SUFFIX`` renames the default
+    data dir, so it is mirrored here as well.
+    """
+    override = os.environ.get("HERMES_HOME")
+    if override:
+        return os.path.expanduser(os.path.expandvars(override))
+    suffix = os.environ.get("HERMES_DATA_DIR_SUFFIX", "")
+    if sys.platform == "win32":
+        base = (os.environ.get("LOCALAPPDATA") or "").strip() or os.path.join(
+            home, "AppData", "Local")
+        return os.path.join(base, "hermes" + suffix)
+    return os.path.join(home, ".hermes" + suffix)
 
 
 def _apply_hermes(paths, ctx):

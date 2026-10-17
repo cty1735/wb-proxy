@@ -9,6 +9,7 @@
 # ---- Local / editor noise ----
 *.log
 *.tmp
+*.pyc
 .DS_Store
 Thumbs.db
 .vscode/
