@@ -18463,12 +18463,18 @@ class Handler(BaseHTTPRequestHandler):
                 400, "base_url must start with http:// or https://",
                 "invalid_request_error")
         model = str(payload.get("model") or "").strip() or None
+        key_id = str(payload.get("key_id") or "").strip()
         models = payload.get("models")
         if not models:
             # Fall back to the gateway's discovered catalog so clients that embed
             # model definitions (OpenCode, DSH, Crush, ZCode) receive the full
-            # model list even when the front-end omitted the field.
-            models = self._agents_models()
+            # model list even when the front-end omitted the field. 目录必须按
+            # 这次 apply 的提供商 / 版本取：以前固定用 WorkBuddy，Qoder 的
+            # 配置会被写成上一家的模型表。
+            prov = payload.get("provider") or self._request_provider()
+            models = self._agents_models(
+                provider=wb_accounts.provider_filter(prov),
+                realm=payload.get("realm") or None)
         if not isinstance(models, list):
             return self._error(400, "models must be a list",
                                "invalid_request_error")
@@ -18496,7 +18502,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             result = wb_agents.integrate(
                 ACCOUNTS_DIR, client_id, base_url, api_key,
-                model=model, models=cleaned_models)
+                model=model, models=cleaned_models, key_id=key_id)
         except wb_agents.AgentConfigError as exc:
             return self._error(400, str(exc), "invalid_request_error")
         except Exception as exc:

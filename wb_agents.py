@@ -634,11 +634,25 @@ def _apply_opencode(paths, ctx):
             "apiKey": ctx["api_key"],
         },
     }
+    # 模型表是「当前目录」的快照，必须整表替换。deep_merge 会递归合并两个
+    # dict，从 WorkBuddy 切到 Qoder 再应用时，上一家的模型会一条条留在表里
+    # （两边的 id 基本不重叠），选择器里就变成两家混排——这正是「切到 Qoder
+    # 还看得到 WorkBuddy 模型」的来源。除 models 外的字段仍走合并。
+    rest = {k: v for k, v in provider.items() if k != "models"}
+    data = deep_merge(data, {"provider": {PROVIDER_ID: rest}})
+    node = data.setdefault("provider", {}).setdefault(PROVIDER_ID, {})
     if models:
-        provider["models"] = models
-    data = deep_merge(data, {"provider": {PROVIDER_ID: provider}})
+        node["models"] = models
+    else:
+        node.pop("models", None)
     if ctx.get("model"):
         data["model"] = "%s/%s" % (PROVIDER_ID, ctx["model"])
+    elif models and isinstance(data.get("model"), str) \
+            and data["model"].startswith(PROVIDER_ID + "/"):
+        # 旧默认模型已经不在新目录里（例如从 WorkBuddy 切到 Qoder），留着会
+        # 让客户端一开就请求一个不存在的模型。
+        if data["model"].split("/", 1)[1] not in models:
+            data.pop("model", None)
     return {path: _dump_json(data)}
 
 
@@ -997,6 +1011,7 @@ def overview(accounts_dir, home=None):
                 "at": record.get("applied_at"),
                 "base_url": record.get("base_url"),
                 "model": record.get("model"),
+                "key_id": record.get("key_id") or "",
                 "files": len(record.get("files") or []),
                 "external_change": external,
             }
@@ -1066,7 +1081,7 @@ def plan(client_id, base_url, api_key, model=None, models=None, home=None):
 
 
 def integrate(accounts_dir, client_id, base_url, api_key, model=None,
-              models=None, home=None):
+              models=None, home=None, key_id=None):
     """Point `client_id` at this gateway; returns what was written.
 
     The first apply backs up the original bytes of every touched file; later
@@ -1142,6 +1157,9 @@ def integrate(accounts_dir, client_id, base_url, api_key, model=None,
         "applied_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "base_url": built["base_url"],
         "model": built["model"],
+        # 记下用的是哪把面板 Key：切换提供商后自动重应用时沿用同一把，
+        # 不会把用户特意选的 Key 换成全局 Key。
+        "key_id": str(key_id or ""),
         "files": entries,
     }
     _save_state(accounts_dir, state)

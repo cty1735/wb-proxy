@@ -1795,6 +1795,9 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     '模型清单加载失败，点「刷新模型清单」重试': 'Failed to load the model list. Click "Refresh models" to retry.',
     '正在加载当前版本的模型…': 'Loading models for the current realm...',
     '模型清单加载失败，切回本页可重试': 'Failed to load models. Reopen this page to retry.',
+    '客户端模型清单已同步': 'Client model lists synced',
+    '已同步': 'synced',
+    '个客户端的模型': ' client model list(s)',
     '正在拉取网关日志...': 'Fetching gateway logs...',
     '正在检测…': 'Detecting...',
     '正在检测本机桌面客户端账号…': 'Detecting desktop client accounts on this machine...',
@@ -5375,8 +5378,12 @@ async function switchProvider(p){
       loadAnalyticsMatrix();
     }
     if(currentMainTab === 'tasks' && currentProvider() === 'qoder'){ loadQoderQuota(); }
-    if(currentMainTab === 'agents'){ loadAgents(); }
-    toast('已切换到 ' + providerName() + ' · ' + (window.VIEW_REALM === "cn" ? "国内版" : "国际版") + '出口', 'ok');
+    // 已配置过的客户端：内嵌的模型表也换到当前提供商（OpenCode 等把模型
+    // 写死在配置文件里，不重应用就会一直留着上一家的模型）。
+    await loadAgents();
+    const synced = await syncAppliedAgents();
+    toast('已切换到 ' + providerName() + ' · ' + (window.VIEW_REALM === "cn" ? "国内版" : "国际版") + '出口'
+          + (synced ? '，已同步 ' + synced + ' 个客户端的模型' : ''), 'ok');
   }catch(e){
     alert('切换提供商失败: ' + e.message);
     // 切失败时表还停在「加载中…」，把当前提供商的清单拉回来。
@@ -5554,12 +5561,15 @@ async function toggleActiveGatewayRealm(){
   try {
     const res = await postJSON("/realm", {realm: next});
     window.ACTIVE_GATEWAY_REALM = res.current || next;
-    toast("网关默认上游已切换并永久保存为: " + (window.ACTIVE_GATEWAY_REALM === "intl" ? "国际版" : "国内版"));
     setViewRealm(window.ACTIVE_GATEWAY_REALM);
     window.updateUI();
     await Promise.all([loadAccounts(), loadModels(), loadGrowthTasks(),
                        loadSchedulerStatus(), loadAnalytics(), refresh()]);
-    if(currentMainTab === 'agents'){ loadAgents(); }
+    // 网关默认出口真的换了版本：已配置客户端的模型表也要换过去。
+    await loadAgents();
+    const synced = await syncAppliedAgents();
+    toast("网关默认上游已切换并永久保存为: " + (window.ACTIVE_GATEWAY_REALM === "intl" ? "国际版" : "国内版")
+          + (synced ? '，已同步 ' + synced + ' 个客户端的模型' : ''));
   }catch(e){
     alert("切换失败: " + e.message);
     loadModels();
@@ -12001,6 +12011,41 @@ async function applyAgent(id, btn){
     if(btn){ btn.disabled = false; }
     await loadAgents();
   }
+}
+
+/* 切换提供商 / 网关版本后，把已经配置过的客户端里内嵌的模型表也换过去：
+   OpenCode / Crush / ZCode / DSH 会把模型写进各自的配置文件，光切网关
+   不会动它们，选择器里就会留着上一家的模型。
+   只重应用「配置记录还在、且应用后没被手改过」的客户端；默认模型沿用
+   原来的值（新目录里没有就退回「不指定」），Key 沿用当初那把。 */
+async function syncAppliedAgents(){
+  const applied = agentClients().filter(c => c.applied && !c.applied.external_change);
+  if(!applied.length) return 0;
+  const models = (AGENT_MODELS || [])
+    .map(m => (typeof m === 'object' ? (m.id || '') : m))
+    .filter(Boolean);
+  if(!models.length) return 0;   // 目录没取到：别把客户端的模型表清空
+  const available = new Set(models);
+  let synced = 0;
+  for(const c of applied){
+    const rec = c.applied || {};
+    const prev = rec.model || '';
+    try{
+      await postJSON('/agents/apply', {
+        client: c.id,
+        client_id: c.id,
+        base_url: rec.base_url
+          || ((AGENTS_DATA && AGENTS_DATA.gateway && AGENTS_DATA.gateway.base_url) || ''),
+        key_id: rec.key_id || '',
+        model: available.has(prev) ? prev : '',
+        models: models,
+      });
+      synced++;
+    }catch(e){
+      console.warn('agent model sync failed:', c.id, e);
+    }
+  }
+  return synced;
 }
 
 async function restoreAgent(id, btn){
