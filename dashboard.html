@@ -1843,8 +1843,10 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     '消费倍率': 'Rate',
     '消费倍率 / 优惠': 'Rate / discount',
     '按额度计费': 'Billed in credits',
-    'Qoder 按账号额度（credits）计费，没有倍率 / 折扣；每次请求实际扣了多少见「最近请求」里的「积分」列。': 'Qoder bills in account credits, with no rate or discount; the actual charge per request is in the Credits column of Recent requests.',
-    '展示 Qoder 的官方对话大模型、上下文容量、推理/视觉能力、思考控制与默认采样参数；按账号额度计费，无倍率 / 折扣': 'Official Qoder chat models with context size, reasoning/vision abilities, thinking controls and default sampling parameters; billed by account credits, with no rate or discount.',
+    '该模型在上游目录里没有倍率字段；Qoder 按账号额度（credits）计费，实际扣减见「最近请求」的「积分」列。': 'This model has no rate field in the upstream catalog; Qoder bills in account credits, and the actual charge is in the Credits column of Recent requests.',
+    '官网文档参考值；实际倍率以账号模型清单（price_factor）为准': 'Reference value from the official docs; the actual rate comes from the account model list (price_factor).',
+    '来自账号模型清单的 price_factor；活动折扣可能让实际倍率不同': 'Taken from the account model list price_factor; promotions may change the effective rate.',
+    '展示 Qoder 的官方对话大模型、上下文容量、推理/视觉能力、思考控制与默认采样参数；倍率为 Credits 消耗参考系数': 'Official Qoder chat models with context size, reasoning/vision abilities, thinking controls and default sampling parameters; the rate is the reference Credit multiplier.',
     '深色': 'Dark',
     '添加 WorkBuddy 账号 (OAuth 授权)': 'Add a WorkBuddy account (OAuth)',
     '清空': 'Clear',
@@ -2430,8 +2432,11 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     "展开查看每个模型当前生效的策略": "展開檢視每個模型目前生效的策略",
     "展开逐条查看 / 手填 OpenRouter id": "展開逐條檢視 / 手填 OpenRouter id",
     "展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率": "展示目前檢視下官方對話大模型、上下文容量、推理/視覺能力、思考控制、預設取樣參數及在售倍率",
-    "展示 Qoder 的官方对话大模型、上下文容量、推理/视觉能力、思考控制与默认采样参数；按账号额度计费，无倍率 / 折扣": "展示 Qoder 的官方對話大模型、上下文容量、推理/視覺能力、思考控制與預設取樣參數；按帳號額度計費，無倍率 / 折扣",
+    "展示 Qoder 的官方对话大模型、上下文容量、推理/视觉能力、思考控制与默认采样参数；倍率为 Credits 消耗参考系数": "展示 Qoder 的官方對話大模型、上下文容量、推理/視覺能力、思考控制與預設取樣參數；倍率為 Credits 消耗參考係數",
     "按额度计费": "按額度計費",
+    "该模型在上游目录里没有倍率字段；Qoder 按账号额度（credits）计费，实际扣减见「最近请求」的「积分」列。": "此模型在上游目錄中沒有倍率欄位；Qoder 依帳號額度（credits）計費，實際扣減請見「最近請求」的「積分」欄。",
+    "官网文档参考值；实际倍率以账号模型清单（price_factor）为准": "官網文件參考值；實際倍率以帳號模型清單（price_factor）為準",
+    "来自账号模型清单的 price_factor；活动折扣可能让实际倍率不同": "來自帳號模型清單的 price_factor；活動折扣可能讓實際倍率不同",
     "已为": "已為",
     "已为 ": "已為 ",
     "已从桌面客户端进程回收密钥（只留在内存里）": "已從桌面客戶端程序回收金鑰（只留在記憶體裡）",
@@ -5221,7 +5226,7 @@ const TASKS_DESC_QODER = "Qoder 账号的套餐与加油包额度总览：剩余
 // 模型清单页的说明：Qoder 的模型目录没有倍率 / 折扣（按账号额度计费），
 // 照搬 WorkBuddy 的「及在售倍率」会指向一列并不存在的数字。
 const MODELS_DESC_WB = "展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率";
-const MODELS_DESC_QODER = "展示 Qoder 的官方对话大模型、上下文容量、推理/视觉能力、思考控制与默认采样参数；按账号额度计费，无倍率 / 折扣";
+const MODELS_DESC_QODER = "展示 Qoder 的官方对话大模型、上下文容量、推理/视觉能力、思考控制与默认采样参数；倍率为 Credits 消耗参考系数";
 // 两个版本卡片上展示的上游主机名，跟着提供商换。
 const PROVIDER_HOSTS = {
   workbuddy: {intl: "www.workbuddy.ai", cn: "copilot.tencent.com"},
@@ -5623,18 +5628,21 @@ function renderAvailableModels(){
     let credBadge = '-';
     const credText = (m.credits == null ? '' : String(m.credits)).trim();
     const c = credText.toLowerCase().replace('x', '');
-    if(currentProvider() === 'qoder'){
-      // Qoder 的模型目录没有 WorkBuddy 式的倍率 / 折扣：它按账号额度（credits）
-      // 计费，每次请求按实际用量扣额度。写清楚，别让整列「-」看起来像没取到数。
-      credBadge = '<span class="badge s" title="Qoder 按账号额度（credits）计费，没有倍率 / 折扣；每次请求实际扣了多少见「最近请求」里的「积分」列。">按额度计费</span>';
-    } else if(c === '0.00' || c === '0'){
-      credBadge = '<span class="badge ok" style="background:var(--accent2-soft);color:var(--accent2)">限时免费 0.00x</span>';
+    const credNote = String(m.credits_note || '').trim();
+    const credTitle = credNote ? ' title="' + esc(credNote) + '"' : '';
+    if(c === '0.00' || c === '0'){
+      // 0 就是官网选择器里的「限时免费」（Qoder 的 Efficient 目前就是这种）。
+      credBadge = '<span class="badge ok" style="background:var(--accent2-soft);color:var(--accent2)"' + credTitle + '>限时免费 0.00x</span>';
     } else if(credText){
       // 统一成倍率写法：'x0.79' / '0.79' / 数字 0.5 都显示成 '0.79x' / '0.5x'。
       const raw = credText.replace(/^x/i, '') + 'x';
       const night = ((m.id === 'glm-5.2' || m.id === 'deepseek-v4-pro') && window.VIEW_REALM === 'cn')
         ? ' <span style="font-size:10px;color:var(--accent)">(夜间0.5x)</span>' : '';
-      credBadge = '<span class="badge s">' + esc(raw) + night + '</span>';
+      credBadge = '<span class="badge s"' + credTitle + '>' + esc(raw) + night + '</span>';
+    } else if(currentProvider() === 'qoder'){
+      // 目录里没有 price_factor（老客户端 / 精简目录）时别留一列「-」，
+      // 说清楚 Qoder 是按账号额度扣费、实际扣减看「最近请求」的积分列。
+      credBadge = '<span class="badge s" title="' + esc('该模型在上游目录里没有倍率字段；Qoder 按账号额度（credits）计费，实际扣减见「最近请求」的「积分」列。') + '">按额度计费</span>';
     }
 
     // 2. 模型能力 (Vision, Tool calls)

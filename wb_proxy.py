@@ -10954,6 +10954,8 @@ def model_entry(mid, meta):
     # ---- misc ----
     if meta.get("credits"):
         item["credits"] = meta["credits"]
+    if meta.get("credits_note"):
+        item["credits_note"] = meta["credits_note"]
     if meta.get("vendor"):
         item["vendor"] = meta["vendor"]
     if meta.get("temperature") is not None:

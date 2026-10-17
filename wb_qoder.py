@@ -1033,7 +1033,12 @@ def normalise_model_entry(entry):
         enabled = thinking.get("enabled")
         if isinstance(enabled, dict) and isinstance(enabled.get("efforts"), dict):
             efforts = sorted(str(name) for name in enabled["efforts"].keys())
-    return {
+    # 官方模型选择器里的 Credit 倍率就是这个字段（见 docs 的说明）。
+    factor = entry.get("price_factor")
+    if factor is None:
+        factor = entry.get("priceFactor")
+    credits = format_price_factor(factor)
+    model = {
         "id": to_model_id(display),
         "name": str(display),
         "key": str(key),
@@ -1043,7 +1048,69 @@ def normalise_model_entry(entry):
         "supports_effort": bool(efforts),
         "efforts": efforts,
         "input": ["text", "image"] if entry.get("is_vl") else ["text"],
+        "credits": credits,
     }
+    if credits:
+        model["credits_note"] = _CREDITS_NOTE_REMOTE
+    return model
+
+
+#: 官网文档里的 Credit 消耗参考系数（按上游 key）。只在拿不到上游目录
+#: （没有 Qoder 账号）时兜底展示；有账号时一律用 /model/list 的
+#: price_factor——文档自己也说「倍率来自服务端模型列表的 price_factor」。
+#: 值取自 docs.qoder.com 的模型选择器 / CLI 文档与 docs.qoder.cn 的同名页。
+_DOC_PRICE_FACTORS = {
+    "intl": {
+        "auto": 0.5,          # 智能路由
+        "ultimate": 2.0,
+        "performance": 1.1,
+        "efficient": 0.3,     # 官网对付费用户有 0.0 限时免费，Service Account 仍 0.3；
+                              # 实际以账号目录的 price_factor 为准，这里只做无账号兜底。
+        "qmodel": 0.1,        # Qwen3.7 Plus
+        "qmodel_preview": 0.5,   # Qwen3.8-Max
+        "qmodel_latest": 0.5,    # Qwen3.7-Max
+        "dmodel": 0.5,        # DeepSeek-V4-Pro（峰谷计价，闲时减半）
+        "dfmodel": 0.3,       # DeepSeek-V4-Flash
+        "gm51model": 0.6,     # GLM-5.2
+        "kmodel": 0.3,        # Kimi-K2.7-Code
+        "kmodel_latest": 1.4,    # Kimi-K3
+        "mmodel": 0.2,        # MiniMax-M3
+    },
+    "cn": {
+        "auto": 0.5,
+        "qmodel_latest": 0.5,
+        "qmodel": 0.1,
+        "dmodel": 0.5,
+        "dfmodel": 0.1,
+        "mmodel": 0.2,
+    },
+}
+
+#: 静态清单里没有文档值时的说明：宁可显示「-」也不编一个数字。
+_CREDITS_NOTE_DOCS = "官网文档参考值；实际倍率以账号模型清单（price_factor）为准"
+_CREDITS_NOTE_REMOTE = "来自账号模型清单的 price_factor；活动折扣可能让实际倍率不同"
+
+
+def format_price_factor(value):
+    """把上游 price_factor 格式化成看板用的倍率字符串（0.5 -> "0.5x"）。
+
+    认不出/负数一律返回空串，让前端显示「-」，不要假装是 0。
+    """
+    if value is None or value == "" or isinstance(value, bool):
+        return ""
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if num < 0:
+        return ""
+    if num == 0:
+        return "0x"
+    text = "%.2f" % num
+    if text.endswith("0"):
+        # 2.00 -> 2.0 / 0.50 -> 0.5，保留一位小数；0.06 这种不动。
+        text = text[:-1]
+    return text + "x"
 
 
 #: 静态兜底清单（拿不到上游目录时用；与 pi 内置表一致）。
@@ -1082,9 +1149,11 @@ _STATIC_MODELS = {
 def static_models(realm):
     """内置兜底清单（形状与 normalise_model_entry 的输出一致）。"""
     rows = _STATIC_MODELS.get("cn" if str(realm).lower() == "cn" else "intl")
+    factors = _DOC_PRICE_FACTORS.get("cn" if str(realm).lower() == "cn" else "intl", {})
     models = []
     for key, name, reasoning, supports_effort, vision, context in rows:
-        models.append({
+        credits = format_price_factor(factors.get(key))
+        model = {
             "id": to_model_id(name),
             "name": name,
             "key": key,
@@ -1094,7 +1163,11 @@ def static_models(realm):
             "supports_effort": supports_effort,
             "efforts": [],
             "input": ["text", "image"] if vision else ["text"],
-        })
+            "credits": credits,
+        }
+        if credits:
+            model["credits_note"] = _CREDITS_NOTE_DOCS
+        models.append(model)
     return models
 
 
@@ -1116,6 +1189,10 @@ def model_entry_meta(model):
     }
     if model.get("efforts"):
         meta["reasoning"] = {"supportedEfforts": list(model["efforts"])}
+    if model.get("credits"):
+        meta["credits"] = model["credits"]
+    if model.get("credits_note"):
+        meta["credits_note"] = model["credits_note"]
     return meta
 
 

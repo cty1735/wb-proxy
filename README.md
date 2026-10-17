@@ -8,6 +8,7 @@
 
 | 日期 | 功能 |
 | --- | --- |
+| 2026-10-17 | Qoder 模型清单显示 Credit 消耗倍率：直接读账号 `/model/list` 的 `price_factor`（与官网模型选择器一致），`0` 标「限时免费」；没有账号时用官网文档系数兜底并标注为参考值 |
 | 2026-10-17 | Qoder 聊天通道接入：`/v1/chat/completions`（含 `/v1/completions`）、`/v1/messages`、`/v1/responses` 在显式 `?provider=qoder`（或 `X-Provider`）下走 Qoder COSY 协议，与 WorkBuddy 共用流式 / 非流式响应管线；没有显式提示时按模型归属兜底（Qoder 目录认识、WorkBuddy 目录不认识 → Qoder）；看板的 analytics / timeseries / remaining / by-account 也接受 provider 过滤 |
 | 2026-10-17 | 修复 Windows 下检测不到已安装 Hermes：`_hermes_home` 现在按 Hermes 自身规则解析（`HERMES_HOME` → Windows `%LOCALAPPDATA%\hermes` / POSIX `~/.hermes`，含 `HERMES_DATA_DIR_SUFFIX`），此前只认 `~/.hermes`，原生 Windows 安装全部漏检 |
 | 2026-10-17 | 新增 Qoder 提供商：看板头部 WorkBuddy / Qoder 切换，账号列表、积分、用量统计、默认出口与模型清单全部跟随提供商（各提供商再分国内 / 国际）；Qoder 支持浏览器设备码与 PAT 登录、额度查询与模型清单；普通 WorkBuddy 流量不受影响 |
