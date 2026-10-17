@@ -412,6 +412,22 @@ body:not(.provider-qoder) .qoder-only{display:none !important}
 .theme-opt-text{flex:1;font-weight:500}
 .theme-opt-check{width:13px;height:13px;flex-shrink:0;opacity:0;color:var(--accent)}
 .theme-option.active .theme-opt-check{opacity:1}
+/* 切换提供商 / 国际国内版时的轻量 loading：顶部居中的小胶囊，不挡操作，
+   至少停留 600ms，避免「点下去没反应」和「闪一下反而看不清」。 */
+#switchLoading{
+  position:fixed;top:14px;left:50%;transform:translate(-50%,-12px);
+  display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;
+  background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow-md);
+  font-size:12.5px;color:var(--fg);z-index:400;opacity:0;pointer-events:none;
+  transition:opacity .18s ease, transform .18s ease;white-space:nowrap;
+}
+#switchLoading.on{opacity:1;transform:translate(-50%,0)}
+#switchLoading .sp{
+  width:13px;height:13px;border-radius:50%;flex:none;
+  border:2px solid var(--line);border-top-color:var(--accent);
+  animation:switchSpin .7s linear infinite;
+}
+@keyframes switchSpin{to{transform:rotate(360deg)}}
 .theme-option.active{font-weight:600;color:var(--accent)}
 .theme-option.active .theme-opt-icon{color:var(--accent)}
 .lang-btn{
@@ -1772,6 +1788,13 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     '正在打开文件…': 'Opening the file...',
     '正在扫描 WorkBuddy.exe 内存…': 'Scanning WorkBuddy.exe memory...',
     '正在拉取...': 'Fetching...',
+    '正在切换到': 'Switching to',
+    '切换中…': 'Switching...',
+    '正在加载当前提供商 · 版本的模型清单…': 'Loading models for the current provider and realm...',
+    '正在加载当前视图的模型清单…': 'Loading the model list for the current view...',
+    '模型清单加载失败，点「刷新模型清单」重试': 'Failed to load the model list. Click "Refresh models" to retry.',
+    '正在加载当前版本的模型…': 'Loading models for the current realm...',
+    '模型清单加载失败，切回本页可重试': 'Failed to load models. Reopen this page to retry.',
     '正在拉取网关日志...': 'Fetching gateway logs...',
     '正在检测…': 'Detecting...',
     '正在检测本机桌面客户端账号…': 'Detecting desktop client accounts on this machine...',
@@ -5281,8 +5304,44 @@ function syncProviderChrome(force){
 }
 
 // 切换提供商：服务端把 realm 切到该提供商记着的出口，视图跟随并重拉全部数据。
+/* ---------- 切换提供商 / 国际国内版时的 loading ----------
+   顶部小胶囊 + 至少停留 600ms：切换要重拉账号、模型清单、用量与统计，
+   慢的时候一两秒，没有反馈会让人以为没点上；闪一下就消失又看不清。 */
+let SWITCH_BUSY = 0;
+let SWITCH_STARTED = 0;
+function switchLoadingEl(){
+  let el = document.getElementById('switchLoading');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'switchLoading';
+    el.innerHTML = '<span class="sp"></span><span id="switchLoadingText">切换中…</span>';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function beginSwitch(label){
+  SWITCH_BUSY++;
+  SWITCH_STARTED = Date.now();
+  const el = switchLoadingEl();
+  const t = document.getElementById('switchLoadingText');
+  if(t) t.textContent = label || '切换中…';
+  el.classList.add('on');
+}
+async function endSwitch(minMs){
+  const wait = Math.max(0, (minMs == null ? 600 : minMs) - (Date.now() - SWITCH_STARTED));
+  if(wait) await new Promise(r => setTimeout(r, wait));
+  SWITCH_BUSY = Math.max(0, SWITCH_BUSY - 1);
+  if(!SWITCH_BUSY){
+    const el = document.getElementById('switchLoading');
+    if(el) el.classList.remove('on');
+  }
+}
+
 async function switchProvider(p){
   if(p === currentProvider()){ syncProviderChrome(); return; }
+  beginSwitch('正在切换到 ' + providerName(p) + '…');
+  // 模型清单先清空：等待新目录返回的这段间隙里，不该还挂着上一个提供商的模型。
+  renderModelsLoading();
   try{
     const res = await postJSON("/realm", {provider: p});
     window.PROVIDER = (res.provider === "qoder" || res.provider === "workbuddy") ? res.provider : p;
@@ -5320,6 +5379,10 @@ async function switchProvider(p){
     toast('已切换到 ' + providerName() + ' · ' + (window.VIEW_REALM === "cn" ? "国内版" : "国际版") + '出口', 'ok');
   }catch(e){
     alert('切换提供商失败: ' + e.message);
+    // 切失败时表还停在「加载中…」，把当前提供商的清单拉回来。
+    loadModels();
+  }finally{
+    await endSwitch(600);
   }
 }
 
@@ -5467,17 +5530,27 @@ function setViewRealm(r){
 
 async function switchViewRealm(r){
   if(window.VIEW_REALM === r) return;
+  beginSwitch('正在切换到 ' + providerName() + ' · ' + (r === 'cn' ? '国内版' : '国际版') + '…');
+  renderModelsLoading();
   setViewRealm(r);
   RECENT_PAGE = 1;
   window.updateUI();
   // 并行发起，不要逐个 await：国内版的成长任务一次要约 2 秒（上游两个接口），
   // 串行排队时后面那些毫秒级的用量接口全被它堵着，切过去看着就是"过几秒才刷新"。
-  await Promise.all([loadAccounts(), loadModels(), loadGrowthTasks(),
-                     loadSchedulerStatus(), loadAnalytics(), refresh()]);
+  try{
+    await Promise.all([loadAccounts(), loadModels(), loadGrowthTasks(),
+                       loadSchedulerStatus(), loadAnalytics(), refresh()]);
+    // 智能体配置里的模型下拉也要换成新版本的目录。
+    if(currentMainTab === 'agents'){ loadAgents(); }
+  }finally{
+    await endSwitch(600);
+  }
 };
 
 async function toggleActiveGatewayRealm(){
   const next = (window.ACTIVE_GATEWAY_REALM === "intl" ? "cn" : "intl");
+  beginSwitch('正在切换到 ' + providerName() + ' · ' + (next === 'cn' ? '国内版' : '国际版') + '…');
+  renderModelsLoading();
   try {
     const res = await postJSON("/realm", {realm: next});
     window.ACTIVE_GATEWAY_REALM = res.current || next;
@@ -5486,8 +5559,12 @@ async function toggleActiveGatewayRealm(){
     window.updateUI();
     await Promise.all([loadAccounts(), loadModels(), loadGrowthTasks(),
                        loadSchedulerStatus(), loadAnalytics(), refresh()]);
+    if(currentMainTab === 'agents'){ loadAgents(); }
   }catch(e){
     alert("切换失败: " + e.message);
+    loadModels();
+  }finally{
+    await endSwitch(600);
   }
 };
 
@@ -5552,14 +5629,40 @@ async function refreshModelCatalog(btn){
   }
 }
 
+// 模型清单请求序号：连续切提供商 / 版本时只认最后一次请求的响应，否则先发的
+// 慢响应回来会把新提供商的清单盖掉（切得快时肉眼可见的「又跳回旧模型」）。
+let MODELS_REQ_SEQ = 0;
+function renderModelsLoading(){
+  MODELS_DATA = [];
+  const tb = document.querySelector('#modelsTable tbody');
+  const countEm = document.getElementById('availModelCount');
+  if(countEm) countEm.textContent = '(加载中…)';
+  if(tb) tb.innerHTML = '<tr><td colspan="8" class="empty">正在加载当前提供商 · 版本的模型清单…</td></tr>';
+  const src = document.getElementById('modelsSourceLine');
+  if(src){
+    src.style.cssText = CATALOG_BANNER_BASE + 'background:transparent;border:1px dashed var(--line);color:var(--dim)';
+    src.textContent = '正在加载当前视图的模型清单…';
+  }
+}
+
 async function loadModels(){
+  const seq = ++MODELS_REQ_SEQ;
   try{
     const r = await getJSON(withProvider('/v1/models?realm=' + encodeURIComponent(window.VIEW_REALM)));
+    if(seq !== MODELS_REQ_SEQ) return;
     MODELS_DATA = r.data || [];
     renderModelsSourceLine(r.catalog || null);
     renderAvailableModels();
   }catch(e){
+    if(seq !== MODELS_REQ_SEQ) return;
     console.error('loadModels error:', e);
+    // 切换时表已经被清空：失败就明确说失败，别一直停在「加载中…」。
+    if(!MODELS_DATA.length){
+      const tb = document.querySelector('#modelsTable tbody');
+      if(tb) tb.innerHTML = '<tr><td colspan="8" class="empty">模型清单加载失败，点「刷新模型清单」重试</td></tr>';
+      const countEm = document.getElementById('availModelCount');
+      if(countEm) countEm.textContent = '(加载失败)';
+    }
   }
 }
 
@@ -11669,19 +11772,35 @@ let AGENTS_DATA = null;
 let AGENT_MODELS = [];
 let AGENT_KEYS = [];
 let AGENTS_LOADING = false;
+let AGENTS_SEQ = 0;
 
 function agentClients(){
   const d = AGENTS_DATA || {};
   return d.clients || d.agents || [];
 }
 
+function renderAgentModelsLoading(){
+  const sel = document.getElementById('agentModelSelect');
+  if(!sel) return;
+  sel.innerHTML = '<option value="">(正在加载当前版本的模型…)</option>';
+}
+function renderAgentModelsFailed(){
+  const sel = document.getElementById('agentModelSelect');
+  if(!sel) return;
+  sel.innerHTML = '<option value="">(模型清单加载失败，切回本页可重试)</option>';
+}
+
 async function loadAgents(showToast){
-  if(AGENTS_LOADING) return;
+  const seq = ++AGENTS_SEQ;
   AGENTS_LOADING = true;
+  // 先把上一提供商 / 版本的模型清掉：等待期间下拉里不该还能选到别的目录的模型。
+  AGENT_MODELS = [];
+  renderAgentModelsLoading();
   const state = document.getElementById('agentDetectState');
   if(state){ state.textContent = '(检测中...)'; state.style.color = 'var(--dim)'; }
   try {
-    const data = await getJSON(withProvider('/agents'));
+    const data = await getJSON(withProvider('/agents?realm=' + encodeURIComponent(window.VIEW_REALM)));
+    if(seq !== AGENTS_SEQ) return;
     AGENTS_DATA = data || {};
     AGENT_MODELS = AGENTS_DATA.models || [];
     AGENT_KEYS = AGENTS_DATA.keys || AGENTS_DATA.api_keys || [];
@@ -11702,10 +11821,12 @@ async function loadAgents(showToast){
     }
     if(showToast) toast('客户端检测完成', 'ok');
   } catch(e) {
+    if(seq !== AGENTS_SEQ) return;
     if(state){ state.textContent = '(加载失败)'; state.style.color = 'var(--bad)'; }
+    renderAgentModelsFailed();
     if(!isAuthError(e)) toast('智能体列表加载失败: ' + e.message, 'bad');
   } finally {
-    AGENTS_LOADING = false;
+    if(seq === AGENTS_SEQ) AGENTS_LOADING = false;
   }
 }
 

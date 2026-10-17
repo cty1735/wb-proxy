@@ -18298,19 +18298,23 @@ class Handler(BaseHTTPRequestHandler):
             host = "127.0.0.1"
         return "http://%s:%d/v1" % (host, int(port or 0))
 
-    def _agents_models(self, provider=None):
+    def _agents_models(self, provider=None, realm=None):
         """Flat model list for the picker; bundled catalog, deduped.
 
         Live sources stay out of this path on purpose: the panel must answer
         even when the upstream is down, so a failure here is simply a shorter
         list, never an error. provider=qoder 时列 Qoder 目录（内置快照兜底）。
+
+        realm 显式传入时按该版本取：面板看的是「视图版本」，切换国际/国内版
+        后下拉里的模型必须跟着换，不一定等于网关当前出口的 CURRENT_REALM。
         """
         provider = wb_accounts.provider_filter(provider)
+        realm = realm if realm in ("intl", "cn") else CURRENT_REALM
         models = []
         seen = set()
         try:
             try:
-                entries = fetch_models(provider=provider)
+                entries = fetch_models(realm=realm, provider=provider)
             except Exception:
                 entries = []
             if entries:
@@ -18318,14 +18322,16 @@ class Handler(BaseHTTPRequestHandler):
             elif provider == "qoder":
                 sources = (
                     (item.get("id"), wb_qoder.model_entry_meta(item))
-                    for item in wb_qoder.static_models(CURRENT_REALM)
+                    for item in wb_qoder.static_models(realm)
                     if isinstance(item, dict)
                 )
             else:
+                statics = (list(getattr(wb_catalog, "STATIC_CN_MODELS", []))
+                           if realm == "cn"
+                           else list(getattr(wb_catalog, "STATIC_INTL_MODELS", [])))
                 sources = (
                     (item.get("id"), item)
-                    for item in (list(getattr(wb_catalog, "STATIC_INTL_MODELS", []))
-                                 + list(getattr(wb_catalog, "STATIC_CN_MODELS", [])))
+                    for item in statics
                     if isinstance(item, dict)
                 )
             for mid, meta in sources:
@@ -18412,7 +18418,8 @@ class Handler(BaseHTTPRequestHandler):
             "clients": list(wb_agents.overview(ACCOUNTS_DIR).values()),
             "models": self._agents_models(
                 provider=wb_accounts.provider_filter(
-                    self._request_provider(query))),
+                    self._request_provider(query)),
+                realm=(query.get("realm", [None])[0] if query else None)),
             "keys": keys,
             "global_key_set": bool(API_KEY),
             "auth_required": auth_required(),
