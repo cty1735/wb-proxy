@@ -9,7 +9,7 @@
   --bg:#ffffff; --panel:#ffffff; --panel2:#f5f5f5; --panel3:#ededed;
   --line:#e7e7e7; --line-hover:#d4d4d4;
   --fg:#1a1a1a; --dim:#737373; --dim-light:#a3a3a3;
-  --accent:#f97316; --accent-hover:#ea580c; --accent-soft:rgba(249,115,22,.10);
+  --accent:#2cb044; --accent-hover:#238f37; --accent-soft:rgba(44,176,68,.10);
   --accent2:#5e8c4f; --accent2-soft:rgba(94,140,79,.12);
   --warn:#a0691c; --warn-soft:rgba(183,121,31,.12);
   --think:#8a6a96; --think-soft:rgba(138,106,150,.10);
@@ -28,7 +28,7 @@
   --bg:#000000; --panel:#0e0e0e; --panel2:#1a1a1a; --panel3:#242424;
   --line:#262626; --line-hover:#383838;
   --fg:#f5f5f5; --dim:#a3a3a3; --dim-light:#6b6b6b;
-  --accent:#ff8a3d; --accent-hover:#ffa15e; --accent-soft:rgba(255,138,61,.16);
+  --accent:#2cb044; --accent-hover:#3ec95a; --accent-soft:rgba(44,176,68,.16);
   --accent2:#8fae78; --accent2-soft:rgba(143,174,120,.15);
   --warn:#d9b25f; --warn-soft:rgba(217,178,95,.15);
   --think:#bfa3cc; --think-soft:rgba(191,163,204,.15);
@@ -279,7 +279,7 @@ button.mini{padding:3px 9px;font-size:11px}
 .step .n{flex:0 0 20px;height:20px;border-radius:50%;background:var(--panel2);
   border:1px solid var(--line);color:var(--dim);font-size:11px;display:flex;
   align-items:center;justify-content:center}
-.step.active .n{border-color:var(--accent);background:rgba(37,99,235,.1);color:var(--accent);font-weight:700}
+.step.active .n{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:700}
 .step.done .n{border-color:var(--accent2);background:rgba(22,163,74,.1);color:var(--accent2);font-weight:700}
 .step .t{font-size:13px}
 footer{color:var(--dim);font-size:12px;text-align:center;margin-top:28px}
@@ -678,12 +678,12 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
   --bg:#ffffff; --panel:#ffffff; --panel2:#f5f5f5; --panel3:#ededed;
   --line:#e7e7e7; --line2:#d4d4d4;
   --fg:#1a1a1a; --fg2:#404040; --dim:#737373; --dim2:#a3a3a3;
-  --accent:#f97316; --accent-2:#fb923c; --accent-soft:rgba(249,115,22,.10);
+  --accent:#2cb044; --accent-2:#4ccb63; --accent-soft:rgba(44,176,68,.10);
   --green:#5e8c4f; --green-soft:rgba(94,140,79,.12);
   --blue:#6a9bcc; --gold:#b7791f; --red:#b5473b;
-  --chart-bar:#f97316; --chart-bar-soft:rgba(249,115,22,.55);
+  --chart-bar:#2cb044; --chart-bar-soft:rgba(44,176,68,.55);
   --chart-line:#6a9bcc;
-  --hm0:#f0f0f0; --hm1:#ffe4cc; --hm2:#ffc194; --hm3:#fb923c; --hm4:#f97316;
+  --hm0:#f0f0f0; --hm1:#e6f7ea; --hm2:#b9e9c4; --hm3:#74d18a; --hm4:#2cb044;
   --shadow:0 1px 2px rgba(0,0,0,.04), 0 4px 14px rgba(0,0,0,.06);
   --shadow-lg:0 2px 6px rgba(0,0,0,.06), 0 12px 32px rgba(0,0,0,.12);
   --serif:ui-serif, Georgia, "Source Han Serif SC", "Noto Serif SC", "Songti SC", serif;
@@ -693,12 +693,12 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
   --bg:#000000; --panel:#0e0e0e; --panel2:#1a1a1a; --panel3:#242424;
   --line:#262626; --line2:#383838;
   --fg:#f5f5f5; --fg2:#d4d4d4; --dim:#a3a3a3; --dim2:#6b6b6b;
-  --accent:#ff8a3d; --accent-2:#ffa15e; --accent-soft:rgba(255,138,61,.16);
+  --accent:#2cb044; --accent-2:#3ec95a; --accent-soft:rgba(44,176,68,.16);
   --green:#8fae78; --green-soft:rgba(143,174,120,.14);
   --blue:#8ab4d9; --gold:#d9b25f; --red:#d97b72;
-  --chart-bar:#ffa15e; --chart-bar-soft:rgba(255,161,94,.5);
+  --chart-bar:#3ec95a; --chart-bar-soft:rgba(62,201,90,.5);
   --chart-line:#8ab4d9;
-  --hm0:#1a1a1a; --hm1:#3d2310; --hm2:#6b3a15; --hm3:#b5561a; --hm4:#ff8a3d;
+  --hm0:#1a1a1a; --hm1:#12331b; --hm2:#1d5a2c; --hm3:#277f3c; --hm4:#3ec95a;
   --shadow:0 1px 2px rgba(0,0,0,.5), 0 4px 14px rgba(0,0,0,.45);
   --shadow-lg:0 2px 6px rgba(0,0,0,.55), 0 12px 32px rgba(0,0,0,.6);
 }
@@ -12756,7 +12756,7 @@ function renderPerfMatrix(usage, perf){
       totWall = wallN ? ms(wallW / wallN) : "-";
       totCache = cacheN ? ((cacheW / cacheN).toFixed(1) + "%") : "-";
     }
-    const summaryRow = '<tr style="background:rgba(37,99,235,.06);font-weight:600">'
+    const summaryRow = '<tr style="background:var(--accent-soft);font-weight:600">'
       + '<td style="text-align:left" data-label="模型"><b>' + (filtering ? '筛选结果合计 (Filtered)' : '全部模型合计 (Total)') + '</b></td>'
       + '<td style="text-align:center" data-label="区域"><span style="color:var(--dim)">—</span></td>'
       + '<td style="text-align:left" data-label="账号"><span style="color:var(--dim)">' + (filtering ? '已筛选' : '全部账号') + '</span></td>'
