@@ -312,21 +312,19 @@ a:hover{text-decoration:underline}
   background:var(--bad);color:#ffffff;border-color:var(--bad);
 }
 .realm-badge-intl{color:#2c6e9e;background:rgba(106,155,204,.14);border:1px solid rgba(106,155,204,.35);padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600}
-.realm-badge-cn{color:#c2410c;background:rgba(249,115,22,.12);border:1px solid rgba(249,115,22,.32);padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600}
+.realm-badge-cn{color:#237a35;background:rgba(44,176,68,.12);border:1px solid rgba(44,176,68,.32);padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600}
 .badge-effort{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;line-height:1.4;white-space:nowrap;margin:1px 2px;background:var(--think-soft);color:var(--think);border:1px solid rgba(138,106,150,.3);font-weight:600}
 .realm-filter{display:inline-flex;gap:6px;margin-left:8px}
 .realm-filter button{background:var(--panel2);border:1px solid var(--line);color:var(--dim);padding:3px 9px;font-size:11px}
 .realm-filter button.active{border-color:var(--accent);color:var(--accent);background:var(--panel)}
-/* 账号页页头的版本视图切换：与顶部主菜单同一套胶囊外观，只是按版本着色——
-   国际版走强调色、国内版走红色，与网关页那两张卡片一眼能对上。 */
+/* 账号页页头的版本视图切换：与顶部主菜单同一套胶囊外观，两个版本都走主题强调色。 */
 .realm-switch{display:inline-flex;gap:4px;background:var(--panel2);padding:4px;border-radius:10px;border:1px solid var(--line);flex:0 0 auto}
 .realm-switch button{background:transparent;border:1px solid transparent;color:var(--dim);padding:5px 13px;border-radius:7px;font-size:12px;font-weight:500;cursor:pointer;transition:all .15s ease}
 .realm-switch button:hover{color:var(--fg);background:var(--panel)}
 .realm-switch button.active{background:var(--panel);color:var(--accent);border-color:var(--accent);box-shadow:var(--shadow-sm);font-weight:600}
-.realm-switch button.active#accountsRealmCn{color:var(--bad);border-color:var(--bad)}
 /* 头部提供商切换（WorkBuddy / Qoder）。单独一套类名，别用 .main-nav-btn——
    那个会被页签显隐系统（navPageRows）当成页面入口捡走。Qoder 用思考色系的
-   紫色，与 WorkBuddy 的蓝色强调色一眼区分。 */
+   紫色，与 WorkBuddy 的绿色强调色一眼区分。 */
 .provider-switch{display:inline-flex;gap:3px;background:var(--panel2);padding:3px;border-radius:9px;border:1px solid var(--line);flex:0 0 auto}
 .provider-switch button{background:transparent;border:1px solid transparent;color:var(--dim);padding:4px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s ease;letter-spacing:.02em}
 .provider-switch button:hover{color:var(--fg);background:var(--panel)}
@@ -349,9 +347,6 @@ body:not(.provider-qoder) .qoder-only{display:none !important}
   border-color:var(--accent);background:var(--panel);
   box-shadow:0 0 0 1px var(--accent), var(--shadow-md);
 }
-.realm-card.active#tabCn{
-  border-color:var(--bad);box-shadow:0 0 0 1px var(--bad), var(--shadow-md);
-}
 .realm-card.gateway-ctrl{
   background:var(--panel2);cursor:default;border-color:var(--line);
 }
@@ -367,7 +362,7 @@ body:not(.provider-qoder) .qoder-only{display:none !important}
 .main-nav{display:inline-flex;gap:4px;background:var(--panel2);padding:4px;border-radius:10px;border:1px solid var(--line)}
 .main-nav-btn{background:transparent;border:1px solid transparent;color:var(--dim);padding:6px 14px;border-radius:7px;font-size:13px;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .15s ease}
 .main-nav-btn:hover{color:var(--fg);background:var(--panel)}
-.main-nav-btn.active{background:var(--panel);color:var(--fg);border-color:var(--line);box-shadow:var(--shadow-sm);font-weight:600}
+.main-nav-btn.active{background:var(--panel);color:var(--accent);border-color:var(--accent);box-shadow:var(--shadow-sm);font-weight:600}
 /* 项目仓库入口：与顶部导航同行，但不作为一个 Tab 标签。 */
 .gh-link{display:inline-flex;align-items:center;justify-content:center;
   width:34px;height:32px;border-radius:8px;border:1px solid var(--line);
@@ -451,8 +446,7 @@ body:not(.provider-qoder) .qoder-only{display:none !important}
 [data-theme="dark"] .badge.bad{color:#d97b72;background:rgba(217,123,114,.16);border-color:rgba(217,123,114,.35)}
 [data-theme="dark"] .cool-pill{color:#d9b25f;background:rgba(217,178,95,.18);border-color:rgba(217,178,95,.38)}
 [data-theme="dark"] .realm-badge-intl{color:#8ab4d9;background:rgba(106,155,204,.2);border-color:rgba(106,155,204,.4)}
-[data-theme="dark"] .realm-badge-cn{color:#ffb08a;background:rgba(255,138,61,.22);border-color:rgba(255,138,61,.42)}
-[data-theme="dark"] .realm-switch button.active#accountsRealmCn{color:var(--bad);border-color:var(--bad)}
+[data-theme="dark"] .realm-badge-cn{color:#8fe3a1;background:rgba(44,176,68,.2);border-color:rgba(44,176,68,.42)}
 [data-theme="dark"] .modal-mask{background:rgba(0,0,0,.65)}
 /* The page sections are toggled by a class so the inline head script can
    choose one before the body is parsed, avoiding a flash of the wrong
@@ -917,9 +911,9 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 #pageAnalytics .who span{font-size:10.5px;color:var(--dim2)}
 #pageAnalytics .realm-tag{font-size:10px;font-weight:650;border-radius:5px;padding:1px 6px;line-height:15px;letter-spacing:.02em}
 #pageAnalytics .realm-intl{color:#17527e;background:#d9e9f7;border:1px solid #b3d0e8}
-#pageAnalytics .realm-cn{color:#8a3a22;background:#f7ded2;border:1px solid #eabfa9}
+#pageAnalytics .realm-cn{color:#1f6b31;background:#dcf5e2;border:1px solid #b7e6c3}
 [data-theme="dark"] #pageAnalytics .realm-intl{color:#b5d6f5;background:rgba(106,155,204,.32);border-color:rgba(106,155,204,.5)}
-[data-theme="dark"] #pageAnalytics .realm-cn{color:#ffc4a3;background:rgba(255,138,61,.32);border-color:rgba(255,138,61,.55)}
+[data-theme="dark"] #pageAnalytics .realm-cn{color:#9fe8ae;background:rgba(44,176,68,.28);border-color:rgba(44,176,68,.5)}
 #pageAnalytics .minibar{position:relative;height:6px;border-radius:3px;background:var(--panel2);overflow:hidden;min-width:70px}
 #pageAnalytics .minibar i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--bar-color,var(--accent));opacity:.75}
 #pageAnalytics .tokcell{display:flex;flex-direction:column;gap:3px;min-width:100px}
@@ -3429,7 +3423,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
           <span class="realm-badge-cn">国内版 (China)</span>
           <span id="tabCnDefaultBadge" class="badge ok mini" style="font-weight:600;display:none">默认出口</span>
-          <span id="tabCnViewBadge" class="badge warn mini" style="display:none">当前视图</span>
+          <span id="tabCnViewBadge" class="badge ok mini" style="display:none">当前视图</span>
         </div>
       </div>
       <div class="mono" style="font-size:11px;color:var(--dim);margin-bottom:8px" id="tabCnHost">copilot.tencent.com</div>
@@ -3438,7 +3432,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
           <span id="tabCnCredits" style="font-size:22px;font-weight:700;color:var(--accent2);letter-spacing:-.5px" title="总剩余积分：全部账号（含停用）之和；「可用」只算启用且未触发限额护栏的账号">0</span>
           <span style="font-size:12px;color:var(--dim)">剩余积分 · <span id="tabCnAvailCred" style="color:var(--fg);font-weight:600">可用 —</span> · <span id="tabCnAccts" style="color:var(--fg);font-weight:600">0/0 账号</span></span>
         </div>
-        <span id="tabCnKeyBadge" class="badge warn mini" style="font-weight:600">0 个 Key</span>
+        <span id="tabCnKeyBadge" class="badge ok mini" style="font-weight:600">0 个 Key</span>
       </div>
     </div>
 
@@ -5444,7 +5438,7 @@ function updateUI(){
   const gwName = document.getElementById("activeGatewayName");
   if(gwName) {
     gwName.textContent = isIntlGw ? "国际版 (Global)" : "国内版 (China)";
-    gwName.style.color = isIntlGw ? "var(--accent)" : "var(--bad)";
+    gwName.style.color = "var(--accent)";
   }
   const ep = document.getElementById("activeEndpoint");
   if(ep) ep.textContent = isIntlGw ? "https://www.workbuddy.ai/v2" : "https://copilot.tencent.com/v2";
@@ -5452,13 +5446,13 @@ function updateUI(){
   const btnToggle = document.getElementById("btnToggleRealm");
   if(btnToggle) {
     btnToggle.textContent = isIntlGw ? "切换默认出口为【国内版】" : "切换默认出口为【国际版】";
-    btnToggle.style.borderColor = isIntlGw ? "var(--bad)" : "var(--accent)";
-    btnToggle.style.color = isIntlGw ? "var(--bad)" : "var(--accent)";
+    btnToggle.style.borderColor = "var(--accent)";
+    btnToggle.style.color = "var(--accent)";
   }
   const cardGw = document.getElementById("cardGatewayCtrl");
   if(cardGw){
-    cardGw.style.borderColor = isIntlGw ? "rgba(37,99,235,.28)" : "rgba(220,38,38,.28)";
-    cardGw.style.background = isIntlGw ? "rgba(37,99,235,.03)" : "rgba(220,38,38,.03)";
+    cardGw.style.borderColor = isIntlGw ? "rgba(37,99,235,.28)" : "rgba(44,176,68,.28)";
+    cardGw.style.background = isIntlGw ? "rgba(37,99,235,.03)" : "rgba(44,176,68,.03)";
   }
 
   const btnCheckin = document.getElementById("btnCheckin");
