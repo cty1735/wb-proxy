@@ -1251,7 +1251,7 @@ def _checkin_headers(access_token, auth, realm):
     market_uid = str(auth.get("marketUserId") or uid)
     session_id = str(auth.get("sessionId") or "") or uuid.uuid4().hex
     cn = realm_key(realm) == "cn"
-    return {
+    headers = {
         "accept": "*/*",
         "accept-language": "zh-CN" if cn else "en-US",
         "authorization": authorization,
@@ -1260,7 +1260,6 @@ def _checkin_headers(access_token, auth, realm):
                        else "VSCode 1.107.1 (TRAE)"),
         "x-market-client-id": "VSCode 1.107.1",
         "x-market-user-id": market_uid,
-        "x-user-region": (_user_region(auth) or ("CN" if cn else "US")),
         "x-device-id": device["device_id"],
         "x-lgw-req-sdk-type": "3",
         "package-type": "stable_cn" if cn else "stable",
@@ -1274,6 +1273,12 @@ def _checkin_headers(access_token, auth, realm):
         "sec-fetch-mode": "no-cors",
         "sec-fetch-site": "none",
     }
+    # CN 签到必须带 X-User-Region: CN；国际版网页端并不发这个头，
+    # 未知区域时不要瞎填 US（会把 SG 账号的请求标成 US），已知才带上。
+    region = _user_region(auth) or ("CN" if cn else "")
+    if region:
+        headers["x-user-region"] = region
+    return headers
 
 
 def _unwrap_payloads(data):
