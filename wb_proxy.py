@@ -6041,7 +6041,18 @@ def recent_usage(limit=100, realm=None, page=1, provider=None):
                                  else None)
         # 限时免费的模型：面板把这行的积分与折算价显示成「免费」，与卡面
         # 「积分消耗 / API 等价花费」排除免费模型同一口径（见 row_free_model）。
-        r["free"] = row_free_model(r)
+        # 折算明细也一并清空：这行本来就不花钱，悬停卡若还列出三档单价，
+        # 就等于在「免费」两个字旁边摆一份账单。
+        if row_free_model(r):
+            for k in ("cost_cny", "cost_band", "cost_source", "cost_source_at",
+                      "cost_backfilled", "cost_rates", "cost_unit",
+                      "cost_currency", "cost_usd_cny", "cost_or_id",
+                      "cost_via", "cost_inherited_from", "cost_override_from",
+                      "cost_band_note", "cost_via_derived"):
+                r[k] = None
+            r["free"] = True
+        else:
+            r["free"] = False
     return {
         "total": total,
         "page": page,
@@ -8877,25 +8888,57 @@ def _payload_model_rates(model_map, acct_map):
     badge a model gets in the details dialog is the same test that decided
     whether its credits and cost were counted. A model the catalogue does not
     describe is left out entirely rather than guessed at.
+
+    同一个模型 id 在两个版本的目录里可能不同价：intl 的
+    deepseek-v4.1-flash 是 x0.00，cn 的是 x0.11；step-5-preview 反过来，
+    只有 cn 的目录把它标成免费。明细弹窗按模型名一行行列，一个徽章盖不住
+    两种价。所以：
+
+    - 目录里两个版本都列了、且倍率一致 → 给这个倍率；
+    - 两个版本倍率不一致，或这个模型只在流量出现过的某个版本上是免费的 →
+      留空。宁可没有徽章，也不把「这个版本免费」写成「这个模型免费」——那
+      正是这条改动要消除的展示与汇总打架。
+
+    流量出现过哪些版本，从账号表的 realm + window_models 推：折叠时每行都
+    按 row_realm(row) 判过一遍免费（见 row_free_model），这里必须得出同一
+    个答案。
     """
     wanted = set(model_map or {})
     for entry in (acct_map or {}).values():
         wanted.update((entry.get("window_models") or {}).keys())
         wanted.update((entry.get("all_models") or {}).keys())
     rates = _catalog_rates_by_realm()
+    # 每个模型在哪些版本上有过流量：账号自带 realm，它的 window_models 就是
+    # 这个账号在该版本上用过的模型。
+    seen_realms = {}
+    for entry in (acct_map or {}).values():
+        realm = entry.get("realm") or ""
+        if realm not in ("intl", "cn"):
+            continue
+        mids = list((entry.get("window_models") or {}).keys())
+        mids += list((entry.get("all_models") or {}).keys())
+        for mid in mids:
+            seen_realms.setdefault(mid, set()).add(realm)
     out = {}
     for mid in sorted(wanted):
         if not mid or not isinstance(mid, str) or mid.startswith("("):
             continue
-        raw = None
-        for realm in ("intl", "cn"):
-            raw = (rates.get(realm) or {}).get(mid)
-            if raw:
-                break
-        if not raw:
+        realms = seen_realms.get(mid) or set()
+        listed = {realm: str((rates.get(realm) or {}).get(mid) or "").strip().lower()
+                  for realm in realms if (rates.get(realm) or {}).get(mid)}
+        if not realms or not listed:
             continue
-        out[mid] = {"rate": str(raw).strip().lower(),
-                    "free": credits_is_free(raw)}
+        uniq = set(listed.values())
+        free_any = any(credits_is_free(v) for v in uniq)
+        # 流量覆盖到的每个版本都得是免费、且目录里列出的倍率一致，这一个徽章
+        # 才敢写「限时免费」；否则只标「部分流量限时免费」，把口径说清但不给
+        # 可能误导的单一倍率。
+        if len(uniq) != 1 or any(realm not in listed for realm in realms):
+            if free_any:
+                out[mid] = {"rate": None, "free": False, "split": True}
+            continue
+        raw = uniq.pop()
+        out[mid] = {"rate": raw, "free": credits_is_free(raw)}
     return out
 
 

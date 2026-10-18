@@ -1002,8 +1002,27 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
    拿不到 #pageAnalytics 作用域的私有变量，所以这里只用全局 token。 */
 .kpi-bd-scope{font-size:11px;color:var(--dim);font-weight:400;white-space:nowrap}
 @media (max-width:640px){.kpi-bd-scope{white-space:normal}}
+/* 明细弹窗顶部筛选条：账号 / 模型两个下拉 + 一个「清除筛选」。与弹窗内其他控件
+   同源（用全局 token），深色背景下不靠背景色区分层级，靠边框与间距。 */
+.kpi-bd-filter{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.kpi-bd-fld{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);min-width:0}
+.kpi-bd-fld select{
+  font:inherit;font-size:11.5px;color:var(--fg);background:var(--panel2);
+  border:1px solid var(--line);border-radius:7px;padding:4px 7px;max-width:210px;
+  text-overflow:ellipsis;
+}
+.kpi-bd-fld select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.kpi-bd-clear{
+  font:inherit;font-size:11px;color:var(--dim);background:transparent;
+  border:1px solid var(--line);border-radius:7px;padding:4px 9px;cursor:pointer;
+}
+.kpi-bd-clear:hover{color:var(--fg);border-color:var(--accent)}
+.kpi-bd-clear:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .kpi-bd-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(122px,1fr));gap:8px;margin-bottom:16px}
 .kpi-bd-tile{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:8px 10px;min-width:0}
+/* 第一格是指标本体：用主题自己的强调色（浅色 / 深色各自解析），不写死绿色。 */
+.kpi-bd-tile.primary{border-color:var(--accent);background:var(--accent-soft)}
+.kpi-bd-tile.primary .v{font-size:17px}
 .kpi-bd-tile .l{font-size:10.5px;color:var(--dim)}
 .kpi-bd-tile .v{font-size:15px;font-weight:650;margin-top:2px;letter-spacing:-.01em;font-variant-numeric:tabular-nums;white-space:nowrap}
 .kpi-bd-tile .v small{font-size:10.5px;font-weight:500;color:var(--dim);margin-left:2px}
@@ -1019,6 +1038,18 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 .kpi-bd-row .bar{height:5px;border-radius:3px;background:var(--panel2);border:1px solid var(--line);overflow:hidden}
 .kpi-bd-row .bar i{display:block;height:100%;background:var(--accent);opacity:.8}
 .kpi-bd-row .sub{font-size:10.5px;color:var(--dim-light);line-height:1.55;word-break:break-word}
+/* 「主要模型 / 主要账号」的药丸行：每条一个 chip（名字 + 计费徽章 + 数值），
+   长名字也能整齐换行；不是纯文本的「a · b · c」。 */
+.kpi-bd-row .sub.parts{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.kpi-bd-row .sub.parts .pl{color:var(--dim);flex:none}
+.kpi-bd-chip{
+  display:inline-flex;align-items:center;gap:5px;font-size:10.5px;line-height:1;
+  background:var(--panel2);border:1px solid var(--line);border-radius:999px;
+  padding:3px 7px;max-width:100%;min-width:0;
+}
+.kpi-bd-chip .cn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
+.kpi-bd-chip .cv{color:var(--dim);font-variant-numeric:tabular-nums;flex:none}
+.kpi-bd-chip.more{color:var(--dim);font-style:normal}
 .kpi-bd-tag{font-size:9.5px;font-weight:650;border-radius:5px;padding:1px 5px;line-height:14px;white-space:nowrap}
 .kpi-bd-tag.cn{color:#1f6b31;background:#dcf5e2;border:1px solid #b7e6c3}
 .kpi-bd-tag.intl{color:#17527e;background:#d9e9f7;border:1px solid #b3d0e8}
@@ -2296,6 +2327,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '限时免费模型（目录倍率 0）不耗积分，已从积分与金额里排除，只计入 Token 与请求数。': 'Limited-time free models (catalog rate 0) consume no credits, so they are excluded from the credit and cost figures and still count toward tokens and requests.',
     '已排除限时免费模型：': 'Limited-time free models excluded: ',
     '（不耗积分）': ' (no credits consumed)',
+    ' 部分流量为限时免费，未计入积分与金额': ' has some limited-time free traffic, which is excluded from the credit and cost figures',
+    '部分免费': 'Partly free',
+    '该模型在国际版 / 国内版的目录倍率不同，其中一部分流量为限时免费（不耗积分），已从积分与金额里排除': 'This model is priced differently on the international and domestic exits; the part that is limited-time free consumes no credits and is excluded from the credit and cost figures',
     '免费': 'Free',
     '目录消耗倍率': 'Catalog consumption rate',
     '随时可出发旅行': 'Ready to travel any time',
@@ -10366,7 +10400,9 @@ async function refreshInner(gen){
     + rows.map((r, i) => {
         // 关闭时不登记悬停明细，也不挂 data-cost-key：列还在（观感不变），
         // 但没有任何可解释的价格，省掉整张表的明细构建与 hover 开销。
-        const costKey = PRICING_ON ? costRowKey(r, i) : '';
+        // 限时免费行同理：单元格已经写着「免费」，再挂一个列出三档单价的气泡
+        // 等于在「免费」旁边摆账单（后端 recent_usage 也把这些字段清空了）。
+        const costKey = (PRICING_ON && !r.free) ? costRowKey(r, i) : '';
         if(costKey) COST_TIP_ROWS.set(costKey, r);
         // 限时免费模型：这一行不产积分也不产金额（后端 row_free_model 的判定），
         // 所以「积分」与「估算价格」两列都显示「免费」，与看板的积分/花费口径一致。
@@ -10387,7 +10423,7 @@ async function refreshInner(gen){
         + '<td data-label="缓存">' + (r.cache_hit_pct!=null ? r.cache_hit_pct+'%' : '—') + '</td>'
         + '<td data-label="总 token"><b>' + fmt(r.total_tokens) + '</b></td>'
         + '<td data-label="积分" style="color:var(--accent2)">' + (free ? '<span style="color:var(--accent2)">免费</span>' : (r.credit != null ? Number(r.credit).toFixed(2) : '—')) + '</td>'
-        + '<td data-label="OpenRouter 价估算" class="cost-cell pricing-col" style="color:var(--warn)"'
+        + '<td data-label="OpenRouter 价估算" class="' + (free ? '' : 'cost-cell ') + 'pricing-col" style="color:var(--warn)"'
         +   (costKey ? ' data-cost-key="' + esc(costKey) + '"' : '') + '>'
         +   (free ? '<span style="color:var(--accent2)">免费</span>' : (fmtCost(r.cost_cny)
         +   (r.cost_backfilled ? '<span style="color:var(--dim)">*</span>' : '')))
@@ -15008,6 +15044,7 @@ const state = {
   heat: null,
   openKey: null,
   kpiOpen: null,   /* 当前打开的 KPI 明细（data-kpi 键），null = 没开 */
+  kpiFilter: {acct: 'all', model: 'all'},  /* 明细弹窗内的账号 / 模型筛选 */
 };
 let prevSummary = null; /* B 版：上一等长周期汇总（环比） */
 
@@ -15427,8 +15464,14 @@ function kpiRateText(rate){
 }
 /* 一个模型的计费徽章：倍率 0 的标「限时免费」，其余标真实倍率，目录没给的
    模型不给徽章（别把「不知道」画成免费）。 */
-function kpiModelTag(rate){
-  const raw = String(rate == null ? '' : rate).trim().toLowerCase();
+/* 一个模型的计费徽章：倍率 0 的标「限时免费」，其余标真实倍率，目录没给的
+   模型不给徽章（别把「不知道」画成免费）。两个版本倍率不一致时（split）
+   也不给单一倍率，只标「部分免费」——具体哪部分免费见页脚那行说明。 */
+function kpiModelTag(entry){
+  if (entry && entry.split){
+    return '<span class="kpi-bd-tag free" title="该模型在国际版 / 国内版的目录倍率不同，其中一部分流量为限时免费（不耗积分），已从积分与金额里排除">部分免费</span>';
+  }
+  const raw = String(entry && entry.rate != null ? entry.rate : (entry == null ? '' : entry)).trim().toLowerCase();
   if (!raw) return '';
   if (raw.replace(/x/g, '') === '0.00' || raw.replace(/x/g, '') === '0'){
     return '<span class="kpi-bd-tag free" title="限时免费模型：不消耗积分，也不计入「积分消耗」与「API 等价花费」">限时免费</span>';
@@ -15440,8 +15483,15 @@ function kpiModelTag(rate){
 function kpiFreeNote(){
   const rates = ((state.analytics || {}).model_rates) || {};
   const freeNames = Object.keys(rates).filter(k => rates[k] && rates[k].free);
-  if (!freeNames.length) return '';
-  return `<span class="kpi-bd-note">已排除限时免费模型：${freeNames.map(esc).join('、')}（不耗积分）</span>`;
+  // 目录里两个版本倍率不一致的模型（如 intl 免费、cn 收费的
+  // deepseek-v4.1-flash）不给徽章：一个徽章盖不住两种价。但它的免费那部分
+  // 流量确实没折积分，这里照样说一声，免得「明明是 0 却什么都没解释」。
+  const split = Object.keys(rates).filter(k => rates[k] && rates[k].split);
+  const parts = [];
+  if (freeNames.length) parts.push(`已排除限时免费模型：${freeNames.map(esc).join('、')}（不耗积分）`);
+  if (split.length) parts.push(`${split.map(esc).join('、')} 部分流量为限时免费，未计入积分与金额`);
+  if (!parts.length) return '';
+  return `<span class="kpi-bd-note">${parts.join('；')}</span>`;
 }
 
 const KPI_SPECS = {
@@ -15511,10 +15561,17 @@ function kpiPartsLine(parts, kind, noun){
   const head = list.slice(0, 3), rest = list.slice(3);
   // 账号行的「主要模型」逐条标计费类型：这个账号花掉的积分里哪些来自免费模型，
   // 一眼能看出来（免费模型本来就不产积分，标出来是解释「为什么没有它」）。
-  const tagOf = p => (noun === '主要模型') ? (kpiModelTag(rates[p.name] && rates[p.name].rate)) : '';
-  let txt = head.map(p => `${esc(p.name)}${tagOf(p)} ${f(w(p))}`).join(' · ');
-  if (rest.length) txt += ` · 其他 ${rest.length} 项 ${f(rest.reduce((s, p) => s + w(p), 0))}`;
-  return `<div class="sub">${noun}：${txt}</div>`;
+  // 每条做成小药丸（名字 + 计费徽章 + 数值），模型名长短不一时也能整齐换行；
+  // 早期版本是纯文本「a · b · c」，长名字会把整行撑成一行读不完的字。
+  const chip = p => {
+    const tag = (noun === '主要模型') ? kpiModelTag(rates[p.name]) : '';
+    return `<span class="kpi-bd-chip"><span class="cn"${tag ? '' : ' style="font-family:monospace"'} title="${esc(p.name)}">${esc(p.name)}</span>${tag}<span class="cv">${f(w(p))}</span></span>`;
+  };
+  let html = head.map(chip).join('');
+  if (rest.length){
+    html += `<span class="kpi-bd-chip more">其他 ${rest.length} 项 ${f(rest.reduce((s, p) => s + w(p), 0))}</span>`;
+  }
+  return `<div class="sub parts"><span class="pl">${noun}</span>${html}</div>`;
 }
 
 function kpiRowsHTML(rows, spec, total, max){
@@ -15526,7 +15583,7 @@ function kpiRowsHTML(rows, spec, total, max){
     const tag = r.realm ? `<span class="kpi-bd-tag ${r.realm === 'intl' ? 'intl' : 'cn'}">${r.realm === 'intl' ? '国际版' : '国内版'}</span>` : '';
     // 模型行带计费类型：限时免费 / 真实倍率。账号行没有单一倍率，交给下面的
     // 「主要模型」清单逐条标。
-    const modelTag = r.isAcct ? '' : kpiModelTag(rates[r.name] && rates[r.name].rate);
+    const modelTag = r.isAcct ? '' : kpiModelTag(rates[r.name]);
     const cols = (spec.cols ? spec.cols(s) : [])
       .filter(c => c && c[1] != null && c[1] !== '' && c[1] !== '—')
       .map(c => `${c[0]} <b>${c[1]}</b>`).join(' · ');
@@ -15555,18 +15612,45 @@ function kpiSideHTML(title, rows, spec){
   </div>`;
 }
 
-/* 一账号一份 window 统计 + 它的 window_models；模型侧反向建一张「谁用了它」的表。 */
+/* 一账号一份 window 统计 + 它的 window_models；模型侧反向建一张「谁用了它」的表。
+   弹窗顶部可按账号 / 模型筛选（默认「全部」）：选中账号时只保留该账号的模型
+   分布，选中模型时只保留用过它的账号；两边都选则取交集。筛选只影响拆解列表，
+   顶部汇总磁贴始终是全区间的口径（否则数字会对不上卡片）。 */
 function kpiDetailPayload(){
   const a = state.analytics || {};
+  const f = state.kpiFilter || {acct: 'all', model: 'all'};
+  const pickAcct = f.acct && f.acct !== 'all';
+  const pickModel = f.model && f.model !== 'all';
   const accts = [], models = [], byModel = {};
   for (const acc of (a.accounts || [])){
+    const nickname = acc.nickname || String(acc.uid || '').slice(0, 8);
+    if (pickAcct && nickname !== f.acct) continue;
     const av = acc.window_models || {};
     const parts = Object.keys(av).map(k => ({
       name: k, tokens: av[k].tokens || 0, requests: av[k].requests || 0, cost_cny: av[k].cost_cny || 0,
-    }));
-    const nickname = acc.nickname || String(acc.uid || '').slice(0, 8);
+    })).filter(p => !pickModel || p.name === f.model);
+    // 账号行的统计跟着筛选口径走：只看某个模型时，这一行就是它在这一个模型上的量，
+    // 和右侧模型行互为镜像，不会出现「行与行之间加不起来」。window_models 的
+    // 桶只带 requests / tokens / reasoning / cost_cny（见 _fold_usage_analytics），
+    // 积分与缓存这类没有分模型桶的字段一律归零，让列显示「—」而不是账号总量。
+    // 筛了模型但这个账号没用过它时，这一行整体没有任何量，直接不进列表——
+    // 否则会留下一行「¥0.00 0.0%」的空壳。
+    let stat = acc.window || {};
+    if (pickModel){
+      if (!parts.length) continue;
+      const sum = (k) => parts.reduce((s, p) => s + ((av[p.name] || {})[k] || 0), 0);
+      stat = Object.assign({}, stat, {
+        total_tokens: sum('tokens'),
+        prompt_tokens: 0, cached_tokens: 0,
+        completion_tokens: 0, reasoning_tokens: 0,
+        requests: sum('requests'), errors: 0,
+        cost_cny: sum('cost_cny'), credit: 0,
+        cache_hit_pct: null, speed_avg: null,
+        elapsed_ms_avg: null, ttft_ms_avg: null,
+      });
+    }
     accts.push({
-      name: nickname, stat: acc.window || {}, parts, realm: acc.realm, isAcct: true,
+      name: nickname, stat, parts, realm: acc.realm, isAcct: true,
       tip: 'UID：' + (acc.uid || '') + (acc.domain ? '\n' + acc.domain : ''),
     });
     for (const p of parts){
@@ -15580,21 +15664,37 @@ function kpiDetailPayload(){
     : Object.keys(raw || {}).map(k => ({ model: k, window: raw[k] }));
   for (const m of list){
     const id = m.model || m.name || '';
-    models.push({ name: id, stat: m.window || {}, parts: byModel[id] || [], isAcct: false });
+    if (pickModel && id !== f.model) continue;
+    // 筛了账号但这个模型不是那个账号用的：整行不留（同上面的账号侧）。
+    if (pickAcct && !byModel[id]) continue;
+    let stat = m.window || {};
+    // 只筛账号（没筛模型）时，模型行的统计也要收窄成「该账号在这模型上的量」，
+    // 和左侧账号行互为镜像。
+    if (pickAcct && !pickModel){
+      const ps = byModel[id];
+      stat = Object.assign({}, stat, {
+        total_tokens: ps.reduce((s, p) => s + p.tokens, 0),
+        requests: ps.reduce((s, p) => s + p.requests, 0),
+        cost_cny: ps.reduce((s, p) => s + p.cost_cny, 0),
+      });
+    }
+    models.push({ name: id, stat, parts: byModel[id] || [], isAcct: false });
   }
   return { accts, models };
 }
 
 function kpiTilesHTML(spec, w){
   const tiles = [
-    [spec.head, spec.num(w) + (spec.unit || '')],
+    [spec.head, spec.num(w) + (spec.unit || ''), true],
     ['请求数', `${numSpan(w.requests)} 次` + (w.errors ? ` · 失败 <b>${numSpan(w.errors)}</b>` : '')],
     ['Token 总量', numSpan(w.total_tokens)],
   ];
   if (spec.head === 'API 等价花费') tiles.push(['积分消耗', numSpan(w.credit, 1)]);
   else tiles.push(['API 等价花费', `${fmtCostCny(w.cost_cny)} · 积分 ${numSpan(w.credit, 1)}`]);
-  return `<div class="kpi-bd-tiles">` + tiles.map(([l, v]) =>
-    `<div class="kpi-bd-tile"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('') + `</div>`;
+  /* 第一格是指标本体，比其余格子重半档：一眼先看到「这个指标现在是多」，
+     再看请求数 / Token 这些同口径的陪衬。 */
+  return `<div class="kpi-bd-tiles">` + tiles.map(([l, v, primary]) =>
+    `<div class="kpi-bd-tile${primary ? ' primary' : ''}"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('') + `</div>`;
 }
 
 function kpiDetailHTML(kind){
@@ -15612,12 +15712,68 @@ function kpiDetailHTML(kind){
   const aRows = accts.filter(alive).sort(rank);
   const mRows = models.filter(alive).sort(rank);
   if (!aRows.length && !mRows.length){
-    return kpiTilesHTML(spec, w) + '<div class="kpi-bd-empty">该区间暂无可拆解的记录。</div>';
+    return kpiTilesHTML(spec, w) + kpiFilterHTML(accts, models)
+      + '<div class="kpi-bd-empty">该区间暂无可拆解的记录。</div>';
   }
   return kpiTilesHTML(spec, w)
+    + kpiFilterHTML(accts, models)
     + `<div class="kpi-bd-grid">${kpiSideHTML('按账号', aRows, spec)}${kpiSideHTML('按模型', mRows, spec)}</div>`
     + `<div class="kpi-bd-foot">${spec.note}${kpiFreeNote()}</div>`;
 }
+
+/* 明细弹窗顶部的筛选条：按账号 / 按模型各一个下拉，各带「全部」。
+   选项来自当前区间真实出现过的账号与模型（不是全量目录），所以不会列出一堆
+   空项。切换后只重画弹窗内容，不动卡面，也不重新请求——数据本来就在手上。 */
+function kpiFilterHTML(accts, models){
+  const f = state.kpiFilter || {acct: 'all', model: 'all'};
+  const names = rows => {
+    const seen = [], set = new Set();
+    for (const r of rows){
+      const n = r && r.name;
+      if (n && !set.has(n)){ set.add(n); seen.push(n); }
+    }
+    return seen.sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  };
+  const acctNames = names(accts);
+  const modelNames = names(models);
+  const opts = (list, cur) => ['all', ...list].map(v =>
+    `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${v === 'all' ? '全部' : esc(v)}</option>`).join('');
+  const active = (f.acct && f.acct !== 'all') || (f.model && f.model !== 'all');
+  return `<div class="kpi-bd-filter" role="group" aria-label="按账号或模型筛选明细">
+    <label class="kpi-bd-fld"><span>账号</span>
+      <select id="kpiFilterAcct" onchange="setKpiFilter('acct', this.value)">${opts(acctNames, f.acct)}</select></label>
+    <label class="kpi-bd-fld"><span>模型</span>
+      <select id="kpiFilterModel" onchange="setKpiFilter('model', this.value)">${opts(modelNames, f.model)}</select></label>
+    ${active ? '<button type="button" class="kpi-bd-clear" onclick="clearKpiFilter()">清除筛选</button>' : ''}
+  </div>`;
+}
+
+/* 改筛选：只重画弹窗内容，保住滚动位置（和轮询重画同一套做法）。
+   选了别的值时复位另一侧为「全部」，避免出现「账号 × 模型」的双重窄口把两边
+   列表同时清空、看不出发生了什么。 */
+function setKpiFilter(key, value){
+  state.kpiFilter = state.kpiFilter || {acct: 'all', model: 'all'};
+  state.kpiFilter[key] = value || 'all';
+  if (state.kpiFilter.acct !== 'all' && state.kpiFilter.model !== 'all'){
+    if (key === 'acct') state.kpiFilter.model = 'all';
+    else state.kpiFilter.acct = 'all';
+  }
+  const body = $('kpiDetailBody');
+  if (!body) return;
+  const top = body.scrollTop;
+  body.innerHTML = kpiDetailHTML(state.kpiOpen);
+  body.scrollTop = top;
+}
+function clearKpiFilter(){
+  state.kpiFilter = {acct: 'all', model: 'all'};
+  const body = $('kpiDetailBody');
+  if (!body) return;
+  const top = body.scrollTop;
+  body.innerHTML = kpiDetailHTML(state.kpiOpen);
+  body.scrollTop = top;
+}
+window.setKpiFilter = setKpiFilter;
+window.clearKpiFilter = clearKpiFilter;
 
 function kpiScopeText(){
   const time = new Date().toLocaleTimeString('zh-CN', {hour12: false});
@@ -15629,6 +15785,7 @@ function openKpiDetail(kind, card){
   const spec = KPI_SPECS[kind], m = $('kpiDetailModal');
   if (!spec || !m) return;
   state.kpiOpen = kind;
+  state.kpiFilter = {acct: 'all', model: 'all'};   /* 每次打开都从「全部」开始 */
   kpiFocusBack = card || null;
   $('kpiDetailTitle').textContent = spec.title;
   const sc = $('kpiDetailScope');
@@ -16148,6 +16305,9 @@ $('rangeSeg').addEventListener('click', ev => {
   const btn = ev.target.closest('button'); if (!btn) return;
   [...$('rangeSeg').children].forEach(b => b.classList.toggle('on', b === btn));
   state.range = btn.dataset.range;
+  // 换区间后，明细弹窗里的账号 / 模型筛选一起复位：新区间不一定还有这些
+  // 名字，留着会让下拉指向一个不存在的选项。
+  state.kpiFilter = {acct: 'all', model: 'all'};
   loadRange();
 });
 /* KPI 卡：点击 / 回车 / 空格打开明细；卡上的 spark 用 ←/→ 逐点读数（设计系统缺口
@@ -16246,6 +16406,9 @@ function setAnalyticsProvider(v){
   state.series = null;
   state.perf = null;
   state.heat = null;
+  // 明细弹窗里的账号 / 模型筛选跟着口径一起复位：上一个提供商的账号名在这
+  // 一份数据里不存在，留着会让筛选器指向一个空选项。
+  state.kpiFilter = {acct: 'all', model: 'all'};
   wbaStarted = false;
   wbaTick();
   return true;
