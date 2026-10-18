@@ -1,6 +1,8 @@
 # ---- Runtime data (contains live tokens / secrets, never commit) ----
 /accounts/
 /usage/
+# 每次成功拉取目录后写的存档副本，网关自己不读（见 wb_proxy.persist_remote_catalog）
+/catalog/
 
 # ---- Python bytecode cache (project root) ----
 /__pycache__/
