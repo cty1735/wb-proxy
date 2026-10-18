@@ -876,8 +876,8 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 #pageAnalytics .hm-months{display:grid;font-size:8.5px;color:var(--dim2);height:11px;margin-bottom:2px}
 #pageAnalytics .hm-months span{grid-row:1;white-space:nowrap}
 #pageAnalytics .hm-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,10px);grid-auto-columns:10px;gap:2px}
-#pageAnalytics .hm-cell{width:10px;height:10px;border-radius:2px;cursor:pointer;transition:transform .1s ease}
-#pageAnalytics .hm-cell:hover{transform:scale(1.3);outline:1px solid var(--fg2)}
+#pageAnalytics .hm-cell{width:10px;height:10px;border-radius:2px;cursor:pointer;transition:filter .12s ease}
+#pageAnalytics .hm-cell:hover{outline:1.5px solid var(--fg2);outline-offset:.5px;filter:brightness(1.15) saturate(1.15)}
 #pageAnalytics .hm-cell.l0{background:var(--hm0)}
 #pageAnalytics .hm-cell.l1{background:var(--hm1)}
 #pageAnalytics .hm-cell.l2{background:var(--hm2)}
@@ -1052,6 +1052,55 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 .dp-day-hd .n{font-size:10.5px;color:var(--dim-light)}
 .dp-day-hd .t{margin-left:auto;font-weight:650;color:var(--accent2);font-variant-numeric:tabular-nums;white-space:nowrap}
 .dp-day-bd{padding:10px 12px}
+
+/* ====================== 设计系统缺口落地（design-system/workbuddy-proxy-console/） ======================
+   MASTER.md + preview.html 指出 5 处与设计系统不符的地方，这里落地前 4 处
+   （动效降级、实时/陈旧徽标、轮询暂停与频率、表格计数的 aria-live；第 5 处图表
+   可达性在数据看板自己的脚本块里）。 */
+
+/* ① prefers-reduced-motion：全站唯一的动效兜底，只归零不改默认外观。
+   现有的 themePop（主题下拉）与 switchSpin（旋转指示器）、新加的 livePulse
+   都被它覆盖。 */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{
+    animation-duration:.01ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:.01ms !important;
+    scroll-behavior:auto !important;
+  }
+}
+
+/* ② 实时状态徽标：只在有数据源时标绿（轻微脉冲，降级动效下自动静止），超过阈值
+   转琥珀「可能已过期」，暂停转灰，取数失败转红。 */
+.live-cluster{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.live-badge{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:500;color:var(--dim);white-space:nowrap}
+.live-badge .pulse{width:7px;height:7px;border-radius:50%;flex:none;background:var(--accent);animation:livePulse 2.4s ease-in-out infinite}
+.live-badge.stale{color:var(--warn)} .live-badge.stale .pulse{background:var(--warn)}
+.live-badge.err{color:var(--bad)} .live-badge.err .pulse{background:var(--bad);animation:none}
+.live-badge.paused .pulse{background:var(--dim-light);animation:none}
+@keyframes livePulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ③ 轮询控制：暂停按钮 + 频率选择，沿用右侧按钮的视觉语言。 */
+.live-freq{font:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--fg)}
+.live-freq:hover{border-color:var(--line-hover)}
+.tb-group .live-freq{background:transparent;border:none;box-shadow:none}
+@media (max-width: 640px){
+  .header-right{flex-wrap:wrap;justify-content:flex-end}
+  .live-cluster{width:100%;justify-content:flex-end}
+}
+
+/* ④ 键盘焦点：原先只有开关有 focus-visible，输入框（日志搜索框此前还关掉了浏览器
+   的焦点环）在键盘导航下看不见焦点。这里给全部按钮与表单控件补上同一套焦点环；
+   已经自带焦点样式的按钮（表头、开关、披露箭头、KPI 卡）选择器更具体，会盖过它。 */
+button:focus-visible,
+input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+
+/* 屏幕阅读器专用文本：播报区与图表数据表兜底都靠它隐藏。 */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* ⑤ 图表键盘可达：时序图本体可 Tab 聚焦（spark 的读数游标画在 canvas 上，
+   焦点态走 KPI 卡自己的 focus-visible）。 */
+#pageAnalytics canvas.series:focus-visible{outline:2px solid var(--accent2);outline-offset:2px;border-radius:10px}
 
 </style>
 <script>
@@ -2393,7 +2442,29 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     '），要先签到 / 做任务或点「一键刷新积分」才会更新；上游只保留当前仍可见的积分包，更早的发放可能已不在快照里。':
       '); run a check-in / task or click Refresh credits to update it. Upstream keeps only currently visible credit packages, so older grants may already be gone from the snapshot.',
     '另有 ': 'plus ',
-    ' 笔发放没有时间戳，未计入按天统计。': ' grants have no timestamp and are left out of the daily totals.'
+    ' 笔发放没有时间戳，未计入按天统计。': ' grants have no timestamp and are left out of the daily totals.',
+    // 设计系统缺口 ②③：顶栏的实时状态徽标与轮询控制（preview.html）。
+    '正在连接…': 'Connecting…',
+    '实时 · ': 'Live · ',
+    '刚刚更新': 'just updated',
+    '秒前更新': 's ago',
+    '分钟前更新': 'min ago',
+    '数据可能已过期 · ': 'Data may be stale · ',
+    '已暂停轮询': 'Polling paused',
+    '刷新失败': 'Refresh failed',
+    '等待数据…': 'Waiting for data…',
+    '最后更新 ': 'Last update ',
+    '继续': 'Resume',
+    '自动刷新频率': 'Auto-refresh interval',
+    '暂停 / 继续自动刷新': 'Pause / resume auto-refresh',
+    // 设计系统缺口 ④：状态播报区（屏幕阅读器专用，见 #liveAnnounce）的句子。
+    '已暂停自动刷新': 'Auto-refresh paused',
+    '数据刷新失败': 'Data refresh failed',
+    '数据可能已过期': 'Data may be stale',
+    '数据已恢复更新': 'Data updates resumed',
+    '自动刷新频率已改为 ': 'Auto-refresh interval set to ',
+    // 设计系统缺口 ⑤：图表键盘读数。
+    '图表读数已复位': 'Chart readout reset'
   };
   var HANT_PHRASES = {
     " · 周期已过": " · 週期已過",
@@ -2967,6 +3038,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     "务": "務",
     "动": "動",
     "励": "勵",
+    "势": "勢",
     "区": "區",
     "单": "單",
     "占": "佔",
@@ -3124,6 +3196,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     "账": "賬",
     "贴": "貼",
     "费": "費",
+    "趋": "趨",
     "跃": "躍",
     "转": "轉",
     "轮": "輪",
@@ -3163,6 +3236,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     "项": "項",
     "预": "預",
     "领": "領",
+    "频": "頻",
     "题": "題",
     "颜": "顏",
     "额": "額",
@@ -3180,7 +3254,14 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     [/含失败共 ([\d,]+) 次/, function(m, n){ return n + ' calls including failures'; }],
     [/失败 ([\d,]+) 次/, function(m, n){ return n + ' failed'; }],
     [/其他 (\d+) 项/, function(m, n){ return '+' + n + ' more'; }],
-    [/^(\d+) 项 · ([\d,]+) 笔$/, function(m, a, b){ return a + ' sources · ' + b + ' grants'; }]
+    [/^(\d+) 项 · ([\d,]+) 笔$/, function(m, a, b){ return a + ' sources · ' + b + ' grants'; }],
+    // 设计系统缺口 ⑤：图表 aria 摘要与键盘读数（KPI 卡的 spark 摘要 / 时序图摘要 /
+    // 逐点播报）。都写成锚定整串的规则，避免误伤别的长句。
+    [/^(.+)明细；迷你趋势：(\d+) 个数据点，最新 (.+)，峰值 (.+)，按左右方向键逐点读取$/,
+     function(m, a, b, c, d){ return a + ' details; mini trend: ' + b + ' points, latest ' + c + ', peak ' + d + '; use left/right arrow keys to read each point'; }],
+    [/^时序图：(.+)，(\d+) 个数据点，峰值 (.+)，最新 (.+)，按左右方向键逐点读取，Esc 复位$/,
+     function(m, nm, n, pk, lt){ return 'Timeline: ' + nm + ', ' + n + ' points, peak ' + pk + ', latest ' + lt + '; use left/right arrow keys to read each point, Esc to reset'; }],
+    [/^图表读数：(.+)$/, function(m, rest){ return 'Chart readout: ' + rest; }]
   ];
   var KEYS = Object.keys(DICT);
   KEYS.sort(function(a, b){ return b.length - a.length; });
@@ -3485,6 +3566,21 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     <button type="button" class="lang-btn" id="langToggleBtn" onclick="toggleLang(event)" data-no-i18n title="切换语言 (简体中文 / 正體中文 / English)" aria-label="切换语言">
       <span id="langToggleLabel">EN</span>
     </button>
+    <!-- 实时状态 + 轮询控制（设计系统缺口 ②③）：徽标只回答「屏幕上的数字有多新」，
+         数据来自 refresh() 的成功落点；暂停 / 频率只作用于面板自己的轮询定时器。 -->
+    <div class="live-cluster">
+      <span class="live-badge" id="liveBadge" title=""><span class="pulse"></span><span id="liveText">正在连接…</span></span>
+      <div class="tb-group">
+        <button type="button" class="sec mini" id="pollPauseBtn" onclick="togglePolling(this)"
+                aria-pressed="false" title="暂停 / 继续自动刷新">暂停</button>
+        <select class="live-freq" id="pollFreqSel" onchange="setPollFrequency(this.value)"
+                title="自动刷新频率" aria-label="自动刷新频率">
+          <option value="5000">5 秒</option>
+          <option value="15000">15 秒</option>
+          <option value="30000">30 秒</option>
+        </select>
+      </div>
+    </div>
     <div class="meta" id="meta"></div>
     <div class="theme-dropdown-wrap" id="themeDropdownWrap">
       <button type="button" class="theme-btn" id="themeToggleBtn" onclick="toggleThemeMenu(event)" title="颜色主题" aria-label="切换颜色主题" aria-haspopup="true" aria-expanded="false">
@@ -3519,6 +3615,10 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     </div>
   </div>
 </header>
+<!-- 状态播报区（设计系统缺口 ④）：屏幕阅读器专用，只播报「有意义的变化」
+     （暂停/继续、频率变更、数据转陈旧、取数失败），不播报每 5 秒的例行轮询——
+     表格里全量重绘的 tbody 挂 aria-live 会变成每 5 秒读一遍整张表。 -->
+<div class="sr-only" id="liveAnnounce" role="status" aria-live="polite" aria-atomic="true"></div>
 <div id="panelGate" style="position:fixed;inset:0;z-index:600;display:none;
      align-items:center;justify-content:center;padding:20px;background:var(--bg)">
   <div style="width:min(380px,100%);background:var(--panel);border:1px solid var(--line);
@@ -3713,7 +3813,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
            方向与正文可见性三者永远同步。标题与计数留在正文之外，收起时仍可见。 -->
       <button type="button" class="disclosure" id="accountsToggle" aria-expanded="true"
               aria-controls="accountsBody" onclick="toggleAccountsSection(event)"
-              title="折叠 / 展开账号区"><span class="disclosure-chevron" aria-hidden="true"></span>账号列表</button><em id="acctCount"></em>
+              title="折叠 / 展开账号区"><span class="disclosure-chevron" aria-hidden="true"></span>账号列表</button><em id="acctCount" aria-live="polite"></em>
     </h2>
     <div id="accountsBody" class="collapse">
       <div class="collapse-inner">
@@ -4085,10 +4185,14 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
       </div>
       <div class="pbody">
         <div class="chartbox">
-          <canvas id="seriesCanvas" height="176"></canvas>
+          <!-- 图表可达性（设计系统缺口 ⑤）：画布本身可 Tab 聚焦，←/→ 逐桶读数，
+               Esc 复位；无障碍摘要写在 aria-label 上，数据表兜底见下面的 sr-only 表。 -->
+          <canvas id="seriesCanvas" height="176" tabindex="0" role="img"
+                  aria-label="时序图：加载中"></canvas>
           <div class="tooltip" id="seriesTip"></div>
         </div>
         <div class="legend" id="seriesLegend" style="margin-top:7px"></div>
+        <div class="sr-only" id="seriesSrTable"></div>
       </div>
     </section>
 
@@ -4876,7 +4980,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
       <div style="flex:1;min-width:180px;position:relative">
         <input id="logSearchInput" type="text" placeholder="过滤关键字 (如 deepseek, 11128, 401, error)..."
                oninput="onLogSearchInput()"
-               style="width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:5px 10px;font-size:12px;color:var(--fg);outline:none">
+               style="width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:5px 10px;font-size:12px;color:var(--fg)">
       </div>
     </div>
 
@@ -6468,6 +6572,7 @@ async function loadModels(){
 const CATALOG_SOURCE_ORIGIN = {
   remote:   '上游 API · /v3/config',
   endpoint: '上游 API · /v1/models 端点',
+  client:   '本机 Trae 客户端 · 模型清单缓存',
   cache:    '本地配置文件（桌面客户端缓存）',
   legacy:   '本地配置文件（桌面客户端缓存）',
   bundled:  '内置快照'
@@ -6482,6 +6587,7 @@ function catalogSourceLabel(source){
     if(p === 'qoder') return '上游 API · Qoder 模型清单';
     if(p === 'trae') return '上游 API · Trae get_detail_param';
   }
+  if(source === 'client') return '本机 Trae 客户端 · model_list_map';
   return CATALOG_SOURCE_ORIGIN[source] || source;
 }
 
@@ -6502,8 +6608,8 @@ function renderModelsSourceLine(meta){
     ? '清单构建顺序：先请求上游 API（Qoder 模型清单接口，用当前视图版本的账号）→ 失败则用内置快照。'
       + '清单在 5 分钟缓存期内复用，过期自动重取；网关后台每天也会兜底获取一次；点「刷新模型清单」可立即从上游更新。'
     : (currentProvider() === 'trae')
-    ? '清单构建顺序：先请求上游 API（Trae get_detail_param，用当前视图版本的账号）→ 失败则用内置快照。'
-      + '清单在 5 分钟缓存期内复用，过期自动重取；点「刷新模型清单」可立即从上游更新。倍率是客户端同款消耗倍率（含低谷折扣）。'
+    ? '清单构建顺序：先请求上游 API（Trae get_detail_param，用当前视图版本的账号），并叠加本机 Trae 客户端的模型清单（state.vscdb，客户端选择器同源）→ 都没有才用内置快照。'
+      + '清单在 5 分钟缓存期内复用，过期自动重取；点「刷新模型清单」可立即更新。倍率是客户端同款消耗倍率（含低谷折扣）。'
     : '清单构建顺序：先请求上游 API（/v3/config，用当前视图版本的账号）→ 失败则读取本机桌面客户端缓存文件 → 都拿不到才用内置快照。'
       + '清单在 5 分钟缓存期内复用，过期自动重取；网关后台每天也会兜底获取一次；点「刷新模型清单」可立即从上游更新。';
   if(!meta || !meta.source){
@@ -6513,12 +6619,15 @@ function renderModelsSourceLine(meta){
     return;
   }
   const isApi = (meta.source === 'remote' || meta.source === 'endpoint');
+  const isClient = (meta.source === 'client');
   const at = fmtCatalogStamp(meta.fetched_at);
   el.title = tip;
-  if(isApi){
+  if(isApi || isClient){
     el.style.cssText = CATALOG_BANNER_BASE
       + 'background:var(--accent2-soft);border:1px solid rgba(94,140,79,.28);color:var(--accent2)';
-    el.innerHTML = '<b>✓ 当前为通过 API 获取的最新数据</b>'
+    el.innerHTML = (isClient
+        ? '<b>✓ 当前为本机 Trae 客户端的模型清单（与客户端选择器一致）</b>'
+        : '<b>✓ 当前为通过 API 获取的最新数据</b>')
       + '<span style="color:var(--dim)">刷新时间 ' + esc(at || '—')
       + ' · 来源 ' + esc(catalogSourceLabel(meta.source)) + '</span>';
     return;
@@ -8939,8 +9048,12 @@ function renderAccounts(){
     .map(pair => pair[0]);
   const usable = list.filter(a => a.enabled).length;
   const viewName = currentView === 'cn' ? '国内版' : '国际版';
-  document.getElementById('acctCount').textContent =
-    list.length ? ('（' + viewName + '共 ' + list.length + ' 个，启用 ' + usable + ' 个）') : '';
+  // 这个计数挂了 aria-live（设计系统缺口 ④ 里「表格容器加播报」的落地位置：
+  // 只播报这一行摘要，不播报整张每小时重绘的表）。值没变就不写，免得读屏每 15 秒
+  // 复读一遍同样的数字。
+  const cntEl = document.getElementById('acctCount');
+  const cntTxt = list.length ? ('（' + viewName + '共 ' + list.length + ' 个，启用 ' + usable + ' 个）') : '';
+  if(cntEl.textContent !== cntTxt) cntEl.textContent = cntTxt;
   if(!list.length){
     box.innerHTML =
       '<div style="text-align:center;padding:30px 16px">'
@@ -10107,9 +10220,11 @@ async function refreshInner(gen){
     // 直接扔掉，交给排队的那一轮渲染，免得把旧区域的数字画上去。
     if(gen !== REFRESH_GEN) return;
     document.getElementById('statusDot').className = 'dot';
+    markDataFresh(true);
   }catch(e){
     if(gen === REFRESH_GEN){
       document.getElementById('statusDot').className = 'dot err';
+      markDataFresh(false);
       if(String(e.message) !== 'unauthorized'){
         document.getElementById('meta').innerHTML = '<b>无法连接反代</b>';
       }
@@ -10454,6 +10569,125 @@ async function bootPanel(){
   }
 }
 
+/* ---------------- 实时状态徽标与轮询控制（设计系统缺口 ②③） ----------------
+   徽标只回答一件事：屏幕上的数字有多新。时间戳来自 refresh() 的成功落点
+   （markDataFresh），超过阈值转琥珀「可能已过期」。页面隐藏时本就不轮询
+   （见 startDashboard 里那段注释），回前台 visibilitychange 会补一次刷新，
+   所以「陈旧」不会被误报。频率是 5 秒基准的倍数，选择写进 localStorage；
+   暂停不持久化——刷新页面回到默认轮询是更不容易踩坑的预期。 */
+const POLL_BASE_MS = 5000;
+const POLL_FREQ_KEY = 'wb-poll-freq';
+// 轮询任务表：每项自带基准周期，实际周期 = 基准 × POLL_FACTOR。
+const POLL_TASKS = [
+  {every: 5000, run: function(){ if(currentMainTab === 'analytics'){ loadAnalytics(); loadAnalyticsMatrix(); } }},
+  // 每 5 秒在任何页面都跑，顺带把页面上的数据表接上排序（见 applyAllTableSorts）：
+  // 表本来就是 5 秒重画一次，扫描跟同一个节奏走，新加一张表不必在它的 render
+  // 函数里再写一行，下一轮自己就接上了。
+  {every: 5000, run: function(){ refresh(); applyAllTableSorts(); }},
+  {every: 30000, run: function(){ loadSchedulerStatus(); }},
+  {every: 15000, run: function(){ loadAccounts(); }},
+];
+let POLL_FACTOR = 1;
+let POLL_PAUSED = false;
+let LAST_DATA_AT = 0;
+let LAST_DATA_OK = true;
+let LIVE_TICK = 0;
+let LIVE_STATE = '';
+try{
+  const savedFreq = parseInt(localStorage.getItem(POLL_FREQ_KEY) || '', 10);
+  if(savedFreq >= POLL_BASE_MS && savedFreq <= 120000 && savedFreq % POLL_BASE_MS === 0)
+    POLL_FACTOR = savedFreq / POLL_BASE_MS;
+}catch(e){}
+function pollFreqMs(){ return Math.round(POLL_BASE_MS * POLL_FACTOR); }
+// 陈旧阈值跟着频率走：选了 30 秒还用 30 秒当阈值，每轮都会闪一下「已过期」。
+function pollStaleMs(){ return Math.max(30000, Math.round(pollFreqMs() * 2.2)); }
+function startPollTimers(){
+  PANEL_TIMERS.forEach(t => clearInterval(t));
+  PANEL_TIMERS = [];
+  if(POLL_PAUSED) return;
+  POLL_TASKS.forEach(task => {
+    PANEL_TIMERS.push(setInterval(() => {
+      if(!PANEL_READY || document.hidden) return;
+      task.run();
+    }, Math.round(task.every * POLL_FACTOR)));
+  });
+}
+function startLiveBadge(){
+  const sel = document.getElementById('pollFreqSel');
+  if(sel) sel.value = String(pollFreqMs());
+  if(LIVE_TICK) clearInterval(LIVE_TICK);
+  LIVE_TICK = setInterval(liveBadgeTick, 1000);
+  liveBadgeTick();
+}
+function announce(msg){
+  const el = document.getElementById('liveAnnounce');
+  if(el) el.textContent = msg;
+}
+function clockText(ts){
+  const d = new Date(ts), p = n => String(n).padStart(2, '0');
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+function relText(){
+  const sec = Math.floor(Math.max(0, Date.now() - LAST_DATA_AT) / 1000);
+  return sec < 60 ? sec + ' 秒前更新' : Math.floor(sec / 60) + ' 分钟前更新';
+}
+function markDataFresh(ok){
+  LAST_DATA_OK = !!ok;
+  if(ok) LAST_DATA_AT = Date.now();
+  liveBadgeTick();
+}
+function liveBadgeTick(){
+  const badge = document.getElementById('liveBadge');
+  const text = document.getElementById('liveText');
+  if(!badge || !text) return;
+  let cls = '', label, state;
+  if(POLL_PAUSED){ cls = 'paused'; label = '已暂停轮询'; state = 'paused'; }
+  else if(!LAST_DATA_OK){ cls = 'err'; label = '刷新失败' + (LAST_DATA_AT ? ' · ' + relText() : ''); state = 'err'; }
+  else if(!LAST_DATA_AT){ label = '等待数据…'; state = 'waiting'; }
+  else if(Date.now() - LAST_DATA_AT > pollStaleMs()){ cls = 'stale'; label = '数据可能已过期 · ' + relText(); state = 'stale'; }
+  else { label = '实时 · ' + (Date.now() - LAST_DATA_AT < 3000 ? '刚刚更新' : relText()); state = 'live'; }
+  // 只在内容真的变了才写 DOM：1 秒一跳的 ticker 里，暂停 / 失败这类稳定文案不该
+  // 每秒都触发一遍 i18n 的 MutationObserver。
+  const nextCls = 'live-badge' + (cls ? ' ' + cls : '');
+  const nextTitle = LAST_DATA_AT ? ('最后更新 ' + clockText(LAST_DATA_AT)) : '';
+  if(badge.className !== nextCls) badge.className = nextCls;
+  if(text.textContent !== label) text.textContent = label;
+  if(badge.title !== nextTitle) badge.title = nextTitle;
+  // 只在状态跃迁时播报：例行轮询不播报，否则读屏每 5 秒响一次。
+  if(state !== LIVE_STATE){
+    const first = !LIVE_STATE;
+    LIVE_STATE = state;
+    if(!first){
+      announce(state === 'paused' ? '已暂停自动刷新'
+        : state === 'err' ? '数据刷新失败'
+        : state === 'stale' ? '数据可能已过期'
+        : state === 'live' ? '数据已恢复更新' : '');
+    }
+  }
+}
+function togglePolling(btn){
+  POLL_PAUSED = !POLL_PAUSED;
+  if(btn){
+    btn.textContent = POLL_PAUSED ? '继续' : '暂停';
+    btn.setAttribute('aria-pressed', POLL_PAUSED ? 'true' : 'false');
+  }
+  startPollTimers();
+  // 恢复时立刻补一轮，省得盯着上一次的数字等到下个周期。
+  if(!POLL_PAUSED){ refresh(); if(currentMainTab === 'analytics'){ loadAnalytics(); loadAnalyticsMatrix(); } }
+  liveBadgeTick();
+}
+function setPollFrequency(v){
+  const ms = Math.max(POLL_BASE_MS, Math.min(120000, parseInt(v, 10) || POLL_BASE_MS));
+  if(ms === pollFreqMs()) return;
+  POLL_FACTOR = ms / POLL_BASE_MS;
+  try{ localStorage.setItem(POLL_FREQ_KEY, String(ms)); }catch(e){}
+  startPollTimers();
+  liveBadgeTick();
+  announce('自动刷新频率已改为 ' + Math.round(ms / 1000) + ' 秒');
+}
+window.togglePolling = togglePolling;
+window.setPollFrequency = setPollFrequency;
+
 let PANEL_READY = false;
 let PANEL_TIMERS = [];
 let visHookInstalled = false;
@@ -10481,22 +10715,13 @@ async function startDashboard(){
   applyAllTableSorts();
   // Polling only starts after the panel is unlocked, so a locked browser
   // never hammers the server with 401s.
-  PANEL_TIMERS.forEach(t => clearInterval(t));
   // 后台标签页不再轮询：浏览器停止绘制后台页，但定时器照跑——实测网关页在后台
   // 仍有 50 次/分钟、统计页 110 次/分钟的请求，全是白跑的。可见性变化时下面会
   // 补一次刷新，所以切回前台看到的数据仍是新的。
-  PANEL_TIMERS = [
-    setInterval(() => {
-      if(!PANEL_READY || document.hidden) return;
-      if(currentMainTab === 'analytics'){ loadAnalytics(); loadAnalyticsMatrix(); }
-    }, 5000),
-    // 每 5 秒在任何页面都跑，顺带把页面上的数据表接上排序（见
-    // applyAllTableSorts）：表本来就是 5 秒重画一次，扫描跟同一个节奏走，新加
-    // 一张表不必在它的 render 函数里再写一行，下一轮自己就接上了。
-    setInterval(() => { if(!document.hidden){ refresh(); applyAllTableSorts(); } }, 5000),
-    setInterval(() => { if(!document.hidden) loadSchedulerStatus(); }, 30000),
-    setInterval(() => { if(!document.hidden) loadAccounts(); }, 15000),
-  ];
+  // 定时器本体搬去了 POLL_TASKS / startPollTimers（见上方「实时状态徽标与轮询
+  // 控制」），这样「暂停」与「频率」能整组重建，不必逐条 clear/set。
+  startPollTimers();
+  startLiveBadge();
   if(!visHookInstalled){
     visHookInstalled = true;
     // 回到前台补一次：按当前所在页刷新，复用 refresh 自身的并发合并（撞上在飞
@@ -14815,9 +15040,19 @@ function setDelta(id, cur, prev){
   el.textContent = txt;
   el.className = 'delta' + (txt.startsWith('▲') ? ' up' : '');
 }
-function drawSpark(id, vals, colorVar){
+/* ---------------- 迷你趋势图（spark） ----------------
+   除了画线，它还负责三件事（设计系统缺口 ⑤）：
+   · SPARK_STATE 留一份数据，键盘读数、aria 摘要、canvas 上的读数游标都从它取；
+   · 卡片的 aria-label 带上「最新 / 峰值 / 怎么用键盘读」的摘要（卡是 role=button，
+     spark 本身不再进 Tab 序列，避开「按钮里有可聚焦后代」这种非法嵌套）；
+   · 焦点落在哪张卡上，就在那张卡的 canvas 上画读数游标（见 sparkCursor）。 */
+const SPARK_STATE = {};
+function drawSpark(id, vals, colorVar, meta){
   const cv = $(id);
   if (!cv || !vals || vals.length < 2) return;
+  const st = SPARK_STATE[id] || (SPARK_STATE[id] = {idx: -1});
+  st.vals = vals; st.colorVar = colorVar;
+  if (meta) Object.assign(st, meta);
   const dpr = window.devicePixelRatio || 1;
   const W = cv.clientWidth || 120, H = 44;
   cv.width = W * dpr; cv.height = H * dpr;
@@ -14836,17 +15071,120 @@ function drawSpark(id, vals, colorVar){
   ctx.stroke();
   ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath();
   ctx.globalAlpha = .14; ctx.fillStyle = color; ctx.fill(); ctx.globalAlpha = 1;
+  // 键盘读数游标：idx >= 0 时跟着数据一起重画，所以 5 秒一轮的刷新不会把读数擦掉。
+  if (st.idx >= 0) sparkCursor(id, W, H);
+  sparkCardA11y(id);
+}
+function sparkCursor(id, W, H){
+  const cv = $(id), st = SPARK_STATE[id];
+  if (!cv || !st) return;
+  const ctx = cv.getContext('2d');
+  const n = st.vals.length;
+  const i = Math.max(0, Math.min(n - 1, st.idx));
+  const max = Math.max(...st.vals), min = Math.min(...st.vals);
+  const rng = (max - min) || 1;
+  const x = i * (W / (n - 1));
+  const y = H - 3 - (st.vals[i] - min) / rng * (H - 8);
+  const color = seriesColor(st.colorVar || '--chart-bar');
+  ctx.save();
+  ctx.globalAlpha = .3; ctx.strokeStyle = color; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.beginPath(); ctx.arc(x, y, 2.6, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+  // 数值小签：紧贴画布顶部，不遮折线走势。
+  const txt = st.fmt ? st.fmt(st.vals[i]) : String(st.vals[i]);
+  ctx.font = '10px ' + getComputedStyle(document.body).fontFamily;
+  const tw = ctx.measureText(txt).width + 8;
+  const bx = Math.max(0, Math.min(W - tw, x - tw / 2));
+  ctx.fillStyle = seriesColor('--panel2');
+  ctx.fillRect(bx, 1, tw, 15);
+  ctx.strokeStyle = color; ctx.globalAlpha = .55;
+  ctx.strokeRect(bx + .5, 1.5, tw - 1, 14);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = seriesColor('--fg');
+  ctx.textBaseline = 'middle';
+  ctx.fillText(txt, bx + 4, 9);
+  ctx.restore();
+}
+// 卡片摘要：整卡是 role=button，所以趋势信息挂在卡自己的 aria-label 上。
+function sparkCardA11y(id){
+  const cv = $(id), st = SPARK_STATE[id];
+  if (!cv || !st) return;
+  const card = cv.closest('.kpi');
+  if (!card) return;
+  const n = st.vals.length;
+  const f = st.fmt || (v => String(v));
+  card.setAttribute('aria-label',
+    (st.label || '') + '明细；迷你趋势：' + n + ' 个数据点，最新 ' + f(st.vals[n - 1]) +
+    '，峰值 ' + f(Math.max(...st.vals)) + '，按左右方向键逐点读取');
+}
+// 逐点读数的文本（播报用）：时间 + 数值。
+function sparkPointText(st, i){
+  const t = st.times && st.times[i] ? (st.big ? fmtDate(st.times[i]) : fmtTime(st.times[i])) : '';
+  const v = st.fmt ? st.fmt(st.vals[i]) : String(st.vals[i]);
+  return t ? t + ' · ' + v : v;
+}
+// ←/→ 读数游标：由 KPI 容器的 keydown 驱动（见「事件」一节）。
+function sparkStep(cv, key){
+  const st = SPARK_STATE[cv.id];
+  if (!st || !st.vals) return;
+  const n = st.vals.length;
+  let idx = st.idx;
+  if (key === 'ArrowLeft')       idx = idx < 0 ? n - 1 : Math.max(0, idx - 1);
+  else if (key === 'ArrowRight') idx = idx < 0 ? 0 : Math.min(n - 1, idx + 1);
+  else if (key === 'Home')       idx = 0;
+  else if (key === 'End')        idx = n - 1;
+  else if (key === 'Escape'){
+    if (idx < 0) return false;
+    st.idx = -1;
+    drawSpark(cv.id, st.vals, st.colorVar);
+    announce('图表读数已复位');
+    return true;
+  } else return false;
+  st.idx = idx;
+  drawSpark(cv.id, st.vals, st.colorVar);
+  announce('图表读数：' + st.label + ' ' + (idx + 1) + '/' + n + ' · ' + sparkPointText(st, idx));
+  return true;
 }
 function drawSparks(){
   const s = state.series;
   if (!s || !s.series) return;
   const step = s.bucket_seconds || 3600;
   const arr = s.series;
-  drawSpark('sparkTokens', arr.map(b => b.total_tokens || 0), '--chart-bar');
-  drawSpark('sparkReqs',   arr.map(b => b.requests || 0), '--chart-line');
-  drawSpark('sparkSpeed',  arr.map(b => (b.total_tokens || 0) / step), '--chart-bar');
-  drawSpark('sparkCache',  arr.map(b => b.prompt_tokens ? (b.cached_tokens || 0) / b.prompt_tokens * 100 : 0), '--chart-line');
-  drawSpark('sparkCost',   arr.map(b => b.credit || 0), '--chart-bar');
+  const common = {times: arr.map(b => b.at), big: step >= 86400};
+  drawSpark('sparkTokens', arr.map(b => b.total_tokens || 0), '--chart-bar',
+    Object.assign({label: 'TOKEN 消耗', fmt: v => fmtCompact(v)}, common));
+  drawSpark('sparkReqs',   arr.map(b => b.requests || 0), '--chart-line',
+    Object.assign({label: '请求数', fmt: v => fmtCompact(v)}, common));
+  drawSpark('sparkSpeed',  arr.map(b => (b.total_tokens || 0) / step), '--chart-bar',
+    Object.assign({label: '生成速度', fmt: v => v.toFixed(1) + ' tok/s'}, common));
+  drawSpark('sparkCache',  arr.map(b => b.prompt_tokens ? (b.cached_tokens || 0) / b.prompt_tokens * 100 : 0), '--chart-line',
+    Object.assign({label: '缓存命中率', fmt: v => v.toFixed(1) + '%'}, common));
+  // 这张 spark 画的是积分（桶里只有 credit），所以标签跟「积分消耗」对齐，不写成金额。
+  drawSpark('sparkCost',   arr.map(b => b.credit || 0), '--chart-bar',
+    Object.assign({label: '积分消耗', fmt: v => Number(v).toFixed(2)}, common));
+  renderSeriesSrTable();
+}
+/* 图表的数据表兜底（设计系统缺口 ⑤）：屏幕阅读器专用，与柱状图同源同桶，
+   一行一个桶，读屏用户可以按表格方式逐行读。 */
+function renderSeriesSrTable(){
+  const s = state.series;
+  const host = $('seriesSrTable');
+  if (!host) return;
+  if (!s || !s.series){ host.innerHTML = ''; return; }
+  const step = s.bucket_seconds || 3600;
+  const day = step >= 86400;
+  const rows = s.series.map(b => `<tr>
+    <td>${day ? fmtDate(b.at) : fmtTime(b.at)}</td>
+    <td>${fmtCompact(b.requests || 0)}</td>
+    <td>${fmtCompact(b.total_tokens || 0)}</td>
+    <td>${b.prompt_tokens ? ((b.cached_tokens || 0) / b.prompt_tokens * 100).toFixed(1) + '%' : '—'}</td>
+    <td>${Number(b.credit || 0).toFixed(2)}</td>
+  </tr>`).join('');
+  host.innerHTML = `<table>
+    <caption>时序图数据表（与柱状图同一份数据）</caption>
+    <thead><tr><th>时间</th><th>请求</th><th>Token</th><th>缓存命中</th><th>积分</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
 }
 function nicknameOf(uid){
   const acc = ((state.analytics || {}).accounts || []).find(x => x.uid === uid);
@@ -15274,7 +15612,32 @@ const seriesColorHost = document.getElementById('pageAnalytics');
 function seriesColor(i){
   return getComputedStyle(seriesColorHost || document.documentElement).getPropertyValue(i).trim();
 }
+/* 提示层内容：鼠标悬停与键盘读数共用一份（设计系统缺口 ⑤ 让同一个提示能被键盘
+   驱动，不用第二套读法）。 */
+function seriesTipHTML(b, step){
+  const tt = step >= 86400 ? fmtDate(b.at) : fmtTime(b.at);
+  const rows = [
+    ['请求', fmtCompact(b.requests)],
+    ['Token', fmtCompact(b.total_tokens)],
+    ['吞吐', ((b.total_tokens||0)/step).toFixed(1) + ' tok/s'],
+    ['失败', fmtCompact(b.errors)],
+    ['积分', (b.credit||0).toFixed(2)],
+  ];
+  return `<div class="tt-t">${tt}</div>` +
+    rows.map(r => `<div class="tt-r"><span>${r[0]}</span><b>${r[1]}</b></div>`).join('');
+}
+function showSeriesTip(idx, cx, cy){
+  if (!seriesLayout || !seriesTip) return;
+  seriesTip.style.opacity = 1;
+  seriesTip.style.left = Math.min(window.innerWidth - 200, Math.max(8, cx)) + 'px';
+  seriesTip.style.top = Math.max(8, cy) + 'px';
+  seriesTip.innerHTML = seriesTipHTML(seriesLayout.series[idx], seriesLayout.step);
+}
+function seriesMetricName(metric){
+  return metric === 'tokens' ? 'Token 总量' : metric === 'requests' ? '请求数' : '吞吐 tok/s';
+}
 let seriesLayout = null;
+let seriesKeyIdx = -1;
 function drawSeries(){
   const s = state.series;
   const cv = seriesCanvas, tip = seriesTip;
@@ -15373,6 +15736,11 @@ function drawSeries(){
 
   seriesLayout = {bars, series, step, metric, padL, padR, iw, gap, lineVals, lineMax, barC, lineC};
 
+  // 无障碍摘要（设计系统缺口 ⑤）：不逐点罗列，只给点数、峰值、最新值与键盘用法。
+  cv.setAttribute('aria-label',
+    '时序图：' + seriesMetricName(metric) + '，' + n + ' 个数据点，峰值 ' + fmtCompact(maxV) +
+    '，最新 ' + fmtCompact(vals[n - 1] || 0) + '，按左右方向键逐点读取，Esc 复位');
+
   // hover
   cv.onmousemove = ev => {
     if (!seriesLayout) return;
@@ -15380,23 +15748,43 @@ function drawSeries(){
     const mx = ev.clientX - rect.left;
     let idx = Math.round((mx - padL) / gap - .5);
     idx = Math.max(0, Math.min(n - 1, idx));
-    const b = series[idx];
-    tip.style.opacity = 1;
-    tip.style.left = Math.min(window.innerWidth - 200, ev.clientX + 14) + 'px';
-    tip.style.top = Math.max(8, ev.clientY - 46) + 'px';
-    const tt = step >= 86400 ? fmtDate(b.at) : fmtTime(b.at);
-    const rows = [
-      ['请求', fmtCompact(b.requests)],
-      ['Token', fmtCompact(b.total_tokens)],
-      ['吞吐', ((b.total_tokens||0)/step).toFixed(1) + ' tok/s'],
-      ['失败', fmtCompact(b.errors)],
-      ['积分', (b.credit||0).toFixed(2)],
-    ];
-    tip.innerHTML = `<div class="tt-t">${tt}</div>` +
-      rows.map(r => `<div class="tt-r"><span>${r[0]}</span><b>${r[1]}</b></div>`).join('');
+    showSeriesTip(idx, ev.clientX + 14, ev.clientY - 46);
   };
   cv.onmouseleave = () => { tip.style.opacity = 0; };
 }
+/* 键盘读数：←/→ 逐桶、Home/End 到两端、Esc 复位；读数同步播报到 #liveAnnounce
+   （与顶栏轮询状态共用同一个礼貌播报区）。 */
+seriesCanvas.addEventListener('keydown', ev => {
+  const lay = seriesLayout;
+  if (!lay) return;
+  const n = lay.series.length;
+  let idx = seriesKeyIdx;
+  if (ev.key === 'ArrowLeft')       idx = idx < 0 ? n - 1 : Math.max(0, idx - 1);
+  else if (ev.key === 'ArrowRight') idx = idx < 0 ? 0 : Math.min(n - 1, idx + 1);
+  else if (ev.key === 'Home')       idx = 0;
+  else if (ev.key === 'End')        idx = n - 1;
+  else if (ev.key === 'Escape'){
+    if (idx < 0) return;
+    ev.preventDefault();
+    seriesKeyIdx = -1;
+    seriesTip.style.opacity = 0;
+    announce('图表读数已复位');
+    return;
+  } else return;
+  ev.preventDefault();
+  seriesKeyIdx = idx;
+  const rect = seriesCanvas.getBoundingClientRect();
+  const x = rect.left + lay.padL + lay.gap * idx + lay.gap / 2;
+  const barTop = lay.bars[idx] ? lay.bars[idx].y : 40;
+  showSeriesTip(idx, x - 70, rect.top + Math.max(10, barTop - 26));
+  const b = lay.series[idx];
+  announce('图表读数：' + seriesMetricName(lay.metric) + ' ' + (idx + 1) + '/' + n + ' · ' +
+    (lay.step >= 86400 ? fmtDate(b.at) : fmtTime(b.at)) + ' · ' +
+    fmtCompact(metricValue(b, lay.metric, lay.step)));
+});
+seriesCanvas.addEventListener('blur', () => {
+  if (seriesKeyIdx >= 0){ seriesKeyIdx = -1; seriesTip.style.opacity = 0; }
+});
 
 /* ---------------- 热力图 ---------------- */
 function buildHeatGrid(heat){
@@ -15695,17 +16083,32 @@ $('rangeSeg').addEventListener('click', ev => {
   state.range = btn.dataset.range;
   loadRange();
 });
-/* KPI 卡：点击 / 回车 / 空格打开明细；Esc 关闭（焦点还给那张卡）。 */
+/* KPI 卡：点击 / 回车 / 空格打开明细；卡上的 spark 用 ←/→ 逐点读数（设计系统缺口
+   ⑤）；Esc 关闭明细（焦点还给那张卡）。 */
 $('kpis').addEventListener('click', ev => {
   const card = ev.target.closest('.kpi[data-kpi]');
   if (card) openKpiDetail(card.dataset.kpi, card);
 });
 $('kpis').addEventListener('keydown', ev => {
-  if (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
   const card = ev.target.closest('.kpi[data-kpi]');
   if (!card) return;
-  ev.preventDefault();
-  openKpiDetail(card.dataset.kpi, card);
+  if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar'){
+    ev.preventDefault();
+    openKpiDetail(card.dataset.kpi, card);
+    return;
+  }
+  const cv = card.querySelector('canvas.spark');
+  if (!cv || !SPARK_STATE[cv.id]) return;
+  if (sparkStep(cv, ev.key)) ev.preventDefault();
+});
+// 焦点离开卡片就撤掉读数游标，与 Esc 同一个效果（画布上不留悬空的读数）。
+$('kpis').addEventListener('focusout', ev => {
+  const card = ev.target.closest ? ev.target.closest('.kpi[data-kpi]') : null;
+  if (!card) return;
+  if (ev.relatedTarget && card.contains(ev.relatedTarget)) return;
+  const cv = card.querySelector('canvas.spark');
+  const st = cv && SPARK_STATE[cv.id];
+  if (st && st.idx >= 0){ st.idx = -1; drawSpark(cv.id, st.vals, st.colorVar); }
 });
 document.addEventListener('keydown', ev => {
   if (ev.key === 'Escape' && state.kpiOpen) closeKpiDetail();
