@@ -34,6 +34,7 @@ import re
 import threading
 import time
 import uuid
+from http.client import IncompleteRead
 
 import wb_qoder
 
@@ -923,6 +924,42 @@ def _load_json_object(text, what):
     return value
 
 
+def _qoder_status_message(envelope, model):
+    """把 Qoder 的错误 envelope 折成一句可读的中文报错。
+
+    上游的 403 常把真正的错误码一层层塞进字符串里（body 是 JSON 字符串，
+    message 又是 JSON 字符串），这里逐层解开，尽量露出 subCode 与提示。
+    典型形态：statusCodeValue=403，内层 subCode=RESOURCE_LIMIT（10605），
+    serviceAvailable=false、retryAfterSeconds=30 —— 即模型当前排队/无容量。
+    """
+    status = envelope.get("statusCodeValue") or envelope.get("statusCode")
+    node = envelope.get("body")
+    sub = None
+    message = None
+    for _ in range(4):
+        if isinstance(node, str):
+            try:
+                node = json.loads(node)
+            except Exception:
+                if message is None:
+                    message = node
+                break
+        if not isinstance(node, dict):
+            break
+        sub = node.get("subCode") or node.get("code") or sub
+        message = node.get("message") or node.get("msg") or message
+        node = node.get("message")
+    text = _short_json(message) if message else ""
+    if ("RESOURCE_LIMIT" in str(sub) or "10605" in str(sub)
+            or "RESOURCE_LIMIT" in text):
+        return ("Qoder 上游拒绝该请求（状态 %s / %s）：模型「%s」当前资源受限"
+                "或正在排队（serviceAvailable=false），通常是该模型在所选区域"
+                "暂无可用容量；请稍后重试（上游建议 30 秒），或换用其它 Qoder "
+                "模型" % (status, sub or "RESOURCE_LIMIT", model))
+    return "Qoder 上游返回状态 %s: %s" % (
+        status, text or _short_json(envelope.get("body")))
+
+
 def _usage_to_openai(raw):
     """把上游 usage 快照塑造成 OpenAI 口径的 usage 块。
 
@@ -1012,6 +1049,46 @@ def iter_openai_chunks(resp, model):
             raw = resp.read(65536)
         except QoderChatError:
             raise
+        except IncompleteRead as exc:
+            # 上游用 chunked 传输时，遇到 403 / 限流这类错误会先把 SSE 信封
+            # 写出来，却不发终止块就断开；http.client 在读完信封前抛
+            # IncompleteRead，把真正的错误码（如 10605 RESOURCE_LIMIT）藏在
+            # exc.partial 里。这里先把 partial 里的 data: 行解出来，把上游的
+            # 真实报错翻出来，避免只看到 "IncompleteRead(...)"。
+            partial = getattr(exc, "partial", b"") or b""
+            if isinstance(partial, str):
+                partial = partial.encode("utf-8", "replace")
+            text = buffer + partial.decode("utf-8", "replace")
+            for line in text.split("\n"):
+                line = line.strip()
+                if not line.startswith("data:"):
+                    continue
+                data_str = line[5:].strip()
+                if not data_str or data_str == "[DONE]":
+                    continue
+                try:
+                    envelope = _load_json_object(data_str, "Qoder 流数据")
+                except QoderChatError:
+                    continue
+                status = envelope.get("statusCodeValue")
+                if status and status != 200:
+                    raise QoderChatError(_qoder_status_message(envelope, model))
+                inner = envelope.get("body")
+                if isinstance(inner, dict) and inner.get("error"):
+                    raise QoderChatError("Qoder 上游返回错误: %s"
+                                         % _short_json(inner.get("error")))
+            if not partial:
+                raise QoderChatError(
+                    "Qoder 上游在 %.0f 秒内没有返回任何数据：该模型可能资源受限"
+                    "或正在排队（10605 RESOURCE_LIMIT），请稍后重试或换用其它"
+                    " Qoder 模型" % max(0, time.time() - created))
+            raise QoderChatError(
+                "Qoder 上游返回了不完整的响应（分块传输被中断），请稍后重试")
+        except TimeoutError:
+            raise QoderChatError(
+                "Qoder 上游在 %.0f 秒内没有返回任何数据：该模型可能资源受限"
+                "或正在排队（10605 RESOURCE_LIMIT），请稍后重试或换用其它"
+                " Qoder 模型" % max(0, time.time() - created))
         except Exception as exc:
             raise QoderChatError("Qoder 上游流读取失败: %s" % exc)
         if not raw:
@@ -1037,8 +1114,7 @@ def iter_openai_chunks(resp, model):
             envelope = _load_json_object(data_str, "Qoder 流数据")
             status = envelope.get("statusCodeValue")
             if status and status != 200:
-                raise QoderChatError("Qoder 上游返回状态 %s: %s"
-                                     % (status, _short_json(envelope.get("body"))))
+                raise QoderChatError(_qoder_status_message(envelope, model))
             inner_raw = envelope.get("body")
             # 哨兵也会以 envelope.body == "[DONE]" 的形态出现，同样结束。
             if inner_raw == "[DONE]":
