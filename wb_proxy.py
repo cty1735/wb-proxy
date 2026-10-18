@@ -73,6 +73,8 @@ import wb_prompt
 import wb_modelsdev
 import wb_qoder
 import wb_qoder_chat
+import wb_trae
+import wb_trae_chat
 import wb_probes
 import wb_updates
 IS_WINDOWS = os.name == "nt"
@@ -10747,10 +10749,60 @@ def _fetch_qoder_models(realm):
         return entries
 
 
+def _fetch_trae_models(realm):
+    """Trae 目录：远端 get_detail_param，失败回内置快照。
+
+    与 Qoder 目录同款：300s 内存缓存 + _catalog_lock，缓存键 "trae:<realm>"。
+    Trae 的模型清单随账号和区域变化，所以有代表账号时一律走远端；没有账号
+    （或上游失败）才用内置清单兜底。
+    """
+    key = _catalog_cache_key(realm, "trae")
+    r = realm or CURRENT_REALM
+    with _lock:
+        c = _models_cache.get(key) or {"at": 0.0, "data": None}
+        if c["data"] and time.time() - c["at"] < 300:
+            return c["data"]
+    with _catalog_lock:
+        with _lock:
+            c = _models_cache.get(key) or {"at": 0.0, "data": None}
+            if c["data"] and time.time() - c["at"] < 300:
+                return c["data"]
+        account = (POOL.representative(realm=r, provider="trae")
+                   if POOL else None)
+        try:
+            models, source = wb_trae.available_models(
+                r,
+                access_token=account.access_token if account else None,
+                auth=account.trae_auth if account else None,
+                proxy=account.proxy if account else "")
+        except Exception as exc:
+            log("trae catalog: %s failed (%s)" % (r, exc))
+            models, source = wb_trae.static_models(r), "bundled"
+        if not models:
+            models, source = wb_trae.static_models(r), "bundled"
+        if source != "remote":
+            # 面板只认识 remote / endpoint / cache / legacy / bundled 五种出处；
+            # available_models 的 "system" 就是内置快照，别原样漏给前端。
+            source = "bundled"
+        entries = [(m["id"], wb_trae.model_entry_meta(m)) for m in models]
+        if source == "remote":
+            note_remote_catalog(r, provider="trae")
+        with _lock:
+            # 内置兜底不写缓存：刚添加 Trae 账号时，下一次 /v1/models 应该立刻
+            # 去上游拉真实目录，而不是把「无账号时的静态清单」钉住 5 分钟。
+            if source == "remote":
+                _models_cache[key] = {"at": time.time(), "data": entries}
+            _catalog_meta[key] = {"source": source, "fetched_at": time.time(),
+                                  "file_mtime": None}
+        return entries
+
+
 def fetch_models(realm=None, provider=None):
-    """模型清单：按提供商分账（WorkBuddy = 旧路径，Qoder = wb_qoder 目录）。"""
+    """模型清单：按提供商分账（WorkBuddy = 旧路径，Qoder / Trae = 各自目录）。"""
     if wb_accounts.provider_filter(provider) == "qoder":
         return _fetch_qoder_models(realm)
+    if wb_accounts.provider_filter(provider) == "trae":
+        return _fetch_trae_models(realm)
     r = realm or CURRENT_REALM
     with _lock:
         c = _models_cache.get(r) or {"at": 0.0, "data": None}
@@ -10814,6 +10866,27 @@ def _model_in_qoder_catalog(model):
     return False
 
 
+def _model_in_trae_catalog(model):
+    """Trae 目录（内存缓存或内置快照）里有没有这个 id / 别名。"""
+    name = str(model or "").strip()
+    if not name:
+        return False
+    lowered = name.lower()
+    for r in ("intl", "cn"):
+        with _lock:
+            entry = _models_cache.get(_catalog_cache_key(r, "trae"))
+        for mid, _meta in (entry or {}).get("data") or ():
+            if str(mid).strip().lower() == lowered:
+                return True
+        for item in wb_trae.static_models(r):
+            if str(item.get("id") or "").strip().lower() == lowered or \
+                    str(item.get("key") or "").strip().lower() == lowered:
+                return True
+        if wb_trae.alias_for(r, name).lower() != lowered:
+            return True
+    return False
+
+
 def _model_in_workbuddy_catalog(model):
     """WorkBuddy 目录（内存缓存或内置清单）里有没有这个 id。"""
     name = str(model or "").strip()
@@ -10835,12 +10908,11 @@ def _model_in_workbuddy_catalog(model):
 
 
 def qoder_provider_hint_for_model(model):
-    """没有显式 provider 提示时，按模型归属判断要不要走 Qoder。
+    """没有显式 provider 提示时，按模型归属判断要不要走 Qoder / Trae。
 
-    保守规则：Qoder 目录认识、WorkBuddy 目录不认识 -> qoder；其余（包括两边
-    都认识的）一律交给原来的 WorkBuddy 路径。这样老客户端不改一个字，Qoder
-    独有模型名也不会再被送进 WorkBuddy 账号池。两边都只查内存缓存与内置
-    快照，不发上游。
+    保守规则：WorkBuddy 目录认识 -> 交给原来的 WorkBuddy 路径（老客户端不改
+    一个字）；否则 Qoder 认识 -> qoder；再否则 Trae 认识 -> trae；都不认识
+    也回 WorkBuddy。两边都只查内存缓存与内置快照，不发上游。
     """
     if not model:
         return None
@@ -10848,6 +10920,8 @@ def qoder_provider_hint_for_model(model):
         return None
     if _model_in_qoder_catalog(model):
         return "qoder"
+    if _model_in_trae_catalog(model):
+        return "trae"
     return None
 
 
@@ -11232,8 +11306,10 @@ def _refresh_qoder_catalog(realm, provider="qoder"):
 
     与 WorkBuddy 那路共用冷却表与 _catalog_lock，但冷却键带提供商前缀，两边
     互不占用；没有可用账号时给出明确提示（面板直接展示），拉不到就保留旧
-    清单。
+    清单。provider=trae 时转给 _refresh_trae_catalog。
     """
+    if wb_accounts.normalize_provider(provider) == "trae":
+        return _refresh_trae_catalog(realm)
     if realm not in ("intl", "cn"):
         return {"ok": False, "realm": None, "source": None, "count": 0,
                 "msg": "realm 必须是 intl 或 cn"}
@@ -11277,6 +11353,51 @@ def _refresh_qoder_catalog(realm, provider="qoder"):
     note_remote_catalog(realm, provider=provider)
     return {"ok": True, "realm": realm, "source": "remote", "count": len(entries),
             "msg": "已从上游 API 更新 Qoder 清单，共 %d 个模型" % len(entries)}
+
+
+def _refresh_trae_catalog(realm):
+    """Trae 的手动刷新：用该 realm 的代表账号拉一次 get_detail_param。"""
+    if realm not in ("intl", "cn"):
+        return {"ok": False, "realm": None, "source": None, "count": 0,
+                "msg": "realm 必须是 intl 或 cn"}
+    key = _catalog_cache_key(realm, "trae")
+    now = time.time()
+    with _lock:
+        wait = CATALOG_REFRESH_COOLDOWN - (now - _catalog_refresh_at.get(key, 0.0))
+        if wait > 0:
+            return {"ok": False, "realm": realm, "source": None, "count": 0,
+                    "cooldown": True, "retry_after": round(wait, 1),
+                    "msg": "刷新太频繁：约 %d 秒后可再试" % max(1, int(wait + 0.5))}
+        _catalog_refresh_at[key] = now
+    with _catalog_lock:
+        account = (POOL.representative(realm=realm, provider="trae")
+                   if POOL else None)
+        if account is None:
+            return {"ok": False, "realm": realm, "source": None, "count": 0,
+                    "msg": "没有可用的 Trae 账号：先在「%s」区添加一个再刷新"
+                           % realm}
+        try:
+            models, source = wb_trae.available_models(
+                realm, access_token=account.access_token,
+                auth=account.trae_auth, proxy=account.proxy, force=True)
+        except Exception as exc:
+            log("catalog refresh: trae %s failed (%s)" % (realm, exc))
+            models, source = [], "bundled"
+        if source != "remote" or not models:
+            log("catalog refresh: trae %s kept the previous list (upstream gave none)"
+                % realm)
+            return {"ok": False, "realm": realm, "source": None, "count": 0,
+                    "msg": "上游未返回可用目录（账号不可用或网络异常），已保留现有清单"}
+        entries = [(m["id"], wb_trae.model_entry_meta(m)) for m in models]
+        with _lock:
+            _models_cache[key] = {"at": time.time(), "data": entries}
+            _catalog_meta[key] = {"source": "remote", "fetched_at": time.time(),
+                                  "file_mtime": None}
+    log("catalog refresh: trae %s updated from the model list endpoint (%d models)"
+        % (realm, len(entries)))
+    note_remote_catalog(realm, provider="trae")
+    return {"ok": True, "realm": realm, "source": "remote", "count": len(entries),
+            "msg": "已从上游 API 更新 Trae 清单，共 %d 个模型" % len(entries)}
 
 
 def refresh_catalog(realm, provider=None):
@@ -13600,6 +13721,167 @@ def open_qoder_upstream(payload, session_key=None, target_realm=None):
     raise RuntimeError(
         "no usable account for realm '%s': no enabled Qoder account is ready%s"
         % (realm, pool_unavailable_detail(realm, model, provider="qoder")))
+
+
+class TraeUpstreamAdapter:
+    """把 Trae 的 OpenAI 增量块包装成下游管线认的 SSE 字节流。
+
+    与 QoderUpstreamAdapter 同一职责：wb_trae_chat.iter_openai_chunks() 把
+    Trae 的命名事件翻成 OpenAI chunk，这里只做 `data: {...}` 序列化。
+    """
+
+    def __init__(self, resp, model):
+        self._raw = resp
+        self._chunks = wb_trae_chat.iter_openai_chunks(resp, model)
+        self._pending = b""
+        self._done = False
+
+    def read1(self, size=-1):
+        while not self._pending and not self._done:
+            try:
+                chunk = next(self._chunks)
+            except StopIteration:
+                self._done = True
+                break
+            self._pending = ("data: %s\n\n" % json.dumps(
+                chunk, ensure_ascii=False)).encode("utf-8")
+        if not self._pending:
+            return b""
+        if size is None or size < 0:
+            data, self._pending = self._pending, b""
+            return data
+        data, self._pending = self._pending[:size], self._pending[size:]
+        return data
+
+    def read(self, size=-1):
+        return self.read1(size)
+
+    def close(self):
+        try:
+            if hasattr(self._raw, "close"):
+                self._raw.close()
+        except Exception:
+            pass
+        finally:
+            self._chunks = iter(())
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+        return False
+
+
+def open_trae_upstream(payload, session_key=None, target_realm=None):
+    """Trae 版的 open_upstream：选号、构造请求、返回 (adapter, account, effort)。
+
+    错误语义与 open_qoder_upstream 对齐：没号 -> RuntimeError("no usable
+    account ...")；429 -> RateLimited；401 -> 刷新凭证后同号重试一次；5xx
+    与网络错误换号；其余 4xx 原样抛出。
+    """
+    realm = target_realm or CURRENT_REALM
+    if POOL is None:
+        raise RuntimeError("no usable account for realm '%s': the account pool "
+                           "is empty" % realm)
+    model = str(payload.get("model") or "")
+    total = max(1, POOL.count_ready(realm, model=model, provider="trae"))
+    header_timeout, idle_timeout = upstream_timeouts()
+    tried = set()
+    charged = set()
+    last_error = None
+    last_uid = None
+    last_429 = None
+    last_429_detail = ""
+
+    def charge(account, message):
+        if account.uid in charged:
+            return
+        charged.add(account.uid)
+        account.note_failure(message)
+
+    for _attempt in range(max(2, total) + 1):
+        account = POOL.pick_for_session(realm=realm, session_key=session_key,
+                                        exclude=tried, model=model,
+                                        provider="trae")
+        if account is None:
+            break
+        if account.realm != realm:
+            if session_key and POOL:
+                POOL.affinity.demote(session_key, account.uid)
+            continue
+        tried.add(account.uid)
+        last_uid = account.uid
+        resolved = wb_trae_chat.resolve_model_config(
+            realm, model, access_token=account.access_token,
+            auth=account.trae_auth, proxy=account.proxy)
+        if resolved is None:
+            raise RuntimeError(
+                "Trae 目录里没有模型 '%s'（%s）：从 /v1/models?provider=trae "
+                "里挑一个，或先刷新目录" % (model, realm))
+        identity = {
+            "access_token": account.access_token,
+            "auth": account.trae_auth,
+            "realm": realm,
+            "api_host": account.trae_auth.get("apiHost") or "",
+            "model_name": model,
+        }
+        # 一次账号机会里最多两条请求：401 时刷新凭证，拿新 token 再打一次同号。
+        for attempt in (1, 2):
+            built = wb_trae_chat.build_chat_request(
+                payload, resolved, identity, session_id=session_key,
+                data_dir=ACCOUNTS_DIR)
+            req = urllib.request.Request(built["url"], data=built["body"],
+                                         method="POST",
+                                         headers=built["headers"])
+            try:
+                resp = wb_accounts.urlopen(req, timeout=header_timeout,
+                                           proxy=account.proxy)
+                _apply_stream_idle_timeout(resp, idle_timeout)
+                account.note_success(model=model)
+                return (TraeUpstreamAdapter(resp, built.get("model") or model),
+                        account, built.get("effort"))
+            except urllib.error.HTTPError as exc:
+                if exc.code == 401 and attempt == 1:
+                    if not account.refresh():
+                        last_error = exc
+                        break
+                    identity["access_token"] = account.access_token
+                    identity["auth"] = account.trae_auth
+                    continue
+                if exc.code == 429:
+                    try:
+                        last_429_detail = exc.read(400).decode("utf-8", "replace")
+                    except Exception:
+                        last_429_detail = ""
+                    last_429 = exc
+                    last_error = exc
+                    break
+                if exc.code >= 500:
+                    charge(account, "HTTP %d" % exc.code)
+                    last_error = exc
+                    break
+                raise
+            except Exception as exc:
+                if is_transient(exc):
+                    charge(account, "connection: %s" % exc_detail(exc, 120))
+                    last_error = exc
+                    break
+                raise
+    if last_429 is not None:
+        exc = RateLimited(last_429, last_429_detail,
+                          wait=retry_after_seconds(model, realm))
+        exc.account_uid = last_uid
+        raise exc
+    if last_error is not None:
+        try:
+            last_error.account_uid = last_uid
+        except Exception:
+            pass
+        raise last_error
+    raise RuntimeError(
+        "no usable account for realm '%s': no enabled Trae account is ready%s"
+        % (realm, pool_unavailable_detail(realm, model, provider="trae")))
 
 
 def open_upstream(payload, session_key=None, target_realm=None, prebuilt_body=None):
@@ -18325,6 +18607,12 @@ class Handler(BaseHTTPRequestHandler):
                     for item in wb_qoder.static_models(realm)
                     if isinstance(item, dict)
                 )
+            elif provider == "trae":
+                sources = (
+                    (item.get("id"), wb_trae.model_entry_meta(item))
+                    for item in wb_trae.static_models(realm)
+                    if isinstance(item, dict)
+                )
             else:
                 statics = (list(getattr(wb_catalog, "STATIC_CN_MODELS", []))
                            if realm == "cn"
@@ -18464,6 +18752,10 @@ class Handler(BaseHTTPRequestHandler):
                 "invalid_request_error")
         model = str(payload.get("model") or "").strip() or None
         key_id = str(payload.get("key_id") or "").strip()
+        # 这次 apply 属于哪个提供商：既决定模型表，也决定写进客户端配置的
+        # X-Provider 头（模型 id 可能跨提供商重名，网关只认显式提示）。
+        prov = wb_accounts.provider_filter(
+            payload.get("provider") or self._request_provider())
         models = payload.get("models")
         if not models:
             # Fall back to the gateway's discovered catalog so clients that embed
@@ -18471,9 +18763,8 @@ class Handler(BaseHTTPRequestHandler):
             # model list even when the front-end omitted the field. 目录必须按
             # 这次 apply 的提供商 / 版本取：以前固定用 WorkBuddy，Qoder 的
             # 配置会被写成上一家的模型表。
-            prov = payload.get("provider") or self._request_provider()
             models = self._agents_models(
-                provider=wb_accounts.provider_filter(prov),
+                provider=prov,
                 realm=payload.get("realm") or None)
         if not isinstance(models, list):
             return self._error(400, "models must be a list",
@@ -18502,7 +18793,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             result = wb_agents.integrate(
                 ACCOUNTS_DIR, client_id, base_url, api_key,
-                model=model, models=cleaned_models, key_id=key_id)
+                model=model, models=cleaned_models, key_id=key_id,
+                provider=prov)
         except wb_agents.AgentConfigError as exc:
             return self._error(400, str(exc), "invalid_request_error")
         except Exception as exc:
@@ -18622,6 +18914,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._route_accounts_login_cancel(payload)
         if path == "/accounts/login/pat":
             return self._route_accounts_login_pat(payload)
+        if path == "/accounts/login/trae":
+            return self._route_accounts_login_trae(payload)
+        if path == "/accounts/trae/scan":
+            return self._route_accounts_trae_scan(payload)
+        if path == "/accounts/trae/import":
+            return self._route_accounts_trae_import(payload)
         if path == "/accounts/import/desktop":
             return self._route_accounts_import_desktop(payload)
         if path == "/accounts/refresh":
@@ -19108,6 +19406,66 @@ class Handler(BaseHTTPRequestHandler):
             "accounts": account_views(provider="qoder"),
         })
 
+    def _route_accounts_login_trae(self, payload):
+        """Trae 登录：手动粘贴 JWT（手机/远程部署都可用）。
+
+        本机桌面端登录态走 /accounts/trae/import；这里只处理 token，成功后
+        回该提供商的账号列表，面板不用再拉一次。
+        """
+        token = str(payload.get("token") or payload.get("jwt") or "").strip()
+        if not token:
+            return self._error(400, "token is required", "invalid_request_error")
+        realm = str(payload.get("realm") or CURRENT_REALM or "cn").strip().lower()
+        if realm not in ("intl", "cn"):
+            realm = "cn"
+        api_host = str(payload.get("apiHost") or "").strip()
+        try:
+            account = POOL.add_trae_token(token, realm=realm, api_host=api_host)
+        except wb_trae.TraeError as exc:
+            log("trae token login rejected: %s" % exc, level="WARN", tag="accounts")
+            return self._json(200, {"ok": False, "error": str(exc)})
+        except Exception as exc:
+            log("trae token login failed: %s" % exc, level="WARN", tag="accounts")
+            return self._json(200, {"ok": False, "error": "Trae 登录失败: %s" % exc})
+        log("trae token login: account %s (realm=%s) added"
+            % (account.uid[:8], realm), tag="accounts")
+        return self._json(200, {
+            "ok": True,
+            "account": account.public(),
+            "accounts": account_views(provider="trae"),
+        })
+
+    def _route_accounts_trae_scan(self, payload):
+        """只读扫描本机 Trae / Trae CN 的登录态（不导入、不返回 token）。"""
+        try:
+            candidates = wb_accounts.trae_local_accounts()
+        except Exception as exc:
+            return self._json(200, {"ok": False, "error": str(exc),
+                                    "candidates": []})
+        return self._json(200, {"ok": True, "candidates": candidates,
+                                "paths": {
+                                    "cn": wb_trae.storage_path("cn"),
+                                    "intl": wb_trae.storage_path("intl"),
+                                }})
+
+    def _route_accounts_trae_import(self, payload):
+        realm = str(payload.get("realm") or "cn").strip().lower()
+        if realm not in ("intl", "cn"):
+            realm = "cn"
+        try:
+            account = POOL.add_trae_desktop(realm=realm)
+        except Exception as exc:
+            log("trae desktop import failed: %s" % exc, level="WARN",
+                tag="accounts")
+            return self._json(200, {"ok": False, "error": str(exc)})
+        log("trae desktop import: account %s (realm=%s) added"
+            % (account.uid[:8], realm), tag="accounts")
+        return self._json(200, {
+            "ok": True,
+            "account": account.public(),
+            "accounts": account_views(provider="trae"),
+        })
+
     def _route_accounts_login_cancel(self, payload):
         state = payload.get("state") or ""
         return self._json(200, {"cancelled": POOL.cancel_login(state)})
@@ -19229,6 +19587,8 @@ class Handler(BaseHTTPRequestHandler):
         account = POOL.get(uid)
         if not account:
             return self._error(404, "no such account")
+        if account.provider == "trae":
+            return self._trae_account_test(account, payload)
         if account.provider != wb_accounts.DEFAULT_PROVIDER:
             return self._qoder_account_test(account, payload)
         test_model = payload.get("model") or "deepseek-v4.1-flash"
@@ -19296,6 +19656,75 @@ class Handler(BaseHTTPRequestHandler):
                 "error": str(exc),
                 "elapsed_ms": wall_ms,
             })
+
+    def _trae_account_test(self, account, payload):
+        """Trae 账号的连接测试：真发一条最小聊天请求。
+
+        默认模型取该区目录第一个（国内版是 GLM-5.2），也可以在 payload 里
+        指定。返回形状与 WorkBuddy / Qoder 分支一致。
+        """
+        realm = account.realm
+        catalog = wb_trae.static_models(realm)
+        test_model = str(payload.get("model") or "").strip() or \
+            (catalog[0].get("id") if catalog else "")
+        if not test_model:
+            return self._json(200, {"ok": False, "uid": account.uid,
+                                    "status": 400,
+                                    "error": "Trae 目录为空，无法选择测试模型",
+                                    "elapsed_ms": 0})
+        auth = getattr(account, "trae_auth", None) or {}
+        t0 = time.time()
+        try:
+            resolved = wb_trae_chat.resolve_model_config(
+                realm, test_model, access_token=account.access_token,
+                auth=auth, proxy=account.proxy)
+            built = wb_trae_chat.build_chat_request(
+                {"model": test_model,
+                 "messages": [{"role": "user", "content": "hi"}],
+                 "stream": False},
+                resolved,
+                {"access_token": account.access_token, "auth": auth,
+                 "realm": realm, "api_host": auth.get("apiHost") or ""},
+                session_id="account-test")
+            req = urllib.request.Request(built["url"], data=built["body"],
+                                         method="POST",
+                                         headers=built["headers"])
+            with wb_accounts.urlopen(req, timeout=30,
+                                     proxy=account.proxy) as resp:
+                chat_obj = aggregate_stream(
+                    TraeUpstreamAdapter(resp, test_model), test_model, None)
+                wall_ms = int((time.time() - t0) * 1000)
+                choices = chat_obj.get("choices") or []
+                msg = (choices[0].get("message") or {}) if choices else {}
+                reply_text = (msg.get("content") or msg.get("reasoning_content")
+                              or "OK").strip()
+                if len(reply_text) > 80:
+                    reply_text = reply_text[:77] + "..."
+                account.note_success(model=test_model)
+                log("account test: uid=%s model=%s wall=%dms ok=True"
+                    % (account.uid[:8], test_model, wall_ms), tag="accounts")
+                return self._json(200, {
+                    "ok": True,
+                    "uid": account.uid,
+                    "model": test_model,
+                    "elapsed_ms": wall_ms,
+                    "reply": reply_text,
+                })
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read(300).decode("utf-8", "replace")
+            except Exception:
+                detail = str(exc)
+            return self._json(200, {
+                "ok": False, "uid": account.uid, "model": test_model,
+                "status": exc.code,
+                "error": "HTTP %d: %s" % (exc.code, detail[:200]),
+                "elapsed_ms": int((time.time() - t0) * 1000)})
+        except Exception as exc:
+            return self._json(200, {
+                "ok": False, "uid": account.uid, "model": test_model,
+                "status": 0, "error": str(exc)[:300],
+                "elapsed_ms": int((time.time() - t0) * 1000)})
 
     def _qoder_account_test(self, account, payload):
         """Qoder 账号的连接测试：真发一条最小聊天请求。
@@ -19528,6 +19957,7 @@ class Handler(BaseHTTPRequestHandler):
         provider = wb_accounts.provider_filter(provider) \
             or wb_accounts.DEFAULT_PROVIDER
         qoder = provider == "qoder"
+        non_wb = provider != wb_accounts.DEFAULT_PROVIDER
         # The gateway is stateless: it keeps no store of previous responses,
         # so it cannot replay a prior turn. Silently ignoring the field would
         # answer a follow-up as if it were a fresh conversation - the client
@@ -19550,10 +19980,10 @@ class Handler(BaseHTTPRequestHandler):
         all_tools = list(all_tools) if isinstance(all_tools, list) else []
         all_tools.extend(additional_tools_from_input(payload))
         custom_names = custom_tool_names(all_tools)
-        # Qoder 没有网关侧代跑网路工具的回路（follow_up_with_tool_results 固定
-        # 回 WorkBuddy 上游），所以它的请求不安装 _web_tools 标记，客户端自己
-        # 宣告的 web 工具也按普通工具透传（wb_qoder_chat 只留 function 形状）。
-        chat_req = responses_to_chat(payload, web_tools=not qoder)
+        # Qoder / Trae 没有网关侧代跑网路工具的回路（follow_up_with_tool_results
+        # 固定回 WorkBuddy 上游），所以它们的请求不安装 _web_tools 标记，客户端
+        # 自己宣告的 web 工具也按普通工具透传（适配器只留 function 形状）。
+        chat_req = responses_to_chat(payload, web_tools=not non_wb)
         ns_map = chat_req.pop("_namespace_map", None)
         # Echo these back on the response object; see chat_to_response.
         request_meta = {
@@ -19574,7 +20004,7 @@ class Handler(BaseHTTPRequestHandler):
         )
         try:
             req_realm = self._request_realm() or CURRENT_REALM
-            if not qoder:
+            if not non_wb:
                 # WorkBuddy 专属守卫：跨区模型与封禁清单只对 WorkBuddy 目录
                 # 有意义。按 key 的模型白名单是网关自己的访问控制，两边都查。
                 blocked = self._cross_realm_error(chat_req.get("model"), req_realm)
@@ -19588,6 +20018,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(400, key_blocked, "invalid_request_error")
             if qoder:
                 upstream, account, effort = open_qoder_upstream(
+                    chat_req, session_key=session_key, target_realm=req_realm)
+            elif provider == "trae":
+                upstream, account, effort = open_trae_upstream(
                     chat_req, session_key=session_key, target_realm=req_realm)
             else:
                 upstream, account, effort = open_upstream(
@@ -19782,6 +20215,7 @@ class Handler(BaseHTTPRequestHandler):
         provider = wb_accounts.provider_filter(provider) \
             or wb_accounts.DEFAULT_PROVIDER
         qoder = provider == "qoder"
+        non_wb = provider != wb_accounts.DEFAULT_PROVIDER
         try:
             chat_req = messages_to_chat(payload)
         except ValueError as exc:
@@ -19800,7 +20234,7 @@ class Handler(BaseHTTPRequestHandler):
                chat_req.get("reasoning_effort"), len(chat_req.get("tools") or [])))
         try:
             req_realm = self._request_realm() or CURRENT_REALM
-            if not qoder:
+            if not non_wb:
                 # WorkBuddy 专属守卫（见 _handle_responses 的同款说明）。
                 blocked = self._cross_realm_error(chat_req.get("model"), req_realm)
                 if blocked:
@@ -19813,6 +20247,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._anthropic_error(400, key_blocked, "invalid_request_error")
             if qoder:
                 upstream, account, effort = open_qoder_upstream(
+                    chat_req, session_key=session_key, target_realm=req_realm)
+            elif provider == "trae":
+                upstream, account, effort = open_trae_upstream(
                     chat_req, session_key=session_key, target_realm=req_realm)
             else:
                 upstream, account, effort = open_upstream(
@@ -20076,6 +20513,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_responses(payload, provider=provider)
         if provider == "qoder":
             return self._dispatch_qoder_chat_post(payload)
+        if provider == "trae":
+            return self._dispatch_trae_chat_post(payload)
         # Diagnostics: what the client actually asked for, and what we forward.
         # Only the knobs that change behaviour are logged - never message text.
         forwarded = build_upstream_body(payload)
@@ -20200,6 +20639,63 @@ class Handler(BaseHTTPRequestHandler):
             if status == 503:
                 return self._error(503, message +
                                    " - add or enable a Qoder account at the "
+                                   "dashboard (/)")
+            return self._error(502, "upstream unreachable: %s" % exc)
+        with upstream:
+            if want_stream:
+                return self._chat_stream_response(
+                    upstream, model, fp, account, t_start, effort=effort)
+            return self._chat_nonstream_response(
+                upstream, model, fp, account, t_start, effort=effort)
+
+    def _dispatch_trae_chat_post(self, payload):
+        """Trae 版 /v1/chat/completions（含 /v1/completions 别名）。
+
+        下游响应管线与 WorkBuddy / Qoder 完全共用：适配器把 Trae 的命名事件
+        翻成 OpenAI chunk。Trae 没有跨区/封禁概念，那两道守卫跳过；按 key 的
+        模型白名单照常生效。
+        """
+        chat_req = qoder_chat_request(payload)
+        session_key = extract_session_key(self.headers, chat_req)
+        fp = prompt_fingerprint(chat_req.get("messages"))
+        want_stream = bool(chat_req.get("stream"))
+        model = chat_req.get("model") or "unknown"
+        t_start = time.time()
+        log("chat: provider=trae model=%s stream=%s msgs=%d"
+            % (model, want_stream, len(chat_req.get("messages") or [])))
+        try:
+            key_blocked = self._key_model_error(model)
+            if key_blocked:
+                return self._error(400, key_blocked, "invalid_request_error")
+            req_realm = self._request_realm() or CURRENT_REALM
+            upstream, account, effort = open_trae_upstream(
+                chat_req, session_key=session_key, target_realm=req_realm)
+        except RateLimited as exc:
+            record_error(model, 429, exc.detail[:200],
+                         elapsed_ms=int((time.time() - t_start) * 1000),
+                         account=getattr(exc, "account_uid", None),
+                         key=self._key_id(), provider="trae")
+            return self._rate_limited(exc)
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read(600).decode("utf-8", "replace")
+            except Exception:
+                detail = str(exc)
+            record_error(model, exc.code, detail,
+                         elapsed_ms=int((time.time() - t_start) * 1000),
+                         account=getattr(exc, "account_uid", None),
+                         key=self._key_id(), provider="trae")
+            return self._error(exc.code, "upstream %s: %s" % (exc.code, detail))
+        except Exception as exc:
+            message = str(exc)
+            status = 503 if message.startswith("no usable account") else 502
+            record_error(model, status, message,
+                         elapsed_ms=int((time.time() - t_start) * 1000),
+                         account=getattr(exc, "account_uid", None),
+                         key=self._key_id(), provider="trae")
+            if status == 503:
+                return self._error(503, message +
+                                   " - add or enable a Trae account at the "
                                    "dashboard (/)")
             return self._error(502, "upstream unreachable: %s" % exc)
         with upstream:

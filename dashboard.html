@@ -330,12 +330,17 @@ a:hover{text-decoration:underline}
 .provider-switch button:hover{color:var(--fg);background:var(--panel)}
 .provider-switch button.active{background:var(--panel);color:var(--accent);border-color:var(--accent);box-shadow:var(--shadow-sm)}
 .provider-switch button.active#providerBtnQoder{color:var(--think);border-color:var(--think)}
-/* Qoder 视图下收起 WorkBuddy 专属控件（签到/活跃/桌面扫描/出站身份…）。集中在
-   这一条规则里管，免得给每个按钮已有的按视图显隐逻辑（updateUI 里的 inline
+.provider-switch button.active#providerBtnTrae{color:var(--accent);border-color:var(--accent)}
+/* 非 WorkBuddy 视图统一收起 WorkBuddy 专属控件（签到/活跃/桌面扫描/出站身份…）。
+   集中在这一条规则里管，免得给每个按钮已有的按视图显隐逻辑（updateUI 里的 inline
    display）再各补一份 provider 条件。 */
-body.provider-qoder .wb-only{display:none !important}
-/* Qoder 视图专属区块：WorkBuddy 视图下收起（与 .wb-only 对称）。 */
+body:not(.provider-workbuddy) .wb-only{display:none !important}
+/* Qoder 视图专属区块：其它视图下收起（与 .wb-only 对称）。 */
 body:not(.provider-qoder) .qoder-only{display:none !important}
+/* Trae 视图专属区块。 */
+body:not(.provider-trae) .trae-only{display:none !important}
+/* Trae 没有可刷新的积分余额：这个按钮留在页面上只会报错。 */
+body.provider-trae #btnFetchCredits{display:none !important}
 
 .realm-card{
   background:var(--panel);border:1px solid var(--line);border-radius:12px;
@@ -3302,6 +3307,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     <div class="provider-switch" id="providerSwitch" role="group" aria-label="提供商" data-no-i18n>
       <button type="button" id="providerBtnWorkbuddy" class="active" onclick="switchProvider('workbuddy')" aria-pressed="true">WorkBuddy</button>
       <button type="button" id="providerBtnQoder" onclick="switchProvider('qoder')" aria-pressed="false">Qoder</button>
+      <button type="button" id="providerBtnTrae" onclick="switchProvider('trae')" aria-pressed="false">Trae</button>
     </div>
     <nav class="main-nav">
       <button class="main-nav-btn active" id="btnNavGateway" onclick="switchMainTab('gateway')">
@@ -3582,7 +3588,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     <button class="sec" onclick="exportAccounts(this)">导出</button>
     </div>
     <div class="tb-group">
-    <button class="sec" onclick="fetchCredits(this)">一键刷新积分</button>
+    <button class="sec" id="btnFetchCredits" onclick="fetchCredits(this)">一键刷新积分</button>
     <button class="sec" onclick="refreshAccounts(this)" title="逐个刷新所有账号的上游访问凭证（相当于对每个账号点一次「刷新凭证」）">一键刷新凭证</button>
     </div>
     <div class="tb-group">
@@ -3699,7 +3705,38 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     <div id="qoderQuotaList" class="table-wrap"></div>
   </section>
 
-  <!-- 国际版每日活跃福利（WorkBuddy 专属区块） -->
+  <!-- Trae 账号视图：Trae 没有签到/成长任务体系，也没有公开的 per-model
+       倍率；「任务与福利」页在 Trae 模式下展示账号状态与模型目录规模。 -->
+  <section id="sectionTraeOverview" class="trae-only">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+      <div>
+        <h2 style="margin:0">Trae 账号与模型目录</h2>
+        <div style="font-size:12px;color:var(--dim)">Trae 按账号额度计费，没有签到/成长任务体系；这里汇总当前版本的账号与可用模型。</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="primary" id="btnTraeRefresh" onclick="loadTraeOverview(true, this)">刷新目录</button>
+      </div>
+    </div>
+    <div class="cards" style="margin-bottom:16px;grid-template-columns:repeat(auto-fit,minmax(185px,1fr))">
+      <div class="card accent2">
+        <div class="k">账号</div>
+        <div class="v" id="traeAccountCount" style="font-size:20px">-</div>
+      </div>
+      <div class="card accent">
+        <div class="k">当前版本</div>
+        <div class="v" id="traeRealmLabel" style="color:var(--accent);font-size:18px">-</div>
+      </div>
+      <div class="card">
+        <div class="k">可用模型</div>
+        <div class="v" id="traeModelCount">-</div>
+      </div>
+      <div class="card warn">
+        <div class="k">最近到期</div>
+        <div class="v" id="traeExpiry" style="color:var(--warn);font-size:17px">-</div>
+      </div>
+    </div>
+    <div id="traeAccountList" class="table-wrap"></div>
+  </section>
   <section id="sectionIntlTasks" class="wb-only" style="margin-bottom:24px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
       <div>
@@ -3808,6 +3845,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
         <option value="all">全部提供商</option>
         <option value="workbuddy">WorkBuddy</option>
         <option value="qoder">Qoder</option>
+        <option value="trae">Trae</option>
       </select>
       <div class="seg" id="rangeSeg">
         <button data-range="today" class="on">今日</button>
@@ -4775,6 +4813,51 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
   </div>
 </div>
 
+<div class="modal-mask" id="traeLoginModal">
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-hd">
+      <h2>添加 Trae 账号</h2>
+      <button class="modal-x" onclick="closeTraeLogin()" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-bd">
+      <div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:16px">
+        <div style="font-size:12px;color:var(--dim);margin-bottom:8px;font-weight:600">选择要登录的版本：</div>
+        <div style="display:flex;gap:18px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="radio" name="traeLoginRealm" value="cn" id="traeRadioCn">
+            <span><b>国内版</b> (trae.cn)</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="radio" name="traeLoginRealm" value="intl" id="traeRadioIntl">
+            <span><b>国际版</b> (trae.ai)</span>
+          </label>
+        </div>
+      </div>
+      <div style="border:1px dashed var(--line);border-radius:10px;padding:12px 14px;margin-bottom:16px">
+        <div style="font-size:12px;color:var(--dim);margin-bottom:8px;font-weight:600">方式一：读取本机 Trae 客户端登录态</div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <button class="sec" id="btnTraeImportDesktop" onclick="importTraeDesktop(this)">读取本机登录态</button>
+          <span class="hint" style="margin:0">需要该版本的 Trae 客户端已登录（读取 storage.json）。</span>
+        </div>
+      </div>
+      <div style="border-top:1px dashed var(--line);padding-top:14px">
+        <div style="font-size:12px;color:var(--dim);margin-bottom:8px;font-weight:600">方式二：手动粘贴登录令牌（JWT）</div>
+        <textarea id="traeTokenInput" rows="3" placeholder="粘贴 Trae 的 Cloud-IDE-JWT（客户端登录态里的 token 字段）"
+               style="width:100%;background:var(--panel2);border:1px solid var(--line);
+                      border-radius:8px;padding:9px 12px;color:var(--fg);font:inherit;resize:vertical"></textarea>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+          <button class="sec" id="btnTraeTokenLogin" onclick="submitTraeToken(this)">用令牌登录</button>
+          <span class="hint" style="margin:0">令牌在服务端校验后入池；过期后需要重新粘贴。</span>
+        </div>
+      </div>
+      <p class="hint" id="traeLoginStatus" style="font-weight:500"></p>
+    </div>
+    <div class="modal-ft">
+      <button class="sec" onclick="closeTraeLogin()">关闭</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-mask" id="desktopScanModal">
   <div class="modal" role="dialog" aria-modal="true" style="width:min(720px,100%)">
     <div class="modal-hd">
@@ -4976,8 +5059,10 @@ function closeLogin(){
 }
 
 function openLoginModal(){
-  // Qoder 走自己的弹窗（国际版设备码 + 两区 PAT）；WorkBuddy 保持原 OAuth 弹窗。
+  // Qoder / Trae 各有自己的弹窗（Qoder：设备码 + PAT；Trae：本机登录态 + JWT）；
+  // WorkBuddy 保持原 OAuth 弹窗。
   if(currentProvider() === 'qoder'){ openQoderLogin(); return; }
+  if(currentProvider() === 'trae'){ openTraeLogin(); return; }
   openLogin();
   const isCn = (window.VIEW_REALM === "cn");
   const rCn = document.getElementById("radioCn");
@@ -5221,6 +5306,161 @@ async function submitQoderPat(btn){
 }
 
 
+/* ---- Trae 登录（本机客户端登录态导入 + 手动 JWT） ----
+   Trae 的桌面端登录态是 tc 加密信封，服务端负责解密；浏览器这边只触发
+   扫描/导入，凭证从不回传。 */
+function traeLoginRealm(){
+  const checked = document.querySelector('input[name="traeLoginRealm"]:checked');
+  return checked ? checked.value : (window.VIEW_REALM === "cn" ? "cn" : "intl");
+}
+
+function setTraeLoginStatus(text, kind){
+  const el = document.getElementById("traeLoginStatus");
+  if(!el) return;
+  el.textContent = text || "";
+  el.style.color = kind === "ok" ? "var(--accent2)" : (kind === "bad" ? "var(--bad)" : (kind === "warn" ? "var(--warn)" : "var(--dim)"));
+}
+
+function openTraeLogin(){
+  const m = document.getElementById("traeLoginModal");
+  if(m) m.classList.add("show");
+  const isCn = (window.VIEW_REALM === "cn");
+  const rCn = document.getElementById("traeRadioCn");
+  const rIntl = document.getElementById("traeRadioIntl");
+  if(rCn) rCn.checked = isCn;
+  if(rIntl) rIntl.checked = !isCn;
+  const token = document.getElementById("traeTokenInput");
+  if(token) token.value = "";
+  setTraeLoginStatus("国内版与国际版各读各的本机登录态；手动令牌需要与所选版本一致。");
+}
+
+function closeTraeLogin(){
+  const m = document.getElementById("traeLoginModal");
+  if(m) m.classList.remove("show");
+}
+
+async function importTraeDesktop(btn){
+  const realm = traeLoginRealm();
+  if(btn){ btn.disabled = true; btn.textContent = "读取中..."; }
+  setTraeLoginStatus("正在读取本机 Trae 登录态…");
+  try{
+    const r = await postJSON("/accounts/trae/import", {realm: realm});
+    if(r && r.ok){
+      const who = (r.account && (r.account.nickname || r.account.uid || "")) || "";
+      setTraeLoginStatus("导入成功：" + who + " 已加入账号池", "ok");
+      toast('Trae 账号已添加', 'ok');
+      await loadAccounts();
+      await refresh();
+      setTimeout(closeTraeLogin, 1200);
+    }else{
+      setTraeLoginStatus("导入失败: " + ((r && r.error) || "本机没有找到登录态"), "bad");
+    }
+  }catch(e){
+    setTraeLoginStatus("请求失败: " + e.message, "bad");
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = "读取本机登录态"; }
+  }
+}
+
+async function submitTraeToken(btn){
+  const input = document.getElementById("traeTokenInput");
+  const token = ((input && input.value) || "").trim();
+  if(!token){ setTraeLoginStatus("请先粘贴 JWT。", "warn"); return; }
+  const realm = traeLoginRealm();
+  if(btn){ btn.disabled = true; btn.textContent = "登录中..."; }
+  setTraeLoginStatus("正在用令牌登录…");
+  try{
+    const r = await postJSON("/accounts/login/trae", {token: token, realm: realm});
+    if(r && r.ok){
+      const who = (r.account && (r.account.nickname || r.account.uid || "")) || "";
+      setTraeLoginStatus("登录成功：" + who + " 已加入账号池", "ok");
+      if(input) input.value = "";
+      toast('Trae 账号已添加', 'ok');
+      await loadAccounts();
+      await refresh();
+      setTimeout(closeTraeLogin, 1200);
+    }else{
+      setTraeLoginStatus("登录失败: " + ((r && r.error) || "未知错误"), "bad");
+    }
+  }catch(e){
+    setTraeLoginStatus("请求失败: " + e.message, "bad");
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = "用令牌登录"; }
+  }
+}
+
+/* ---- Trae 账号 / 目录总览（任务与福利页在 Trae 模式下用它） ---- */
+function fmtTraeExpiry(acc){
+  if(!acc) return "-";
+  if(acc.expiresIn) return acc.expiresIn;
+  const exp = Number(acc.expiresAt || 0);
+  if(!exp) return "长效";
+  const d = new Date(exp * 1000);
+  return d.toLocaleString();
+}
+
+function renderTraeOverview(){
+  const accounts = (window.ACCOUNTS || []).filter(a => (a.provider || 'trae') === 'trae');
+  const elCount = document.getElementById('traeAccountCount');
+  if(elCount) elCount.textContent = String(accounts.length);
+  const realm = window.VIEW_REALM === 'cn' ? 'cn' : 'intl';
+  const elRealm = document.getElementById('traeRealmLabel');
+  if(elRealm) elRealm.textContent = realm === 'cn' ? '国内版' : '国际版';
+  const elModels = document.getElementById('traeModelCount');
+  if(elModels) elModels.textContent = String((window.MODELS_DATA || []).length || 0);
+  // 最近到期的账号：只提示到期时间，不推测额度（Trae 没有公开的额度接口）。
+  let soonest = null;
+  accounts.forEach(a => {
+    const exp = Number(a.expiresAt || 0);
+    if(exp > 0 && (!soonest || exp < Number(soonest.expiresAt || 0))) soonest = a;
+  });
+  const elExp = document.getElementById('traeExpiry');
+  if(elExp) elExp.textContent = soonest ? fmtTraeExpiry(soonest) : '长效 / 未知';
+  const wrap = document.getElementById('traeAccountList');
+  if(!wrap) return;
+  if(!accounts.length){
+    wrap.innerHTML = '<div class="empty" style="padding:28px 12px;text-align:center;color:var(--dim)">'
+      + '当前版本还没有 Trae 账号。点右上角「添加」或网关页的「添加账号」导入。</div>';
+    return;
+  }
+  wrap.innerHTML = '<table class="tbl"><thead><tr>'
+    + '<th>账号</th><th>UID</th><th>版本</th><th>到期</th><th>状态</th></tr></thead><tbody>'
+    + accounts.map(a => {
+        const bad = !!a.lastError;
+        const status = bad ? ('异常：' + esc(a.lastError))
+          : (a.enabled === false ? '已停用' : (a.inCooldown ? '冷却中' : '可用'));
+        const cls = bad ? 'bad' : (a.enabled === false ? 'off' : (a.inCooldown ? 'warn' : 'ok'));
+        return '<tr>'
+          + '<td>' + esc(a.nickname || (a.uid || '').slice(0, 8)) + '</td>'
+          + '<td style="font-family:var(--mono);font-size:12px;color:var(--dim)">' + esc((a.uid || '').slice(0, 12)) + '</td>'
+          + '<td>' + (a.realm === 'cn' ? '国内版' : '国际版') + '</td>'
+          + '<td style="font-size:12px;color:var(--dim)">' + esc(fmtTraeExpiry(a)) + '</td>'
+          + '<td><span class="badge ' + cls + '">' + esc(status) + '</span></td>'
+          + '</tr>';
+      }).join('')
+    + '</tbody></table>';
+}
+
+async function loadTraeOverview(force, btn){
+  if(btn){ btn.disabled = true; btn.textContent = '刷新中...'; }
+  try{
+    if(force){
+      const realm = window.VIEW_REALM === 'cn' ? 'cn' : 'intl';
+      const r = await postJSON('/catalog/refresh', {realm: realm, provider: 'trae'});
+      if(r && r.ok) toast('Trae 模型清单：' + (r.msg || '已更新'), 'ok');
+      else if(r && r.cooldown) toast('Trae 模型清单：' + (r.msg || '刷新太频繁'), 'warn');
+      else toast('Trae 模型清单刷新失败：' + ((r && r.msg) || '未知原因'), 'warn');
+    }
+    await loadAccounts();
+    await loadModels();
+    renderTraeOverview();
+  }catch(e){
+    toast('Trae 目录刷新失败：' + e.message, 'bad');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '刷新目录'; }
+  }
+}
+
 window.ACTIVE_GATEWAY_REALM = "intl";
 window.VIEW_REALM = "intl";
 window.REALM_FILTER = "all";
@@ -5231,13 +5471,15 @@ window.ACCOUNTS = [];
 // 显式提示（见 wb_proxy._request_provider），所以看板停在 Qoder 页时，普通
 // WorkBuddy 客户端流量一点不受影响。
 window.PROVIDER = "workbuddy";
-window.PROVIDER_REALMS = {workbuddy: "intl", qoder: "intl"};
+window.PROVIDER_REALMS = {workbuddy: "intl", qoder: "intl", trae: "cn"};
 
+const PROVIDER_NAMES = {workbuddy: "WorkBuddy", qoder: "Qoder", trae: "Trae"};
 function currentProvider(){
-  return window.PROVIDER === "qoder" ? "qoder" : "workbuddy";
+  const p = String(window.PROVIDER || "workbuddy").toLowerCase();
+  return (p === "qoder" || p === "trae") ? p : "workbuddy";
 }
 function providerName(p){
-  return (p || currentProvider()) === "qoder" ? "Qoder" : "WorkBuddy";
+  return PROVIDER_NAMES[p || currentProvider()] || "WorkBuddy";
 }
 // 给 URL 追加 provider=：面板按提供商取数的请求全走它（不带 ? 时自己补）。
 function withProvider(url){
@@ -5248,20 +5490,25 @@ function withProvider(url){
 
 const GATEWAY_TITLE_WB = "网关与账号";
 const GATEWAY_TITLE_QODER = "Qoder 网关与账号";
+const GATEWAY_TITLE_TRAE = "Trae 网关与账号";
 const GATEWAY_DESC_WB = "管理账号池与代理出口，查看当日调用量、估算花费、成功率、最近请求与网关模型清单。";
 const GATEWAY_DESC_QODER = "管理 Qoder 账号池与代理出口，查看当日调用量、成功率、最近请求与网关模型清单。";
+const GATEWAY_DESC_TRAE = "管理 Trae 账号池与代理出口，查看当日调用量、成功率、最近请求与网关模型清单。";
 // 「任务与福利」页的副标题与标题之外的说明；Qoder 模式下整页内容换成额度视图，
 // 副标题必须跟着换，否则页面在说一件它没做的事。
 const TASKS_DESC_WB = "每日活跃打卡、Buddy 加油站、成长任务与福利积分总览。";
 const TASKS_DESC_QODER = "Qoder 账号的套餐与加油包额度总览：剩余、已用与到期。";
-// 模型清单页的说明：Qoder 的模型目录没有倍率 / 折扣（按账号额度计费），
+const TASKS_DESC_TRAE = "Trae 账号状态与模型目录总览（Trae 按账号额度计费，没有签到体系）。";
+// 模型清单页的说明：Qoder / Trae 的模型目录没有倍率 / 折扣（按账号额度计费），
 // 照搬 WorkBuddy 的「及在售倍率」会指向一列并不存在的数字。
 const MODELS_DESC_WB = "展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率";
 const MODELS_DESC_QODER = "展示 Qoder 的官方对话大模型、上下文容量、推理/视觉能力、思考控制与默认采样参数；倍率为 Credits 消耗参考系数";
-// 两个版本卡片上展示的上游主机名，跟着提供商换。
+const MODELS_DESC_TRAE = "展示 Trae 的官方对话大模型、上下文容量、推理/视觉能力与默认采样参数；Trae 按账号额度计费，没有 per-model 倍率";
+// 三个版本卡片上展示的上游主机名，跟着提供商换。
 const PROVIDER_HOSTS = {
   workbuddy: {intl: "www.workbuddy.ai", cn: "copilot.tencent.com"},
   qoder: {intl: "qoder.com", cn: "qoder.com.cn"},
+  trae: {intl: "www.trae.ai", cn: "www.trae.cn"},
 };
 
 // 提供商相关的界面同步（头部切换器、品牌名、页头文案、版本卡片主机名、
@@ -5272,26 +5519,45 @@ function syncProviderChrome(force){
   const p = currentProvider();
   if(!force && window.__PROVIDER_CHROME__ === p) return;
   window.__PROVIDER_CHROME__ = p;
+  document.body.classList.toggle("provider-workbuddy", p === "workbuddy");
   document.body.classList.toggle("provider-qoder", p === "qoder");
+  document.body.classList.toggle("provider-trae", p === "trae");
   const brand = document.getElementById("brandTitle");
   if(brand) brand.textContent = providerName(p) + " 网关";
   const gt = document.getElementById("gatewayPageTitle");
-  if(gt) gt.textContent = p === "qoder" ? GATEWAY_TITLE_QODER : GATEWAY_TITLE_WB;
+  if(gt){
+    gt.textContent = p === "qoder" ? GATEWAY_TITLE_QODER
+                   : p === "trae" ? GATEWAY_TITLE_TRAE : GATEWAY_TITLE_WB;
+  }
   const gd = document.getElementById("gatewayPageDesc");
-  if(gd) gd.textContent = p === "qoder" ? GATEWAY_DESC_QODER : GATEWAY_DESC_WB;
+  if(gd){
+    gd.textContent = p === "qoder" ? GATEWAY_DESC_QODER
+                   : p === "trae" ? GATEWAY_DESC_TRAE : GATEWAY_DESC_WB;
+  }
   const td = document.getElementById("pageTasksDesc");
-  if(td) td.textContent = p === "qoder" ? TASKS_DESC_QODER : TASKS_DESC_WB;
+  if(td){
+    td.textContent = p === "qoder" ? TASKS_DESC_QODER
+                   : p === "trae" ? TASKS_DESC_TRAE : TASKS_DESC_WB;
+  }
   const md = document.getElementById("modelsTableDesc");
-  if(md) md.textContent = p === "qoder" ? MODELS_DESC_QODER : MODELS_DESC_WB;
+  if(md){
+    md.textContent = p === "qoder" ? MODELS_DESC_QODER
+                   : p === "trae" ? MODELS_DESC_TRAE : MODELS_DESC_WB;
+  }
   const btnWb = document.getElementById("providerBtnWorkbuddy");
   if(btnWb){
-    btnWb.classList.toggle("active", p !== "qoder");
-    btnWb.setAttribute("aria-pressed", p !== "qoder" ? "true" : "false");
+    btnWb.classList.toggle("active", p === "workbuddy");
+    btnWb.setAttribute("aria-pressed", p === "workbuddy" ? "true" : "false");
   }
   const btnQ = document.getElementById("providerBtnQoder");
   if(btnQ){
     btnQ.classList.toggle("active", p === "qoder");
     btnQ.setAttribute("aria-pressed", p === "qoder" ? "true" : "false");
+  }
+  const btnT = document.getElementById("providerBtnTrae");
+  if(btnT){
+    btnT.classList.toggle("active", p === "trae");
+    btnT.setAttribute("aria-pressed", p === "trae" ? "true" : "false");
   }
   const hosts = PROVIDER_HOSTS[p] || PROVIDER_HOSTS.workbuddy;
   const hIntl = document.getElementById("tabIntlHost");
@@ -5341,7 +5607,7 @@ async function switchProvider(p){
   renderModelsLoading();
   try{
     const res = await postJSON("/realm", {provider: p});
-    window.PROVIDER = (res.provider === "qoder" || res.provider === "workbuddy") ? res.provider : p;
+    window.PROVIDER = (res.provider === "qoder" || res.provider === "trae" || res.provider === "workbuddy") ? res.provider : p;
     if(res.realms && typeof res.realms === "object") window.PROVIDER_REALMS = res.realms;
     if(res.current) window.ACTIVE_GATEWAY_REALM = res.current;
     window.VIEW_REALM = window.ACTIVE_GATEWAY_REALM;
@@ -5372,6 +5638,7 @@ async function switchProvider(p){
       loadAnalyticsMatrix();
     }
     if(currentMainTab === 'tasks' && currentProvider() === 'qoder'){ loadQoderQuota(); }
+    if(currentMainTab === 'tasks' && currentProvider() === 'trae'){ renderTraeOverview(); }
     // 已配置过的客户端：内嵌的模型表也换到当前提供商（OpenCode 等把模型
     // 写死在配置文件里，不重应用就会一直留着上一家的模型）。
     await loadAgents();
@@ -5418,7 +5685,9 @@ function updateUI(){
   // 最近请求、模型清单），标出来免得把国际版的数字看成全局的。用 <em> 承载：
   // 侧栏导航由 h2 生成时会剥掉 <em>，所以标签不会串进导航项。Qoder 视图再带上
   // 提供商前缀，和 WorkBuddy 的同名区块一眼区分。
-  const sectionRealm = (currentProvider() === 'qoder' ? "（Qoder · " : "（")
+  const sectionProvider = (currentProvider() === 'qoder' ? "Qoder · "
+                          : currentProvider() === 'trae' ? "Trae · " : "");
+  const sectionRealm = "（" + sectionProvider
                      + (isIntlView ? "国际版" : "国内版") + "）";
   ["disabledRealmTag", "recentRealmTag", "modelsRealmTag"].forEach(function(id){
     const el = document.getElementById(id);
@@ -5583,7 +5852,7 @@ async function refreshActiveRealm(){
     const r = await getJSON("/realm");
     if(r && r.current) window.ACTIVE_GATEWAY_REALM = r.current;
     if(r && r.realms && typeof r.realms === "object") window.PROVIDER_REALMS = r.realms;
-    if(r && (r.provider === "qoder" || r.provider === "workbuddy")) window.PROVIDER = r.provider;
+    if(r && (r.provider === "qoder" || r.provider === "trae" || r.provider === "workbuddy")) window.PROVIDER = r.provider;
   } catch(e){}
 }
 
@@ -5599,7 +5868,7 @@ async function initRealm(){
   // ?provider= 只在本次会话里钉住看板视图（书签/对比用），**不**改服务端状态；
   // 刷新后仍然跟服务端记着的值走。
   const provFromUrl = new URLSearchParams(window.location.search).get('provider');
-  if(provFromUrl === 'qoder' || provFromUrl === 'workbuddy') window.PROVIDER = provFromUrl;
+  if(provFromUrl === 'qoder' || provFromUrl === 'trae' || provFromUrl === 'workbuddy') window.PROVIDER = provFromUrl;
   const limitFromUrl = new URLSearchParams(window.location.search).get('limit');
   if(limitFromUrl && [10, 20, 50, 100].includes(parseInt(limitFromUrl, 10))) RECENT_LIMIT = parseInt(limitFromUrl, 10);
   window.updateUI();
@@ -5611,7 +5880,7 @@ async function refreshModelCatalog(btn){
   // （服务端会挑该版本自己的账号发请求）。Qoder 由面板显式点名 provider。
   const realm = window.VIEW_REALM === 'cn' ? 'cn' : 'intl';
   const provider = currentProvider();
-  const label = (provider === 'qoder' ? 'Qoder ' : '') + (realm === 'cn' ? '国内版' : '国际版');
+  const label = (provider === 'qoder' ? 'Qoder ' : (provider === 'trae' ? 'Trae ' : '')) + (realm === 'cn' ? '国内版' : '国际版');
   if(btn) btn.disabled = true;
   const prevText = btn ? btn.textContent : '';
   if(btn) btn.textContent = '刷新中...';
@@ -5683,6 +5952,16 @@ const CATALOG_SOURCE_ORIGIN = {
 };
 const CATALOG_BANNER_BASE = 'font-size:12px;margin:0 0 12px;padding:7px 10px;border-radius:6px;'
   + 'display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;line-height:1.5;';
+// remote 的端点是提供商相关的：WorkBuddy 是 /v3/config，Qoder 是模型清单
+// 接口，Trae 是 get_detail_param。别让 Trae 页上写着 /v3/config。
+function catalogSourceLabel(source){
+  if(source === 'remote'){
+    const p = currentProvider();
+    if(p === 'qoder') return '上游 API · Qoder 模型清单';
+    if(p === 'trae') return '上游 API · Trae get_detail_param';
+  }
+  return CATALOG_SOURCE_ORIGIN[source] || source;
+}
 
 function fmtCatalogStamp(sec){
   const n = Number(sec);
@@ -5700,6 +5979,9 @@ function renderModelsSourceLine(meta){
   const tip = (currentProvider() === 'qoder')
     ? '清单构建顺序：先请求上游 API（Qoder 模型清单接口，用当前视图版本的账号）→ 失败则用内置快照。'
       + '清单在 5 分钟缓存期内复用，过期自动重取；网关后台每天也会兜底获取一次；点「刷新模型清单」可立即从上游更新。'
+    : (currentProvider() === 'trae')
+    ? '清单构建顺序：先请求上游 API（Trae get_detail_param，用当前视图版本的账号）→ 失败则用内置快照。'
+      + '清单在 5 分钟缓存期内复用，过期自动重取；点「刷新模型清单」可立即从上游更新。Trae 没有 per-model 倍率。'
     : '清单构建顺序：先请求上游 API（/v3/config，用当前视图版本的账号）→ 失败则读取本机桌面客户端缓存文件 → 都拿不到才用内置快照。'
       + '清单在 5 分钟缓存期内复用，过期自动重取；网关后台每天也会兜底获取一次；点「刷新模型清单」可立即从上游更新。';
   if(!meta || !meta.source){
@@ -5716,11 +5998,11 @@ function renderModelsSourceLine(meta){
       + 'background:var(--accent2-soft);border:1px solid rgba(94,140,79,.28);color:var(--accent2)';
     el.innerHTML = '<b>✓ 当前为通过 API 获取的最新数据</b>'
       + '<span style="color:var(--dim)">刷新时间 ' + esc(at || '—')
-      + ' · 来源 ' + esc(CATALOG_SOURCE_ORIGIN[meta.source] || meta.source) + '</span>';
+      + ' · 来源 ' + esc(catalogSourceLabel(meta.source)) + '</span>';
     return;
   }
   // 非 API（缓存文件 / 内置快照）：警示横幅 + 真实出处做小字。
-  let origin = CATALOG_SOURCE_ORIGIN[meta.source] || meta.source;
+  let origin = catalogSourceLabel(meta.source);
   if(meta.source === 'cache' || meta.source === 'legacy'){
     const fm = fmtCatalogStamp(meta.file_mtime);
     if(fm) origin += ' · 文件写入于 ' + fm;
@@ -5764,10 +6046,12 @@ function renderAvailableModels(){
       const night = ((m.id === 'glm-5.2' || m.id === 'deepseek-v4-pro') && window.VIEW_REALM === 'cn')
         ? ' <span style="font-size:10px;color:var(--accent)">(夜间0.5x)</span>' : '';
       credBadge = '<span class="badge s"' + credTitle + '>' + esc(raw) + night + '</span>';
-    } else if(currentProvider() === 'qoder'){
-      // 目录里没有 price_factor（老客户端 / 精简目录）时别留一列「-」，
-      // 说清楚 Qoder 是按账号额度扣费、实际扣减看「最近请求」的积分列。
-      credBadge = '<span class="badge s" title="' + esc('该模型在上游目录里没有倍率字段；Qoder 按账号额度（credits）计费，实际扣减见「最近请求」的「积分」列。') + '">按额度计费</span>';
+    } else if(currentProvider() === 'qoder' || currentProvider() === 'trae'){
+      // 目录里没有 price_factor（Qoder 的老客户端 / 精简目录，或 Trae 本身）
+      // 时别留一列「-」，说清楚是按账号额度扣费、实际扣减看「最近请求」。
+      credBadge = '<span class="badge s" title="' + esc(currentProvider() === 'trae'
+        ? 'Trae 按账号额度计费，没有 per-model 倍率；实际扣减以 Trae 客户端账单为准。'
+        : '该模型在上游目录里没有倍率字段；Qoder 按账号额度（credits）计费，实际扣减见「最近请求」的「积分」列。') + '">按额度计费</span>';
     }
 
     // 2. 模型能力 (Vision, Tool calls)
@@ -5919,6 +6203,8 @@ async function loadIntlTasks(){
 }
 
 async function loadGrowthTasks(){
+  // Trae 没有签到/成长任务体系：切到 Trae 视图时不必去打 WorkBuddy 的任务接口。
+  if(currentProvider() === 'trae') return;
   loadIntlTasks();
   const sec = document.getElementById("sectionGrowthTasks");
   if(!sec) return;
@@ -7193,8 +7479,10 @@ function activityStatusOf(a){
 function activityStatusChip(a){
   // Qoder 没有签到/活跃这套概念（那是 WorkBuddy 的福利体系），显示占位符，
   // 别把一个空的「无记录」当成真实状态画出来。
-  if(a && a.provider === 'qoder'){
-    return '<span style="color:var(--dim)" title="Qoder 暂无签到与每日活跃体系">—</span>';
+  if(a && a.provider && a.provider !== 'workbuddy'){
+    return '<span style="color:var(--dim)" title="' + esc(a.provider === 'trae'
+      ? 'Trae 暂无签到与每日活跃体系，按账号额度计费'
+      : 'Qoder 暂无签到与每日活跃体系') + '">—</span>';
   }
   const status = activityStatusOf(a);
   const uidAttr = esc(String((a && a.uid) || '').replace(/[^\w.@-]/g, ''));
@@ -7240,9 +7528,9 @@ function activityStatusChip(a){
 // 今天的事件，按 uid 建表。rows 是最新在前，所以第一次见到的就是最近一次。
 // 读不到历史只是没有状态可显示：绝不能让它把账号区一起带坏。
 async function loadActivityToday(){
-  // 签到/活跃是 WorkBuddy 专属数据：Qoder 视图不读它，账号行的「今日活动」
-  // 一列会显示占位符（见 activityStatusChip）。
-  if(currentProvider() === 'qoder'){
+  // 签到/活跃是 WorkBuddy 专属数据：Qoder / Trae 视图不读它，账号行的
+  // 「今日活动」一列会显示占位符（见 activityStatusChip）。
+  if(currentProvider() === 'qoder' || currentProvider() === 'trae'){
     ACTIVITY_TODAY = {byUid: {}, error: '', loaded: true};
     return;
   }
@@ -7503,11 +7791,13 @@ function accountRow(a){
     // Qoder 账号的「测试」发一条最小聊天请求（服务端按 provider 走 COSY）。
     +     '<button class="sec mini" onclick="testAccount(&quot;' + uidAttr + '&quot;, this)">测试</button>'
     +     '<button class="sec mini" onclick="refreshOne(&quot;' + uidAttr + '&quot;, this)">刷新凭证</button>'
-    +     '<button class="sec mini" onclick="syncProfile(&quot;' + uidAttr + '&quot;, this)" title="从 Web 控制台同步最新昵称（改名后免重登）">同步昵称</button>'
+    +     (a.provider === 'workbuddy'
+          ? '<button class="sec mini" onclick="syncProfile(&quot;' + uidAttr + '&quot;, this)" title="从 Web 控制台同步最新昵称（改名后免重登）">同步昵称</button>'
+          : '')
     +   '</div>'
     +   '<div class="acct-actions-row">'
-    // 出站身份（WB/VSC/CLI）是 WorkBuddy 专属概念，Qoder 账号没有这东西。
-    +     (a.provider === 'qoder' ? '' :
+    // 出站身份（WB/VSC/CLI）是 WorkBuddy 专属概念，Qoder / Trae 账号没有这东西。
+    +     (a.provider === 'qoder' || a.provider === 'trae' ? '' :
           '<span class="id-btn-label">出站身份：</span>'
     +     '<div class="id-btn-group" title="出站身份：WB = WorkBuddy 独立桌面客户端（默认），VSC = 官方 VSCode 插件，CLI = 官方 CodeBuddy CLI；三者对应不同的出站指纹与配额通道。">'
     +       '<button class="id-btn' + ((!a.product || a.product === 'workbuddy') ? ' active' : '') + '" onclick="setAccountProduct(&quot;' + uidAttr + '&quot;, &quot;workbuddy&quot;, this)">WB</button>'
@@ -7850,7 +8140,9 @@ function renderAccounts(){
       +   '请先登录或导入一个 ' + viewName + ' 账号，之后相关请求都会走该账号'
       + '</div>'
       + '<button onclick="openLoginModal()" style="font-size:14px;padding:10px 22px">'
-      +   (currentProvider() === 'qoder' ? '添加 Qoder 账号 (设备码 / PAT)' : '登录新账号 (OAuth)')
+      +   (currentProvider() === 'qoder' ? '添加 Qoder 账号 (设备码 / PAT)'
+           : currentProvider() === 'trae' ? '添加 Trae 账号 (本机登录 / JWT)'
+           : '登录新账号 (OAuth)')
       + '</button>'
       + '</div>';
     return;
@@ -7889,8 +8181,9 @@ async function loadAccounts(){
     updateUI();
     // 昵称刚到位，补画一次积分扣减历史：它和本请求是并行的，先渲染的那次只有 uid。
     if(LAST_CREDIT_DATA) renderCreditHistory();
-    // Auto-fetch credits once if not present
-    if(window.ACCOUNTS.length && window.ACCOUNTS.some(a => !a.credits)){
+    // Auto-fetch credits once if not present. Trae 没有余额接口，别每次都白跑
+    // 一轮 /accounts/credits（每个账号都会回一条失败）。
+    if(currentProvider() !== 'trae' && window.ACCOUNTS.length && window.ACCOUNTS.some(a => !a.credits)){
       postJSON('/accounts/credits', {provider: currentProvider()}).then(r => {
         window.ACCOUNTS = r.accounts || ACCOUNTS;
         renderAccounts();
@@ -7902,7 +8195,9 @@ async function loadAccounts(){
 async function fetchCredits(btn){
   if(btn){ btn.disabled = true; btn.textContent = '刷新中...'; }
   const currentView = (window.VIEW_REALM || "intl");
-  const viewName = (currentProvider() === 'qoder' ? 'Qoder ' : '') + (currentView === 'cn' ? '国内版' : '国际版');
+  const viewName = (currentProvider() === 'qoder' ? 'Qoder '
+                  : currentProvider() === 'trae' ? 'Trae ' : '')
+                  + (currentView === 'cn' ? '国内版' : '国际版');
   try{
     const r = await postJSON('/accounts/credits', {realm: currentView, provider: currentProvider()});
     await loadAccounts();
@@ -8132,7 +8427,8 @@ async function downloadExport(query, fallbackLabel){
   let doc;
   try{ doc = JSON.parse(text); }catch(e){ throw new Error('返回内容不是 JSON'); }
   const stamp = new Date().toISOString().slice(0,19).replace(/[-:T]/g,'');
-  const prefix = currentProvider() === 'qoder' ? 'qoder' : 'workbuddy';
+  const prefix = currentProvider() === 'qoder' ? 'qoder'
+               : currentProvider() === 'trae' ? 'trae' : 'workbuddy';
   const name = prefix + '-accounts-' + (fallbackLabel || '') + stamp + '.json';
   const blob = new Blob([text], {type:'application/json'});
   const url = URL.createObjectURL(blob);
@@ -9045,7 +9341,8 @@ async function refreshInner(gen){
 
   // 这三张卡的数字都按当前视图区域取（/usage 等接口带 realm + provider），标题
   // 带上区域，免得把国际版的用量看成全局的。Qoder 视图再带提供商前缀。
-  const realmTag = '（' + (currentProvider() === 'qoder' ? 'Qoder · ' : '')
+  const realmTag = '（' + (currentProvider() === 'qoder' ? 'Qoder · '
+                        : currentProvider() === 'trae' ? 'Trae · ' : '')
                  + (window.VIEW_REALM === 'cn' ? '国内版' : '国际版') + '）';
   document.getElementById('cards').innerHTML =
     card('网关调用量' + realmTag, fmt(t.requests) + ' <span style="font-size:13px;font-weight:500;color:var(--dim);margin-left:4px">次</span>', '', '') +
@@ -11750,7 +12047,11 @@ function switchMainTab(tab){
     // 每个页面各自按自己的区块重建侧栏；非当前页的区块变化在切过来时补上
     if(on) initPageNav(page);
   });
-  if(tab === 'tasks'){ if(currentProvider() === 'qoder'){ loadQoderQuota(); } else { loadGrowthTasks(); } }
+  if(tab === 'tasks'){
+    if(currentProvider() === 'qoder'){ loadQoderQuota(); }
+    else if(currentProvider() === 'trae'){ renderTraeOverview(); }
+    else { loadGrowthTasks(); }
+  }
   if(tab === 'accounts' || (!_accountsSeparateTab && tab === 'gateway')){ loadActivityBoard(); }
   if(tab === 'analytics'){ loadAnalytics(); loadAnalyticsMatrix(); }
   if(tab === 'settings'){ loadSettings(); loadProxySlots(); }
@@ -11992,6 +12293,8 @@ async function applyAgent(id, btn){
       base_url: baseUrl,
       key_id: keySel ? keySel.value : '',
       model: modelSel ? modelSel.value : '',
+      provider: currentProvider(),
+      realm: window.VIEW_REALM,
       models: (AGENT_MODELS || []).map(m => (typeof m === 'object' ? (m.id || '') : m)).filter(Boolean)
     });
     if(r && (r.ok === false || r.error)){
@@ -12032,6 +12335,8 @@ async function syncAppliedAgents(){
           || ((AGENTS_DATA && AGENTS_DATA.gateway && AGENTS_DATA.gateway.base_url) || ''),
         key_id: rec.key_id || '',
         model: available.has(prev) ? prev : '',
+        provider: currentProvider(),
+        realm: window.VIEW_REALM,
         models: models,
       });
       synced++;
@@ -12889,8 +13194,8 @@ async function loadAnalytics(){
     loadUsageSeries();
     loadRemainingUsage();
     // 积分获取历史是 WorkBuddy 的福利体系（每日活跃奖励、免费套餐发放…），
-    // Qoder 视图下整个折叠块收起，这一份请求也不发。
-    if(currentProvider() !== 'qoder') loadCreditGrants();
+    // Qoder / Trae 视图下整个折叠块收起，这一份请求也不发。
+    if(currentProvider() === 'workbuddy') loadCreditGrants();
   } catch(err) {
     console.error('loadAnalytics failed:', err);
   }
@@ -14366,7 +14671,7 @@ function wbaTick(){
    性能分位、工作回溯），再整套重取；wbaStarted 复位是为了让 loadStatic 也重跑。
    返回 true 表示口径真的变了（已触发重取），false 表示没变。 */
 function setAnalyticsProvider(v){
-  const next = (v === 'qoder' || v === 'workbuddy') ? v : 'all';
+  const next = (v === 'qoder' || v === 'trae' || v === 'workbuddy') ? v : 'all';
   const sel = document.getElementById('analyticsProvider');
   if (sel) sel.value = next;
   analyticsProviderReady = true;

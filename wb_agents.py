@@ -570,6 +570,14 @@ def _apply_claude_code(paths, ctx):
     # Claude Code appends /v1 itself when it needs it; keep the bare root.
     env["ANTHROPIC_BASE_URL"] = re.sub(r"/v1/?$", "", ctx["base_url"])
     env["ANTHROPIC_AUTH_TOKEN"] = ctx["api_key"]
+    # 模型 id 跨提供商重名时，网关只认显式提示。Claude Code 支持自定义头，
+    # 把提供商钉进去；切回 WorkBuddy 时只摘掉我们自己写的那一条。
+    wanted = str(ctx.get("provider") or "").strip()
+    custom = str(env.get("ANTHROPIC_CUSTOM_HEADERS") or "").strip()
+    if wanted and wanted != "workbuddy":
+        env["ANTHROPIC_CUSTOM_HEADERS"] = "X-Provider: %s" % wanted
+    elif custom.lower() in ("x-provider: qoder", "x-provider: trae"):
+        env.pop("ANTHROPIC_CUSTOM_HEADERS", None)
     if ctx.get("model"):
         for name in ("ANTHROPIC_MODEL",
                      "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -641,6 +649,18 @@ def _apply_opencode(paths, ctx):
     rest = {k: v for k, v in provider.items() if k != "models"}
     data = deep_merge(data, {"provider": {PROVIDER_ID: rest}})
     node = data.setdefault("provider", {}).setdefault(PROVIDER_ID, {})
+    # 模型 id 可能跨提供商重名（Trae 国内的 glm-5.2 与 WorkBuddy 目录同名）。
+    # 网关只能靠显式提示分账，所以把提供商钉进请求头：切回 WorkBuddy 时再把
+    # 这一项摘掉，other headers 原样保留。
+    options = node.setdefault("options", {})
+    headers = options.get("headers")
+    if isinstance(headers, dict):
+        headers.pop("X-Provider", None)
+        if not headers:
+            options.pop("headers", None)
+    wanted = str(ctx.get("provider") or "").strip()
+    if wanted and wanted != "workbuddy":
+        options.setdefault("headers", {})["X-Provider"] = wanted
     if models:
         node["models"] = models
     else:
@@ -1031,7 +1051,8 @@ def overview(accounts_dir, home=None):
     return out
 
 
-def plan(client_id, base_url, api_key, model=None, models=None, home=None):
+def plan(client_id, base_url, api_key, model=None, models=None, home=None,
+         provider=None):
     """The exact file contents integrate() would write; touches nothing.
 
     Each entry in ``files`` carries the target ``path``, the new ``content``
@@ -1049,6 +1070,7 @@ def plan(client_id, base_url, api_key, model=None, models=None, home=None):
     ctx = {
         "base_url": base_url,
         "base_url_v1": base_url_v1,
+        "provider": str(provider or "").strip() or None,
         "api_key": str(api_key or ""),
         "model": str(model or "").strip() or None,
         "models": list(models or []),
@@ -1081,7 +1103,7 @@ def plan(client_id, base_url, api_key, model=None, models=None, home=None):
 
 
 def integrate(accounts_dir, client_id, base_url, api_key, model=None,
-              models=None, home=None, key_id=None):
+              models=None, home=None, key_id=None, provider=None):
     """Point `client_id` at this gateway; returns what was written.
 
     The first apply backs up the original bytes of every touched file; later
@@ -1089,7 +1111,7 @@ def integrate(accounts_dir, client_id, base_url, api_key, model=None,
     before the very first integration.
     """
     built = plan(client_id, base_url, api_key, model=model, models=models,
-                 home=home)
+                 home=home, provider=provider)
     state = _load_state(accounts_dir)
     record = state.get(client_id) or {}
     previous_files = {entry.get("path"): entry

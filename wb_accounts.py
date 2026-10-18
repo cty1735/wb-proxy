@@ -15,6 +15,7 @@ import wb_activity
 import wb_atrest
 import wb_identity
 import wb_qoder
+import wb_trae
 import wb_settings
 import wb_upstream_pool
 import wb_webagent
@@ -220,8 +221,9 @@ def get_realm_config(realm):
 
 #: 账号的提供商维度。workbuddy = 原有的 WorkBuddy 账号（缺省，旧凭证档没有
 #: 这个字段，加载时补上）；qoder = Qoder 账号（国际 qoder.sh / 国内
-#: qoder.com.cn，协议见 wb_qoder）。
-PROVIDERS = ("workbuddy", "qoder")
+#: qoder.com.cn，协议见 wb_qoder）；trae = Trae 账号（国际 trae.ai / 国内
+#: trae.cn，协议见 wb_trae）。
+PROVIDERS = ("workbuddy", "qoder", "trae")
 DEFAULT_PROVIDER = "workbuddy"
 
 
@@ -238,13 +240,20 @@ def provider_filter(provider):
 
 
 def provider_display_name(provider):
-    return "Qoder" if normalize_provider(provider) == "qoder" else "WorkBuddy"
+    provider = normalize_provider(provider)
+    if provider == "qoder":
+        return "Qoder"
+    if provider == "trae":
+        return "Trae"
+    return "WorkBuddy"
 
 
 def provider_default_domain(provider, realm):
     """该「提供商 × 区域」的规范域名（凭证档缺 domain 时的兜底）。"""
     if normalize_provider(provider) == "qoder":
         return urllib.parse.urlsplit(wb_qoder.realm_config(realm)["site_url"]).netloc
+    if normalize_provider(provider) == "trae":
+        return urllib.parse.urlsplit(wb_trae.realm_config(realm)["site_url"]).netloc
     return get_realm_config(realm)["domain"]
 
 def _jwt_claims(token):
@@ -531,6 +540,9 @@ class Account(object):
         # 仅 provider=qoder 会写入凭证档；WorkBuddy 账号永远是空 dict。
         raw_qoder_auth = data.get("qoderAuth")
         self.qoder_auth = dict(raw_qoder_auth) if isinstance(raw_qoder_auth, dict) else {}
+        # Trae 账号的协议状态（userId / machineId / apiHost / userRegion…）。
+        raw_trae_auth = data.get("traeAuth")
+        self.trae_auth = dict(raw_trae_auth) if isinstance(raw_trae_auth, dict) else {}
         # 企业账号登录时切到企业空间（token_source=enterprise_switch），企业 id
         # 只写在 token 里，凭据文件的 enterpriseId 往往是空的。不回填的话每个
         # 请求都会带上 X-No-Enterprise-Id: 1，企业目录/配额分支走错。
@@ -712,6 +724,9 @@ class Account(object):
             # Qoder 的协议状态自成一体（PAT / refresh 字段的解析依据），
             # 只有 qoder 账号写进凭证档，WorkBuddy 文件不多一个字段。
             data["qoderAuth"] = dict(self.qoder_auth)
+        elif self.provider == "trae":
+            # 同一原则：Trae 的 device / region 状态只写进 trae 账号。
+            data["traeAuth"] = dict(self.trae_auth)
         return data
 
     def _throttle_snapshot(self, now):
@@ -1298,6 +1313,8 @@ class Account(object):
             return self._refresh_locked()
 
     def _refresh_locked(self):
+        if self.provider == "trae":
+            return self._refresh_trae_locked()
         if self.provider != "workbuddy":
             return self._refresh_qoder_locked()
         if not self.refresh_token:
@@ -1336,6 +1353,34 @@ class Account(object):
         self.access_token = token
         self.refresh_token = data.get("refreshToken") or self.refresh_token
         self.expires_at = jwt_exp(token) or self.expires_at
+        with self._throttle_lock:
+            self.last_error = ""
+            self.cooldown_until = 0
+        if self.path and os.path.exists(os.path.dirname(self.path)):
+            self.save(os.path.dirname(self.path))
+        return True
+
+    def _refresh_trae_locked(self):
+        """Trae 凭证续期：ExchangeToken 换新 token。
+
+        上游把 refresh token 当一次性用，成功后整体替换 access / refresh /
+        expires 与 traeAuth；失败只记错误、不动凭证，下一次巡检或手动刷新
+        会再试。手动粘贴的 JWT 没有 refresh token，只能等用户重新粘贴。
+        """
+        if not self.trae_auth and not self.refresh_token:
+            self._set_last_error("no trae credential; sign in again")
+            return False
+        try:
+            updated = wb_trae.refresh_credential(
+                self.realm, self.trae_auth, self.refresh_token,
+                proxy=self.proxy)
+        except Exception as exc:
+            self._set_last_error("refresh failed: %s" % exc)
+            return False
+        self.access_token = updated["accessToken"]
+        self.refresh_token = updated["refreshToken"]
+        self.expires_at = updated["expiresAt"]
+        self.trae_auth = updated["traeAuth"]
         with self._throttle_lock:
             self.last_error = ""
             self.cooldown_until = 0
@@ -2079,6 +2124,8 @@ class Account(object):
             return res
 
     def _fetch_credits_raw(self):
+        if self.provider == "trae":
+            return self._fetch_credits_trae()
         if self.provider != "workbuddy":
             return self._fetch_credits_qoder()
         if self.realm == "cn":
@@ -2121,6 +2168,20 @@ class Account(object):
         if self.path and os.path.exists(os.path.dirname(self.path)):
             self.save(os.path.dirname(self.path))
         return {"ok": True, "credits": self.credits}
+
+    def _fetch_credits_trae(self):
+        """Trae 没有公开的余额接口：按账号额度计费，网关不编数字。
+
+        仍尽力问一次 chat_mode，确认凭证还能用；失败信息直接回给面板，
+        不要把它伪装成「余额 0」。
+        """
+        status = wb_trae.fetch_account_status(
+            self.access_token, self.trae_auth, self.realm, proxy=self.proxy)
+        if status:
+            return {"ok": False,
+                    "error": "Trae 按账号额度计费，没有可查询的积分余额"}
+        return {"ok": False,
+                "error": "Trae 没有公开的余额接口（账号状态也未返回）"}
 
     def _set_last_error(self, message):
         """Record refresh errors alongside the state shown in the panel."""
@@ -2468,6 +2529,9 @@ class CreditsRefresher(threading.Thread):
         chosen_age = None
         for account in accounts:
             if not account.enabled or not account.access_token:
+                continue
+            # Trae 没有余额接口：别让后台刷新把它反复标记成失败并停用。
+            if account.provider == "trae":
                 continue
             if self._parked.get(account.uid, 0) > now:
                 continue
@@ -3369,6 +3433,54 @@ class AccountPool(object):
         self.add(account)
         return account
 
+    def add_trae_token(self, token, realm="cn", api_host=""):
+        """手动 JWT 加入账号池（面板的 Trae 登录入口）。"""
+        realm = "cn" if str(realm or "").lower() == "cn" else "intl"
+        credential = wb_trae.credential_from_token(token, realm,
+                                                    api_host=api_host)
+        account = Account({
+            "uid": credential["uid"],
+            "nickname": credential["nickname"],
+            "provider": "trae",
+            "domain": credential["domain"],
+            "realm": realm,
+            "platform": "CLI",
+            "accessToken": credential["accessToken"],
+            "refreshToken": credential["refreshToken"],
+            "expiresAt": credential["expiresAt"],
+            "traeAuth": credential["traeAuth"],
+            "source": "manual-token",
+            "enabled": True,
+        })
+        self.add(account)
+        return account
+
+    def add_trae_desktop(self, realm="cn"):
+        """读取本机桌面端登录态并加入账号池（需要客户端已登录）。"""
+        realm = "cn" if str(realm or "").lower() == "cn" else "intl"
+        auth = wb_trae.auth_from_storage(realm)
+        if not auth:
+            raise RuntimeError(
+                "没有找到 Trae%s 的登录态：先打开客户端登录，再回来点导入"
+                % (" 国内版" if realm == "cn" else " 国际版"))
+        credential = wb_trae.credential_from_auth(auth, realm)
+        account = Account({
+            "uid": credential["uid"],
+            "nickname": credential["nickname"],
+            "provider": "trae",
+            "domain": credential["domain"],
+            "realm": realm,
+            "platform": "CLI",
+            "accessToken": credential["accessToken"],
+            "refreshToken": credential["refreshToken"],
+            "expiresAt": credential["expiresAt"],
+            "traeAuth": credential["traeAuth"],
+            "source": "desktop-app",
+            "enabled": True,
+        })
+        self.add(account)
+        return account
+
     def poll_login(self, state):
         state = str(state or "").strip()
         with self._lock:
@@ -3578,6 +3690,37 @@ def desktop_auth_dirs():
 def desktop_auth_dir():
     """First candidate credential directory (kept for older callers)."""
     return desktop_auth_dirs()[0]
+
+def trae_local_accounts():
+    """本机 Trae / Trae CN 的登录态（只读；给面板的「读取本机」按钮用）。
+
+    返回的字段足够展示与去重，但**不含 token**：token 只在真正导入时由
+    `AccountPool.add_trae_desktop()` 从磁盘再读一次，扫描接口不把凭证回传
+    给浏览器。
+    """
+    found = []
+    seen = set()
+    for auth in wb_trae.local_auths():
+        try:
+            credential = wb_trae.credential_from_auth(
+                auth, auth.get("_realm") or "cn")
+        except Exception:
+            continue
+        uid = credential["uid"]
+        if not uid or uid in seen:
+            continue
+        seen.add(uid)
+        found.append({
+            "uid": uid,
+            "nickname": credential["nickname"],
+            "realm": credential["realm"],
+            "domain": credential["domain"],
+            "expiresAt": credential["expiresAt"],
+            "source": "desktop-app",
+            "provider": "trae",
+        })
+    return found
+
 
 def desktop_credential_candidates():
     out = []
