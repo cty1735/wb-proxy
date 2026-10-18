@@ -1476,6 +1476,28 @@ def set_daily_chat_web(accounts_dir, enabled):
     return enabled
 
 
+def trae_auto_checkin(accounts_dir):
+    """Whether the scheduler auto-claims the Trae CN daily check-in.
+
+    Default on: Trae gives 150+50 credits per day and the request is cheap;
+    the setting exists so an operator can stop the gateway from touching
+    their Trae account. Only CN is automated - the intl endpoint is not
+    confirmed.
+    """
+    value = load(accounts_dir).get("trae_auto_checkin")
+    return True if value is None else value is True
+
+
+def set_trae_auto_checkin(accounts_dir, enabled):
+    """Persist the Trae auto-check-in toggle. Returns the stored boolean."""
+    enabled = bool(enabled)
+    with _lock:
+        data = load(accounts_dir)
+        data["trae_auto_checkin"] = enabled
+        save(accounts_dir, data)
+    return enabled
+
+
 def daily_chat_model(accounts_dir):
     """Which model the intl daily activity runs on; "" keeps the built-in one.
 

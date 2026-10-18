@@ -140,6 +140,13 @@ class Scheduler:
         report_count = 0
         travel_count = 0
         daily_chat_count = 0
+        trae_checkin_count = 0
+
+        try:
+            import wb_settings
+            trae_auto = wb_settings.trae_auto_checkin(self.pool.dir)
+        except Exception:
+            trae_auto = True
 
         for acc in list(self.pool.accounts):
             uid8 = acc.uid[:8] if acc.uid else "?"
@@ -153,7 +160,32 @@ class Scheduler:
                 else:
                     self.log(f"! 账号 [{uid8}] Token 保活刷新失败: {acc.last_error}")
 
-            # 2. 如果是国内版 WorkBuddy 账号，检查每日签到与猫猫旅行
+            # 2. Trae 国内版：每日签到（150+50 积分）。国际版接口未证实，
+            #    这里只跑国内版；自动签到可在「任务与福利」页关闭。
+            if acc.provider == "trae" and acc.realm == "cn" and acc.enabled:
+                if trae_auto and acc.can_checkin():
+                    self.log(f"检测到 Trae 国内版账号 [{uid8}] 今日尚未签到，执行自动签到...")
+                    res = acc.checkin(trigger="scheduler")
+                    if res.get("ok"):
+                        trae_checkin_count += 1
+                        self.log(f"✓ Trae 账号 [{uid8}] 自动签到成功: {res.get('msg')}")
+                    else:
+                        self.log(f"! Trae 账号 [{uid8}] 自动签到未成功: {res.get('error') or res.get('msg')}")
+                    time.sleep(1.0)
+                elif trae_auto:
+                    # 已签到也偶尔刷一次积分余额（每 6 小时最多一次），
+                    # 免得看板上的积分停在上次签到的数字。
+                    try:
+                        fetched = float(acc.trae_auth.get("creditsAt") or 0)
+                    except (TypeError, ValueError):
+                        fetched = 0.0
+                    if time.time() - fetched > 6 * 3600:
+                        try:
+                            acc._fetch_credits_trae()
+                        except Exception:
+                            pass
+
+            # 3. 如果是国内版 WorkBuddy 账号，检查每日签到与猫猫旅行
             #    （Qoder 没有签到/成长任务；保活刷新仍然对所有提供商生效）
             if acc.realm == "cn" and acc.provider == "workbuddy":
                 if acc.can_checkin():
@@ -212,13 +244,13 @@ class Scheduler:
                         self.log(f"! 账号 [{uid8}] 每日活跃对话失败: {res.get('error') or res.get('msg')}")
                     time.sleep(1.5)
 
-        self.log(f"巡检完成：Token保活 {refreshed_count} 个，国内签到 {checkin_count} 个，活跃上报 {report_count} 个，猫猫日常 {travel_count} 个，国际活跃 {daily_chat_count} 个")
+        self.log(f"巡检完成：Token保活 {refreshed_count} 个，国内签到 {checkin_count} 个，Trae签到 {trae_checkin_count} 个，活跃上报 {report_count} 个，猫猫日常 {travel_count} 个，国际活跃 {daily_chat_count} 个")
 
     def status(self):
         return {
             "enabled": self.enabled,
-            "mode": "整点排程 (09:00/21:00 签到旅行 · 每日活跃上报 · 22:00 保活 · 01:00 夜猫)",
-            "mode_cn": "整点排程 (09:00/21:00 签到旅行 · 每日活跃上报 · 22:00 保活 · 01:00 夜猫)",
+            "mode": "整点排程 (09:00/21:00 签到旅行 · Trae 每日签到 · 每日活跃上报 · 22:00 保活 · 01:00 夜猫)",
+            "mode_cn": "整点排程 (09:00/21:00 签到旅行 · Trae 每日签到 · 每日活跃上报 · 22:00 保活 · 01:00 夜猫)",
             "mode_intl": "账号 Token 自动保活与凭证常驻 (每日 22:00 集中巡检)",
             "last_run_time": self.last_run_time or "尚未运行",
             "next_run_time": self.next_run_time or "待调度",

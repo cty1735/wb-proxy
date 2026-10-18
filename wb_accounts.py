@@ -604,6 +604,13 @@ class Account(object):
         self.degrade_until = 0.0
         self.credits = data.get("credits") or None
         self.last_checkin = data.get("lastCheckin") or None
+        # Trae 签到/积分需要稳定的 sessionId 与 marketUserId；旧凭证档没有
+        # 这两个字段时按 uid 派生一次（刷新/保存后会落到 traeAuth 里）。
+        if self.provider == "trae":
+            if not self.trae_auth.get("sessionId"):
+                self.trae_auth["sessionId"] = derive_id(self.uid, "session")
+            if not self.trae_auth.get("marketUserId"):
+                self.trae_auth["marketUserId"] = self.uid
         self.last_daily_chat = data.get("lastDailyChat") or None
         # 国内版每天一次的「对话活跃上报」（点亮官方 growth 连登/热力墙）上次
         # 成功的时刻；与 lastCheckin 同款：只按「今天成功过没有」做闸门。
@@ -806,27 +813,53 @@ class Account(object):
             "lastCheckin": self.last_checkin,
             "lastDailyChat": self.last_daily_chat,
             "lastActivityReport": self.last_activity_report,
-            # 活动能力只对 WorkBuddy 账号成立：Qoder 没有签到/每日活跃/成长体系，
-            # 面板按这几个标志显隐按钮，服务端循环也照它们发车。
-            "canCheckin": (self.provider == "workbuddy" and self.realm == "cn"
-                           and not self.is_enterprise()),
+            # 活动能力：WorkBuddy 有签到/每日活跃/成长体系；Trae 只有国内版
+            # 每日签到（150+50 积分），没有成长任务。Qoder 两者都没有。
+            "canCheckin": ((self.provider == "workbuddy" and self.realm == "cn"
+                            and not self.is_enterprise())
+                           or (self.provider == "trae" and self.realm == "cn")),
             "canDailyChat": self.provider == "workbuddy" and self.realm == "intl",
             "canReportActivity": (self.provider == "workbuddy" and self.realm == "cn"
                                   and not self.is_enterprise()),
             "machineId": ((self.qoder_auth.get("machineId") or "")
                           if self.provider == "qoder"
-                          else derive_id(self.uid, "machine")),
-            "sessionId": derive_id(self.uid, "session"),
+                          else (self.trae_auth.get("machineId") or ""
+                                if self.provider == "trae"
+                                else derive_id(self.uid, "machine"))),
+            "sessionId": ((self.trae_auth.get("sessionId") or "")
+                          if self.provider == "trae"
+                          else derive_id(self.uid, "session")),
+            # Trae 签到/积分面板用：只读字段，不影响 WorkBuddy / Qoder。
+            "traeDeviceId": ((self.trae_auth.get("deviceId") or "")
+                             if self.provider == "trae" else ""),
+            "traeCredits": (self.trae_auth.get("credits")
+                            if self.provider == "trae" else None),
+            "traeCreditsAt": (self.trae_auth.get("creditsAt")
+                              if self.provider == "trae" else None),
+            "traeCheckinMessage": ((self.trae_auth.get("checkinMessage") or "")
+                                   if self.provider == "trae" else ""),
+            "traeCheckinAt": ((self.trae_auth.get("checkinAt") or "")
+                              if self.provider == "trae" else ""),
+            "traeCheckinReward": (self.trae_auth.get("checkinReward")
+                                  if self.provider == "trae" else None),
+            "traeCheckedInToday": (self.provider == "trae"
+                                   and self.realm == "cn"
+                                   and not self.can_checkin()),
         }
 
     def save(self, directory):
         os.makedirs(directory, exist_ok=True)
+        old_path = self.path
         safe_uid = re.sub(r"[^A-Za-z0-9_-]", "_", str(self.uid or "")).strip("_ ")
         name = (safe_uid or uuid.uuid4().hex) + ".json"
         if self.provider == "qoder":
             # Qoder 与 WorkBuddy 的 uid 空间互相独立，前缀避免两边撞名互踩，
             # 也让账号目录一眼能看出文件属于哪个提供商。
             name = "qoder-" + name
+        elif self.provider == "trae":
+            # 同上：Trae 的 uid 也可能与 WorkBuddy 撞号，文件级也要分开，
+            # 否则保存时会覆盖另一个提供商的账号档案。
+            name = "trae-" + name
         path = os.path.abspath(os.path.join(directory, name))
         if not path.startswith(os.path.abspath(directory)):
             raise ValueError("invalid path for account save")
@@ -853,6 +886,18 @@ class Account(object):
                     pass
                 raise
         self.path = path
+        # 旧版 Trae 档案曾直接写 <uid>.json（没有 trae- 前缀）。迁移到带前缀
+        # 的文件后，把同目录下同 uid/provider 的旧档删掉，避免重启时重复加载。
+        if old_path and os.path.abspath(old_path) != path \
+                and os.path.dirname(os.path.abspath(old_path)) == os.path.abspath(directory):
+            try:
+                with open(old_path, "r", encoding="utf-8") as fh:
+                    old_data = json.load(fh)
+                if (str(old_data.get("uid") or "") == str(self.uid or "")
+                        and (old_data.get("provider") or DEFAULT_PROVIDER) == self.provider):
+                    os.remove(old_path)
+            except Exception:
+                pass
         return path
 
     def delete(self):
@@ -1419,11 +1464,17 @@ class Account(object):
         return True
 
     def can_checkin(self):
-        if self.provider != "workbuddy":
-            return False
-        if self.realm != "cn":
-            return False
-        if self.is_enterprise():
+        # Trae 国内版有每日签到（150+50 积分）；国际版暂未证实同一接口，
+        # 不冒领「已签到」。WorkBuddy 的口径保持原样。
+        if self.provider == "trae":
+            if self.realm != "cn":
+                return False
+        elif self.provider == "workbuddy":
+            if self.realm != "cn":
+                return False
+            if self.is_enterprise():
+                return False
+        else:
             return False
         if not self.last_checkin:
             return True
@@ -1655,6 +1706,10 @@ class Account(object):
         trigger 只用于活动历史的来源标注（scheduler / manual / account_add /
         account_import）；记录写失败不会改变签到结果。
         """
+        if self.provider == "trae":
+            res = self._trae_checkin(trigger)
+            wb_activity.record_attempt(self, wb_activity.TASK_CHECKIN, trigger, res)
+            return res
         if self.provider != "workbuddy":
             return {"ok": False, "error": "Qoder 账号不支持签到"}
         if self.realm != "cn":
@@ -1664,6 +1719,144 @@ class Account(object):
         res = self._checkin_upstream()
         wb_activity.record_attempt(self, wb_activity.TASK_CHECKIN, trigger, res)
         return res
+
+    def _trae_checkin(self, trigger="unknown"):
+        """Trae 国内版每日签到：status 预检 → claim 领 150+50 积分。
+
+        上游对「今天已签到」没有统一错误码，status 的 checked_in / 9095 /
+        「已签到」文案都按完成处理；只有真正拿到 claim 成功才算领到奖励。
+        签到后顺手刷新一次积分余额，面板显示的是接口返回的快照。
+        """
+        if self.provider != "trae":
+            return {"ok": False, "error": "not a Trae account"}
+        if self.realm != "cn":
+            return {"ok": False,
+                    "error": "Trae 自动签到目前只支持国内版（国际版接口未证实）"}
+        token = self.access_token
+
+        def _auth_failed(result):
+            if not isinstance(result, dict):
+                return False
+            if result.get("http") in (401, 403) \
+                    or result.get("code") in (401, 403, 1001, 1002):
+                return True
+            text = ("%s %s" % (result.get("error") or "",
+                               result.get("message") or "")).lower()
+            return ("unauthorized" in text or "invalid token" in text
+                    or "token expired" in text)
+
+        if self.expires_at and self.expires_at - time.time() < 600:
+            # 临期先续一次；失败仍用旧 token 试签到，不直接把签到判死。
+            try:
+                if self.refresh():
+                    token = self.access_token
+            except Exception:
+                pass
+        status = {}
+        try:
+            status = wb_trae.checkin_status(
+                token, self.trae_auth, self.realm, proxy=self.proxy)
+        except Exception as exc:
+            status = {"ok": False, "error": str(exc)}
+        if _auth_failed(status) and self.refresh_token:
+            # 401/403 不是「今天不能签」，先换一次 token 再重试，避免把临时
+            # 过期误记成签到失败。
+            try:
+                if self.refresh():
+                    token = self.access_token
+                    status = wb_trae.checkin_status(
+                        token, self.trae_auth, self.realm, proxy=self.proxy)
+            except Exception:
+                pass
+        message = str(status.get("message") or status.get("error") or "")
+        if status.get("enable") is False:
+            return {"ok": False,
+                    "error": message or "该账号未开放签到（enable=false）"}
+        if status.get("checked_in") is True or status.get("code") == 9095 \
+                or "已签到" in message or "already" in message.lower():
+            self._mark_trae_checkin(already=True, message=message or "今日已签到")
+            credits = self._trae_refresh_credits()
+            return {"ok": True, "already": True, "msg": message or "今日已签到",
+                    "credits": credits.get("points") if credits.get("ok") else None,
+                    "data": status.get("raw")}
+        if not status.get("ok") and status.get("code") not in (None, 0):
+            return {"ok": False,
+                    "error": message or ("Trae 签到预检失败（code=%s）"
+                                         % status.get("code"))}
+        claim = {}
+        try:
+            claim = wb_trae.checkin_claim(
+                token, self.trae_auth, self.realm, proxy=self.proxy)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        if _auth_failed(claim) and self.refresh_token:
+            try:
+                if self.refresh():
+                    token = self.access_token
+                    claim = wb_trae.checkin_claim(
+                        token, self.trae_auth, self.realm, proxy=self.proxy)
+            except Exception:
+                pass
+        claim_message = str(claim.get("message") or claim.get("error") or "")
+        if claim.get("ok"):
+            reward = claim.get("reward")
+            self._mark_trae_checkin(already=False, message=claim_message or "签到成功",
+                                    reward=reward)
+            credits = self._trae_refresh_credits()
+            return {"ok": True, "already": False, "reward": reward,
+                    "msg": claim_message or "签到成功",
+                    "credits": credits.get("points") if credits.get("ok") else None,
+                    "data": claim.get("raw")}
+        if claim.get("code") == 9095 or "已签到" in claim_message \
+                or "already" in claim_message.lower():
+            self._mark_trae_checkin(already=True, message=claim_message or "今日已签到")
+            credits = self._trae_refresh_credits()
+            return {"ok": True, "already": True,
+                    "msg": claim_message or "今日已签到",
+                    "credits": credits.get("points") if credits.get("ok") else None}
+        return {"ok": False, "code": claim.get("code"),
+                "error": claim_message or ("Trae 签到失败（code=%s）"
+                                           % claim.get("code"))}
+
+    def _mark_trae_checkin(self, already=False, message="", reward=None):
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.last_checkin = now
+        self.trae_auth["lastCheckin"] = now
+        self.trae_auth["checkinAt"] = now
+        self.trae_auth["checkinMessage"] = str(message or "")[:200]
+        if reward not in (None, ""):
+            try:
+                self.trae_auth["checkinReward"] = int(reward)
+            except (TypeError, ValueError):
+                pass
+        self.trae_auth["checkinAlready"] = bool(already)
+        if self.path and os.path.exists(os.path.dirname(self.path)):
+            self.save(os.path.dirname(self.path))
+
+    def _trae_refresh_credits(self):
+        """Trae 积分余额查询；失败不覆盖旧值，也不编 0。"""
+        try:
+            res = wb_trae.fetch_credits(
+                self.access_token, self.trae_auth, self.realm, proxy=self.proxy)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        if not res.get("ok"):
+            return res
+        points = int(res.get("points") or 0)
+        now = time.time()
+        self.trae_auth["credits"] = points
+        self.trae_auth["creditsAt"] = now
+        self.credits = {
+            "remain": points,
+            "size": points,
+            "used": 0,
+            "unit": "points",
+            "updated_at": now,
+            "updated_iso": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        if self.path and os.path.exists(os.path.dirname(self.path)):
+            self.save(os.path.dirname(self.path))
+        return {"ok": True, "points": points}
 
     def _checkin_upstream(self):
         """签到的实际请求；返回形状见 checkin。"""
@@ -2170,18 +2363,17 @@ class Account(object):
         return {"ok": True, "credits": self.credits}
 
     def _fetch_credits_trae(self):
-        """Trae 没有公开的余额接口：按账号额度计费，网关不编数字。
+        """Trae 积分余额：国内版查 pay/ide_user_ent_usage（官方积分）。
 
-        仍尽力问一次 chat_mode，确认凭证还能用；失败信息直接回给面板，
-        不要把它伪装成「余额 0」。
+        国际版接口尚未证实，先只做国内版；拿不到就如实返回错误，不编 0。
         """
-        status = wb_trae.fetch_account_status(
-            self.access_token, self.trae_auth, self.realm, proxy=self.proxy)
-        if status:
+        if self.realm != "cn":
             return {"ok": False,
-                    "error": "Trae 按账号额度计费，没有可查询的积分余额"}
-        return {"ok": False,
-                "error": "Trae 没有公开的余额接口（账号状态也未返回）"}
+                    "error": "Trae 国际版暂未证实积分查询接口，按账号额度计费"}
+        res = self._trae_refresh_credits()
+        if res.get("ok"):
+            return {"ok": True, "credits": self.credits}
+        return {"ok": False, "error": res.get("error") or "Trae 积分查询失败"}
 
     def _set_last_error(self, message):
         """Record refresh errors alongside the state shown in the panel."""
@@ -2530,8 +2722,8 @@ class CreditsRefresher(threading.Thread):
         for account in accounts:
             if not account.enabled or not account.access_token:
                 continue
-            # Trae 没有余额接口：别让后台刷新把它反复标记成失败并停用。
-            if account.provider == "trae":
+            # Trae 国际版没有可用的积分接口；国内版现在能查积分，参与刷新。
+            if account.provider == "trae" and account.realm != "cn":
                 continue
             if self._parked.get(account.uid, 0) > now:
                 continue
@@ -2706,9 +2898,9 @@ class AccountPool(object):
             self.apply_expiring_window()
             return account
 
-    def remove(self, uid):
+    def remove(self, uid, provider=None):
         with self._lock:
-            account = self.get(uid)
+            account = self.get(uid, provider=provider)
             if account is None: return False
             account.delete()
             self.accounts.remove(account)
@@ -2794,8 +2986,8 @@ class AccountPool(object):
             "invalid": invalid,
         }
 
-    def set_enabled(self, uid, enabled):
-        account = self.get(uid)
+    def set_enabled(self, uid, enabled, provider=None):
+        account = self.get(uid, provider=provider)
         if account is None: return None
         account.enabled = bool(enabled)
         if enabled:
@@ -2804,9 +2996,9 @@ class AccountPool(object):
         self.apply_proxy_slots()
         return account.public()
 
-    def set_weight(self, uid, weight):
+    def set_weight(self, uid, weight, provider=None):
         """设置账号的手动调度权重（1-100，1 = 不干预），落盘并回公共视图。"""
-        account = self.get(uid)
+        account = self.get(uid, provider=provider)
         if account is None:
             return None
         try:
@@ -2816,20 +3008,20 @@ class AccountPool(object):
         account.save(self.dir)
         return account.public()
 
-    def set_note(self, uid, note):
+    def set_note(self, uid, note, provider=None):
         """设置账号备注（面板标记「批量」/「自用」等），落盘并回公共视图。
 
         空串 = 清除备注；与调度无关，纯展示。
         """
-        account = self.get(uid)
+        account = self.get(uid, provider=provider)
         if account is None:
             return None
         account.note = str(note or "").strip()[:200]
         account.save(self.dir)
         return account.public()
 
-    def set_proxy(self, uid, proxy):
-        account = self.get(uid)
+    def set_proxy(self, uid, proxy, provider=None):
+        account = self.get(uid, provider=provider)
         if account is None:
             return None
         account.proxy_legacy = str(proxy or "").strip()
@@ -3025,8 +3217,8 @@ class AccountPool(object):
                              "cleared" % (str(account.uid)[:8], mid))
         return values
 
-    def set_proxy_slot(self, uid, slot_id):
-        account = self.get(uid)
+    def set_proxy_slot(self, uid, slot_id, provider=None):
+        account = self.get(uid, provider=provider)
         if account is None:
             return None
         slot_id = str(slot_id or "").strip()
@@ -3371,9 +3563,12 @@ class AccountPool(object):
                 if account.access_token: return account
             return candidates[0] if candidates else None
 
-    def start_login(self, realm="intl", platform="CLI", provider=DEFAULT_PROVIDER):
+    def start_login(self, realm="intl", platform="CLI", provider=DEFAULT_PROVIDER,
+                    callback_url=""):
         if normalize_provider(provider) == "qoder":
             return self._start_qoder_login(realm)
+        if normalize_provider(provider) == "trae":
+            return self._start_trae_login(realm, callback_url)
         cfg = get_realm_config(realm)
         url = "%s%s?platform=%s" % (cfg["chat_upstream"], AUTH_STATE_PATH, urllib.parse.quote(str(platform)))
         headers = {
@@ -3394,6 +3589,199 @@ class AccountPool(object):
         with self._lock:
             self.logins[state] = {"created": time.time(), "platform": platform, "realm": realm}
         return {"state": state, "authUrl": auth_url, "realm": realm, "platform": platform}
+
+    def _start_trae_login(self, realm="cn", callback_url=""):
+        """Trae 浏览器授权：签发 native_ide URL（PKCE + login_trace_id）。
+
+        回调地址必须是浏览器能访问到的网关地址；面板默认传
+        ``http://127.0.0.1:<port>/authorize``，与 WorkBuddy 的「点一下浏览器
+        登录」体验一致。设备凭证取本机 Trae 客户端的 icube-dc 公钥。
+        """
+        realm = "cn" if str(realm or "").lower() == "cn" else "intl"
+        with self._lock:
+            accounts = list(self.accounts)
+        used = {}
+        for account in accounts:
+            if account.provider != "trae" or account.realm != realm:
+                continue
+            device_id = str(account.trae_auth.get("deviceId") or "")
+            if device_id:
+                used[device_id] = used.get(device_id, 0) + 1
+        device = wb_trae.oauth_device(realm, used=used)
+        started = wb_trae.oauth_login_url(realm, callback_url, device=device)
+        state = started["state"]
+        with self._lock:
+            self.logins[state] = {
+                "created": time.time(),
+                "provider": "trae",
+                "kind": "trae-oauth",
+                "realm": realm,
+                "platform": "CLI",
+                "verifier": started["verifier"],
+                "deviceId": started.get("deviceId") or "",
+                "machineId": started.get("machineId") or "",
+                "publicKeyPEM": started.get("publicKeyPEM") or "",
+                "appVersion": started.get("appVersion") or "",
+                "callbackUrl": callback_url,
+                "traceId": state,
+                "status": "pending",
+            }
+        return {"state": state, "authUrl": started["authUrl"], "realm": realm,
+                "platform": "CLI", "provider": "trae",
+                "redirectUri": callback_url}
+
+    def complete_trae_login(self, state="", params=None, require_pending=False):
+        """处理 /authorize 回调：AuthCode 换 token → 入池 → 写回登录会话。
+
+        返回 ``{"ok": bool, "account": {...}}``；错误也写回会话，面板轮询能
+        看到具体原因。回调没有 state 时用 loginTraceID 反查在途会话；找不到
+        在途会话且有 AuthCode 时仍尝试交换（手工粘贴回调 URL 的兜底），但
+        在途会话存在时 trace 不匹配一律拒绝。``require_pending=True`` 供公开
+        的浏览器回调路由使用：必须有本机发起的在途会话，防止匿名请求往账号
+        池里塞账号；面板粘贴回调走 False，允许网关重启后恢复。
+        """
+        params = dict(params or {})
+        trace = str(params.get("loginTraceID") or params.get("login_trace_id") or "")
+        state = str(state or "").strip() or trace
+        info = None
+        with self._lock:
+            info = self.logins.get(state)
+            if not info and trace:
+                info = self.logins.get(trace)
+            if not info and trace:
+                # 在途会话可能存在但 state 用了别的键：按 trace 扫一遍。
+                for key, value in self.logins.items():
+                    if value.get("provider") == "trae" \
+                            and key == trace:
+                        info = value
+                        state = key
+                        break
+            pending = [value for value in self.logins.values()
+                       if value.get("provider") == "trae"
+                       and value.get("status", "pending") == "pending"]
+        if info and info.get("provider") != "trae":
+            return {"ok": False, "error": "state 不属于 Trae 登录"}
+        if info and trace and trace != state and trace != info.get("traceId"):
+            return {"ok": False, "error": "loginTraceID 与登录请求不匹配，已拒绝"}
+        if require_pending and not info:
+            return {"ok": False,
+                    "error": "回调没有对应的在途登录（可能已过期，请重新发起）"}
+        if not info and pending:
+            return {"ok": False,
+                    "error": "回调没有对应的在途登录（可能已过期，请重新发起）"}
+        if info and time.time() - float(info.get("created") or 0) > LOGIN_TTL_SECONDS:
+            with self._lock:
+                self.logins.pop(state, None)
+            return {"ok": False, "error": "登录窗口已过期，请重新发起"}
+
+        try:
+            cb = wb_trae.parse_oauth_callback(params)
+        except Exception as exc:
+            result = {"ok": False, "error": str(exc)}
+            self._store_trae_login_result(state, result)
+            return result
+
+        realm = (info or {}).get("realm") or "cn"
+        device = {
+            "deviceId": (info or {}).get("deviceId") or "",
+            "machineId": (info or {}).get("machineId") or "",
+            "publicKeyPEM": (info or {}).get("publicKeyPEM") or "",
+            "appVersion": (info or {}).get("appVersion") or "",
+        }
+        token = str(cb.get("accessToken") or "")
+        refresh = str(cb.get("refreshToken") or "")
+        try:
+            if not token and cb.get("authCode"):
+                exchanged = wb_trae.exchange_auth_code(
+                    cb["authCode"], (info or {}).get("verifier") or "",
+                    cb.get("host") or "", device, realm=realm)
+                token = exchanged["accessToken"]
+                refresh = exchanged.get("refreshToken") or refresh
+            if not token and refresh:
+                # 旧版回调可能只回 refreshToken；换一次 access token。
+                refreshed = wb_trae.refresh_credential(realm, {
+                    "token": token,
+                    "refreshToken": refresh,
+                    "_realm": realm,
+                    "machineId": device["machineId"],
+                    "deviceId": device["deviceId"],
+                    "devicePublicKey": device["publicKeyPEM"],
+                    "_source": "oauth",
+                }, refresh)
+                token = refreshed["accessToken"]
+                refresh = refreshed.get("refreshToken") or refresh
+            if not token:
+                raise RuntimeError("回调里没有 AuthCode / refreshToken / accessToken")
+            auth = {
+                "token": token,
+                "refreshToken": refresh,
+                "userId": cb.get("userId") or "",
+                "account": cb.get("userName") or "",
+                "machineId": device["machineId"],
+                "deviceId": device["deviceId"],
+                "devicePublicKey": device["publicKeyPEM"],
+                "appVersion": device["appVersion"],
+                "userRegion": cb.get("userRegion") or "",
+                "_realm": realm,
+                "_source": "oauth",
+            }
+            credential = wb_trae.credential_from_auth(auth, realm)
+            account = Account({
+                "uid": credential["uid"],
+                "nickname": credential["nickname"],
+                "provider": "trae",
+                "domain": credential["domain"],
+                "realm": realm,
+                "platform": "CLI",
+                "accessToken": credential["accessToken"],
+                "refreshToken": credential["refreshToken"],
+                "expiresAt": credential["expiresAt"],
+                "traeAuth": credential["traeAuth"],
+                "source": "oauth",
+                "enabled": True,
+            })
+            self.add(account)
+            result = {"ok": True, "account": account.public()}
+            self._store_trae_login_result(state, result)
+            if realm == "cn":
+                # 添加账号时的首次签到放到后台，浏览器回调页不必等上游。
+                threading.Thread(target=self._trae_post_add_checkin,
+                                 args=(account,), daemon=True).start()
+            return result
+        except Exception as exc:
+            result = {"ok": False, "error": str(exc)}
+            self._store_trae_login_result(state, result)
+            return result
+
+    def _store_trae_login_result(self, state, result):
+        if not state:
+            return
+        with self._lock:
+            info = self.logins.get(state)
+            if info is None:
+                return
+            info["status"] = "ok" if result.get("ok") else "error"
+            info["result"] = ({"status": "ok", "account": result.get("account")}
+                              if result.get("ok")
+                              else {"status": "error",
+                                    "message": result.get("error") or "登录失败"})
+            if result.get("ok"):
+                # 保留 5 分钟给面板轮询；成功页已经拿到结果。
+                info["created"] = time.time() - LOGIN_TTL_SECONDS + 300
+
+    def _trae_post_add_checkin(self, account):
+        # 尊重「自动签到」开关：关掉后添加账号也不自动打签到接口，
+        # 面板上的「立即签到」仍然可以手动补。
+        try:
+            import wb_settings
+            if not wb_settings.trae_auto_checkin(self.dir):
+                return
+        except Exception:
+            pass
+        try:
+            account.checkin(trigger="account_add")
+        except Exception as exc:
+            self.log("trae checkin after add failed: %s" % exc)
 
     def _start_qoder_login(self, realm="intl"):
         """Qoder 浏览器设备码登录（仅国际版；国内版走 PAT）。"""
@@ -3453,6 +3841,9 @@ class AccountPool(object):
             "enabled": True,
         })
         self.add(account)
+        if realm == "cn":
+            threading.Thread(target=self._trae_post_add_checkin,
+                             args=(account,), daemon=True).start()
         return account
 
     def add_trae_desktop(self, realm="cn"):
@@ -3479,6 +3870,9 @@ class AccountPool(object):
             "enabled": True,
         })
         self.add(account)
+        if realm == "cn":
+            threading.Thread(target=self._trae_post_add_checkin,
+                             args=(account,), daemon=True).start()
         return account
 
     def poll_login(self, state):
@@ -3492,6 +3886,8 @@ class AccountPool(object):
             return {"status": "expired", "message": "login window expired - start again"}
         if info.get("provider") == "qoder":
             return self._poll_qoder_login(state, info)
+        if info.get("provider") == "trae":
+            return self._poll_trae_login(state, info)
         realm = info.get("realm") or "intl"
         cfg = get_realm_config(realm)
         url = "%s%s?state=%s" % (cfg["chat_upstream"], AUTH_TOKEN_PATH, urllib.parse.quote(state))
@@ -3578,6 +3974,16 @@ class AccountPool(object):
         self.add(account)
         with self._lock: self.logins.pop(state, None)
         return {"status": "ok", "account": account.public()}
+
+    def _poll_trae_login(self, state, info):
+        """Trae 浏览器授权轮询：回调完成后把结果交给面板。"""
+        result = info.get("result")
+        if result:
+            with self._lock:
+                self.logins.pop(state, None)
+            return dict(result)
+        return {"status": "pending",
+                "message": "等待浏览器完成 Trae 授权（完成后本页会自动刷新）"}
 
     def cancel_login(self, state):
         with self._lock: return self.logins.pop(state, None) is not None

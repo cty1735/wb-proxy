@@ -28,6 +28,8 @@ import hashlib
 import json
 import os
 import re
+import secrets
+import socket
 import threading
 import time
 import urllib.error
@@ -49,7 +51,12 @@ REALM_CONFIGS = {
         "name": "国内版",
         "site_url": "https://www.trae.cn",
         "api_host": "https://trae-api-cn.mchost.guru",
-        "auth_host": "https://trae-api-cn.mchost.guru",
+        # OAuth 换发与刷新都走官方 api.trae.com.cn；trae-api-cn.mchost.guru
+        # 只用于聊天/模型目录（两套域名的路径并不完全互通）。
+        "auth_host": "https://api.trae.com.cn",
+        "oauth_host": "https://www.trae.cn",
+        "oauth_exchange_host": "https://api.trae.com.cn",
+        "checkin_host": "https://api.trae.cn",
         "domain": "trae.cn",
         "ide_version": "3.3.67",
     },
@@ -59,6 +66,9 @@ REALM_CONFIGS = {
         "site_url": "https://www.trae.ai",
         "api_host": "https://coresg-normal.trae.ai",
         "auth_host": "https://coresg-normal.trae.ai",
+        "oauth_host": "https://www.trae.ai",
+        "oauth_exchange_host": "https://api.trae.ai",
+        "checkin_host": "https://api.trae.ai",
         "domain": "trae.ai",
         "ide_version": "3.5.51",
     },
@@ -69,6 +79,21 @@ US_API_HOST = "https://coreva-normal.trae.ai"
 
 #: 桌面端 OAuth client id（公开的客户端标识，不是用户密钥）。
 OAUTH_CLIENT_ID = "ono9krqynydwx5"
+
+#: 浏览器授权页快照（2026-10-18 对齐 Trae CN 2.3.33255）。
+#: native_ide 流程：授权页前端调用 GetPCAuthCode 绑定 PKCE challenge，
+#: 然后 302 回 auth_callback_url，回调参数是 authCodeInfo（JSON）。
+OAUTH_PAGE_PLUGIN_VERSION = "2.3.83560"
+OAUTH_PAGE_APP_VERSION = "3.3.100"
+OAUTH_PAGE_PLATFORM_CODE = "IDE_PC"
+
+#: AuthCode 交换允许的官方 API 域（回调里的 host 不可信，防止令牌外发）。
+EXCHANGE_HOST_ALLOWLIST = (
+    "api.trae.com.cn", "api.trae.cn", "api.trae.com", "api.trae.ai",
+)
+
+#: 签到接口（国内版；国际版先按同路径探测，失败不伪造成功）。
+CHECKIN_REQ_BODY = {"req_source": 2}
 
 DEFAULT_CONTEXT_WINDOW = 128000
 MAX_OUTPUT_TOKENS = 128000
@@ -516,6 +541,36 @@ def credential_from_auth(auth, realm=None):
                        or claims.get("name") or "")
     expires = _as_epoch(auth.get("expiredAt")) or int(claims.get("exp") or 0)
     host = api_host_for(realm, auth)
+    # 把协议态里后续要用的字段原样带过去（刷新时会用旧 auth 重建凭证）。
+    # 只复制已知字段，避免把 token / 临时对象写进账号档。
+    kept = {}
+    for key in (
+        "deviceId", "devicePublicKey", "appVersion", "marketUserId",
+        "sessionId", "lastCheckin", "checkinAt", "checkinMessage",
+        "checkinReward", "checkinCampaigns", "credits", "creditsAt",
+        "userRegion", "ideVersion", "refreshExpiredAt", "tokenReleaseAt",
+        "sqmId", "devDeviceId",
+    ):
+        if key in auth:
+            kept[key] = auth.get(key)
+    trae_auth = {
+        "userId": uid,
+        "name": nickname,
+        "account": account if isinstance(account, (str, dict)) else "",
+        "machineId": str(auth.get("machineId") or ""),
+        "sqmId": str(auth.get("sqmId") or ""),
+        "devDeviceId": str(auth.get("devDeviceId") or ""),
+        "apiHost": host,
+        "userRegion": auth.get("userRegion") or "",
+        "refreshExpiredAt": _as_epoch(auth.get("refreshExpiredAt")),
+        "tokenReleaseAt": _as_epoch(auth.get("tokenReleaseAt")),
+        "source": str(auth.get("_source") or "desktop"),
+    }
+    trae_auth.update(kept)
+    trae_auth.setdefault("deviceId", "")
+    trae_auth.setdefault("devicePublicKey", "")
+    trae_auth.setdefault("appVersion", "")
+    trae_auth.setdefault("marketUserId", uid)
     out = {
         "uid": uid,
         "nickname": nickname,
@@ -524,40 +579,635 @@ def credential_from_auth(auth, realm=None):
         "accessToken": token,
         "refreshToken": str(auth.get("refreshToken") or ""),
         "expiresAt": expires,
-        "traeAuth": {
-            "userId": uid,
-            "name": nickname,
-            "account": account if isinstance(account, (str, dict)) else "",
-            "machineId": str(auth.get("machineId") or ""),
-            "sqmId": str(auth.get("sqmId") or ""),
-            "devDeviceId": str(auth.get("devDeviceId") or ""),
-            "apiHost": host,
-            "userRegion": auth.get("userRegion") or "",
-            "refreshExpiredAt": _as_epoch(auth.get("refreshExpiredAt")),
-            "tokenReleaseAt": _as_epoch(auth.get("tokenReleaseAt")),
-            "source": str(auth.get("_source") or "desktop"),
-        },
+        "traeAuth": trae_auth,
     }
     return out
 
 
 def credential_from_token(token, realm="cn", api_host=""):
-    """面板手动粘贴 JWT 的入口（不要求本机装 Trae）。"""
+    """面板手动粘贴 JWT 的入口（不要求本机装 Trae）。
+
+    手动 JWT 没有随附设备身份，但 Trae 的聊天/签到会校验设备指纹。这里优先
+    复用本机 icube-dc 设备（同机登录的 token 能对上）；跨机器粘贴的 token 可能
+    过不了设备校验，签到失败会如实回给面板，不伪造成功。
+    """
     token = str(token or "").strip()
     if token.lower().startswith("bearer "):
         token = token[7:].strip()
     if not token:
         raise TraeError("请填写 Trae 的 JWT（Cloud-IDE-JWT）")
     realm = realm_key(realm)
+    device = oauth_device(realm)
     auth = {
         "token": token,
         "refreshToken": "",
         "expiredAt": int(_jwt_claims(token).get("exp") or 0),
         "apiHost": str(api_host or "").strip().rstrip("/"),
+        "deviceId": device.get("deviceId") or "",
+        "machineId": device.get("machineId") or "",
+        "devicePublicKey": device.get("publicKeyPEM") or "",
+        "appVersion": device.get("appVersion") or "",
         "_realm": realm,
         "_source": "manual",
     }
     return credential_from_auth(auth, realm)
+
+
+# ---------------------------------------------------------------------------
+# OAuth（浏览器授权添加账号）
+#
+# 与 WorkBuddy 的「浏览器里点一下、面板自动入池」一致：网关先签发一个
+# native_ide 授权 URL（PKCE + login_trace_id），浏览器完成登录后 Trae 会
+# 302 回本机 /authorize；网关用回调里的 AuthCode 换 token，再写入账号池。
+# 本机 icube-dc 设备凭证（P-256 公钥）随 DeviceInfo 一起提交，保证登录、
+# 刷新、签到三条链路使用同一台设备指纹。
+
+def _credential_storage(realm):
+    return read_storage(realm)
+
+
+def local_device_credentials(realm):
+    """读取本机 Trae 客户端的 icube-dc 设备凭证（公钥/私钥 PEM）。
+
+    只读本机自有凭证；私钥仅用于可选的 DeviceProof（当前登录主路径只传
+    公钥），调用方按需取用，不写日志。
+    """
+    storage = _credential_storage(realm)
+    if not storage:
+        return []
+    machine_id = str(storage.get("telemetry.machineId") or "")
+    out = []
+    seen = set()
+    for key, value in storage.items():
+        if not str(key).startswith("iCubeAuthInfo://icube-dc:"):
+            continue
+        device_id = str(key).rsplit(":", 1)[-1].strip()
+        if not device_id or device_id in seen:
+            continue
+        data = _decode_auth_value(value)
+        if not isinstance(data, dict):
+            continue
+        public_key = str(data.get("publicKeyPEM") or "")
+        private_key = str(data.get("privateKeyPEM") or "")
+        if not public_key and not private_key:
+            continue
+        seen.add(device_id)
+        out.append({
+            "deviceId": device_id,
+            "machineId": machine_id,
+            "publicKeyPEM": public_key,
+            "privateKeyPEM": private_key,
+            "appVersion": str(data.get("appVersion") or ""),
+        })
+    return out
+
+
+def oauth_device(realm, used=None):
+    """本次 OAuth 登录使用的设备身份（优先本机真实 icube 凭证）。
+
+    ``used`` 是 {deviceId: 已绑定账号数}。Trae 服务端按设备限制可绑定账号
+    数，多账号时优先选绑定最少的本机设备，避免所有账号挤在同一台设备上。
+    """
+    realm = realm_key(realm)
+    creds = local_device_credentials(realm)
+    if creds:
+        used = used or {}
+        creds.sort(key=lambda item: (int(used.get(item.get("deviceId"), 0)),
+                                     str(item.get("deviceId") or "")))
+        return dict(creds[0])
+    # 没有本机客户端凭证时仍可尝试浏览器授权：用稳定的 machine_id 派生
+    # device_id，ExchangeToken 的旧形态/无公钥变体会兜底。
+    machine_id = str(_credential_storage(realm).get("telemetry.machineId") or "")
+    if not machine_id:
+        machine_id = secrets.token_hex(16)
+    device_id = synthetic_device_id(machine_id) or "".join(
+        str(secrets.randbelow(10)) for _ in range(15))
+    return {
+        "deviceId": device_id,
+        "machineId": machine_id,
+        "publicKeyPEM": "",
+        "privateKeyPEM": "",
+        "appVersion": "",
+    }
+
+
+def _pkce_pair():
+    """RFC 7636：43-128 字符 verifier + BASE64URL(SHA256) challenge。"""
+    verifier = secrets.token_hex(64)
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return verifier, challenge
+
+
+def oauth_login_url(realm, callback_url, device=None):
+    """生成 Trae 浏览器授权 URL 与会话状态。"""
+    realm = realm_key(realm)
+    cfg = realm_config(realm)
+    device = dict(device or oauth_device(realm))
+    trace_id = secrets.token_hex(32)
+    verifier, challenge = _pkce_pair()
+    host = str(cfg.get("oauth_host") or cfg["site_url"]).rstrip("/")
+    hostname = socket.gethostname() or "Windows-PC"
+    params = [
+        ("login_version", "1"),
+        ("auth_from", "trae"),
+        ("login_channel", "native_ide"),
+        ("plugin_version", OAUTH_PAGE_PLUGIN_VERSION),
+        ("auth_type", "local"),
+        ("client_id", OAUTH_CLIENT_ID),
+        ("redirect", "0"),
+        ("login_trace_id", trace_id),
+        ("auth_callback_url", str(callback_url or "")),
+        ("machine_id", device.get("machineId") or ""),
+        ("device_id", device.get("deviceId") or ""),
+        ("x_device_id", device.get("deviceId") or ""),
+        ("x_machine_id", device.get("machineId") or ""),
+        ("x_device_brand", hostname),
+        ("x_device_type", "windows"),
+        ("x_os_version", "Windows"),
+        ("x_env", ""),
+        ("x_app_version", OAUTH_PAGE_APP_VERSION),
+        ("x_app_type", "stable"),
+        ("code_challenge", challenge),
+        ("code_challenge_method", "S256"),
+        ("channel_name", "common"),
+    ]
+    auth_url = host + "/authorization?" + urllib.parse.urlencode(params)
+    return {
+        "authUrl": auth_url,
+        "state": trace_id,
+        "verifier": verifier,
+        "deviceId": device.get("deviceId") or "",
+        "machineId": device.get("machineId") or "",
+        "publicKeyPEM": device.get("publicKeyPEM") or "",
+        "realm": realm,
+        "redirectUri": str(callback_url or ""),
+        "appVersion": device.get("appVersion") or OAUTH_PAGE_APP_VERSION,
+    }
+
+
+def _param(params, *names):
+    for name in names:
+        if name in params and params.get(name) not in (None, ""):
+            return params.get(name)
+    lowered = {str(k).lower(): v for k, v in (params or {}).items()}
+    for name in names:
+        value = lowered.get(name.lower())
+        if value not in (None, ""):
+            return value
+    return ""
+
+
+def _json_param(params, *names):
+    raw = _param(params, *names)
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    try:
+        value = json.loads(raw)
+        return value if isinstance(value, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def parse_oauth_callback(value):
+    """解析浏览器回调 URL（或直接粘贴的 query string / 参数字典）。"""
+    if isinstance(value, dict):
+        params = {}
+        for key, item in value.items():
+            if isinstance(item, list) and item:
+                item = item[-1]
+            params[str(key)] = item
+    else:
+        text = str(value or "").strip()
+        if not text:
+            raise TraeError("回调 URL 为空")
+        if "?" in text:
+            query_text = urllib.parse.urlsplit(text).query
+        else:
+            query_text = text
+        query = urllib.parse.parse_qs(query_text, keep_blank_values=True)
+        params = {str(k): (v[-1] if isinstance(v, list) and v else v)
+                  for k, v in query.items()}
+
+    auth_code = ""
+    info = _json_param(params, "authCodeInfo", "auth_code_info")
+    if info:
+        auth_code = str(info.get("AuthCode") or info.get("auth_code") or "")
+    if not auth_code:
+        auth_code = str(_param(params, "AuthCode", "authCode", "code") or "")
+
+    user_info = _json_param(params, "userInfo", "user_info")
+    user_jwt = _json_param(params, "userJwt", "user_jwt")
+    user_id = str(_param(params, "UserID", "userId", "user_id")
+                  or user_info.get("UserID") or user_info.get("UserId") or "")
+    user_name = str(_param(params, "userName", "user_name", "nickname")
+                    or user_info.get("ScreenName") or user_info.get("NickName")
+                    or user_info.get("Name") or "")
+    avatar = str(_param(params, "avatar", "AvatarUrl")
+                 or user_info.get("AvatarUrl") or "")
+    access_token = str(_param(params, "accessToken", "access_token")
+                       or user_jwt.get("Token") or user_jwt.get("token")
+                       or user_jwt.get("AccessToken") or "")
+
+    return {
+        "authCode": auth_code,
+        "refreshToken": str(_param(params, "refreshToken", "refresh_token") or ""),
+        "accessToken": access_token,
+        "userId": user_id,
+        "userName": user_name,
+        "avatar": avatar,
+        "host": str(_param(params, "host") or ""),
+        "userRegion": _param(params, "userRegion", "user_region")
+        or user_info.get("UserRegion") or "",
+        "loginTraceID": str(_param(params, "loginTraceID", "login_trace_id") or ""),
+        "raw": params,
+    }
+
+
+def _validated_exchange_host(host, realm):
+    """回调里的 host 只允许官方 API 域，防止令牌被转发到第三方。"""
+    candidate = str(host or "").strip()
+    if candidate:
+        bare = candidate.split("://", 1)[-1].strip("/").split("/", 1)[0]
+        bare = bare.rsplit("@", 1)[-1].split(":", 1)[0].lower()
+        if bare in EXCHANGE_HOST_ALLOWLIST:
+            # 只取主机名，丢弃回调里可能夹带的路径 / query / 用户信息，
+            # 也强制 https，避免把 AuthCode 发到奇怪的位置。
+            return "https://" + bare
+    return str(realm_config(realm).get("oauth_exchange_host")
+               or realm_config(realm)["auth_host"]).rstrip("/")
+
+
+def _exchange_tokens(status, raw):
+    """从 ExchangeToken 响应里取 AccessToken / RefreshToken。"""
+    detail = raw[:300].decode("utf-8", "replace")
+    if status < 200 or status >= 300:
+        raise TraeError("HTTP %s: %s" % (status, detail))
+    try:
+        data = json.loads(raw.decode("utf-8", "replace"))
+    except ValueError:
+        raise TraeError("响应不是 JSON: %s" % detail)
+    if not isinstance(data, dict):
+        raise TraeError("响应形状异常: %s" % detail)
+    err = ((data.get("ResponseMetadata") or {}).get("Error") or {})
+    if err and str(err.get("Code") or "0") not in ("0", ""):
+        raise TraeError("code=%s/%s: %s" % (
+            err.get("Code"), err.get("StandardCode") or "",
+            err.get("Message") or "未知错误"))
+    code = data.get("code")
+    if code not in (None, 0, "0"):
+        raise TraeError("code=%s: %s" % (code, data.get("message") or "未知错误"))
+    container = data.get("Result") or data.get("data") or data.get("Data") or data
+    token = _find_token(container, ("Token", "AccessToken", "accessToken",
+                                   "token", "Jwt", "JWT"))
+    refresh = _find_token(container, ("RefreshToken", "refreshToken"))
+    if not token:
+        raise TraeError("响应里没有 Token: %s" % detail)
+    return {
+        "accessToken": token,
+        "refreshToken": refresh,
+        "expiresAt": _as_epoch(container.get("TokenExpireAt")
+                               or container.get("ExpiredAt")
+                               or container.get("expiredAt")),
+        "refreshExpiredAt": _as_epoch(
+            container.get("RefreshTokenExpireAt")
+            or container.get("refreshExpiredAt")),
+        "tokenReleaseAt": _as_epoch(
+            container.get("TokenReleaseAt") or container.get("tokenReleaseAt")),
+        "raw": data,
+    }
+
+
+def exchange_auth_code(code, verifier, host, device, realm="cn", proxy=""):
+    """用授权页回传的 AuthCode 换 token。
+
+    主形态对齐真实客户端：``{host}/trae/api/v3/oauth/ExchangeToken`` +
+    DeviceInfo（DeviceID + DevicePublicKey），不发 DeviceProof。旧形态
+    （/cloudide/... + AuthCode/Code）作为兜底，全部失败才抛错。
+    """
+    code = str(code or "").strip()
+    if not code:
+        raise TraeError("回调里没有 AuthCode")
+    realm = realm_key(realm)
+    device = dict(device or {})
+    device_id = str(device.get("deviceId") or "").strip()
+    machine_id = str(device.get("machineId") or "").strip()
+    public_key = str(device.get("publicKeyPEM") or "")
+    app_version = str(device.get("appVersion") or OAUTH_PAGE_APP_VERSION)
+    host = _validated_exchange_host(host, realm)
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "*/*",
+        "x-device-id": device_id,
+        "x-app-id": APP_ID,
+        "x-platform-code": OAUTH_PAGE_PLATFORM_CODE,
+    }
+    errors = []
+
+    variants = []
+    if public_key:
+        variants.append((
+            "DeviceInfo",
+            host + "/trae/api/v3/oauth/ExchangeToken",
+            {
+                "ClientID": OAUTH_CLIENT_ID,
+                "AuthCode": code,
+                "CodeVerifier": str(verifier or ""),
+                "DeviceInfo": {
+                    "DeviceID": device_id,
+                    "MachineID": machine_id,
+                    "PlatformCode": OAUTH_PAGE_PLATFORM_CODE,
+                    "DeviceType": "PC",
+                    "DeviceName": "",
+                    "DeviceModel": "",
+                    "ClientVersion": app_version,
+                    "DevicePublicKey": public_key,
+                    "DeviceBrand": "",
+                    "DeviceCPU": "",
+                    "OSInfo": "",
+                    "OSVersion": "",
+                },
+                "IDEVersion": app_version,
+            },
+        ))
+    legacy = {
+        "ClientID": OAUTH_CLIENT_ID,
+        "AuthCode": code,
+        "CodeVerifier": str(verifier or ""),
+        "DeviceID": device_id,
+        "PlatformCode": OAUTH_PAGE_PLATFORM_CODE,
+    }
+    variants.append(("AuthCode", host + "/trae/api/v3/oauth/ExchangeToken",
+                      dict(legacy)))
+    variants.append(("Code", host + "/trae/api/v3/oauth/ExchangeToken",
+                      dict(legacy, Code=code)))
+    variants.append(("AuthCode-cloudide",
+                      host + "/cloudide/api/v3/trae/oauth/ExchangeToken",
+                      dict(legacy)))
+    variants.append(("Code-cloudide",
+                      host + "/cloudide/api/v3/trae/oauth/ExchangeToken",
+                      dict(legacy, Code=code)))
+    # 官方刷新域也试一次：部分环境下回调 host 与真实交换域不同。
+    auth_host = str(realm_config(realm).get("auth_host") or "").rstrip("/")
+    if auth_host and auth_host != host:
+        variants.append(("AuthCode-auth-host",
+                          auth_host + "/cloudide/api/v3/trae/oauth/ExchangeToken",
+                          dict(legacy)))
+        variants.append(("Code-auth-host",
+                          auth_host + "/cloudide/api/v3/trae/oauth/ExchangeToken",
+                          dict(legacy, Code=code)))
+
+    for tag, url, body in variants:
+        req_headers = dict(headers)
+        if tag == "DeviceInfo":
+            # 真实客户端 m("") 头形态：DeviceInfo 变体必须存在但为空串
+            #（缺失会 20403）；旧形态不带这个头。
+            req_headers["x-cloudide-token"] = ""
+        try:
+            status, raw = _request(url, method="POST", headers=req_headers,
+                                   body=body, timeout=40, proxy=proxy)
+            result = _exchange_tokens(status, raw)
+            result["variant"] = tag
+            return result
+        except Exception as exc:
+            errors.append("%s: %s" % (tag, exc))
+    raise TraeError("AuthCode 交换失败 → " + " | ".join(errors))
+
+
+# ---------------------------------------------------------------------------
+# 签到 / 积分
+
+def _checkin_headers(access_token, auth, realm):
+    token = str(access_token or "").strip()
+    if token.lower().startswith("cloud-ide-jwt "):
+        authorization = token
+    else:
+        authorization = "Cloud-IDE-JWT " + token
+    auth = auth or {}
+    device = _device_info(auth)
+    uid = str(auth.get("userId") or "")
+    market_uid = str(auth.get("marketUserId") or uid)
+    session_id = str(auth.get("sessionId") or "") or uuid.uuid4().hex
+    cn = realm_key(realm) == "cn"
+    return {
+        "accept": "*/*",
+        "accept-language": "zh-CN" if cn else "en-US",
+        "authorization": authorization,
+        "content-type": "application/json",
+        "user-agent": ("VSCode 1.107.1 (TRAE SOLO CN)" if cn
+                       else "VSCode 1.107.1 (TRAE)"),
+        "x-market-client-id": "VSCode 1.107.1",
+        "x-market-user-id": market_uid,
+        "x-user-region": (_user_region(auth) or ("CN" if cn else "US")),
+        "x-device-id": device["device_id"],
+        "x-lgw-req-sdk-type": "3",
+        "package-type": "stable_cn" if cn else "stable",
+        "x-request-id": secrets.token_hex(16),
+        "x-lscbd-aid": "787976",
+        "x-lscbd-platform": "windows",
+        "app-version": "0.1.45",
+        "x-tt-trace-id": "00-%s-01" % secrets.token_hex(8),
+        "vscode-sessionid": session_id,
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "no-cors",
+        "sec-fetch-site": "none",
+    }
+
+
+def _unwrap_payloads(data):
+    """按 data/result/resp/response/info 逐层展开（外层优先）。"""
+    scopes = []
+    if isinstance(data, dict):
+        scopes.append(data)
+        for key in ("data", "result", "resp", "response", "info"):
+            child = data.get(key)
+            if isinstance(child, dict):
+                scopes.extend(_unwrap_payloads(child))
+    return scopes
+
+
+def _payload_field(data, *keys):
+    for scope in _unwrap_payloads(data):
+        for key in keys:
+            if key in scope:
+                value = scope.get(key)
+                if value is not None:
+                    return value
+        lowered = {str(k).lower(): v for k, v in scope.items()}
+        for key in keys:
+            if key.lower() in lowered and lowered[key.lower()] is not None:
+                return lowered[key.lower()]
+    return None
+
+
+def _as_int(value):
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text.isdigit() or (text.startswith("-") and text[1:].isdigit()):
+            return int(text)
+        try:
+            number = float(text)
+            return int(number) if number.is_integer() else None
+        except ValueError:
+            return None
+    return None
+
+
+def _checkin_result(status, raw, action):
+    detail = raw[:300].decode("utf-8", "replace")
+    if status < 200 or status >= 300:
+        return {"ok": False, "http": status, "error": "HTTP %s: %s" % (status, detail)}
+    try:
+        data = json.loads(raw.decode("utf-8", "replace"))
+    except ValueError:
+        return {"ok": False, "http": status, "error": "非 JSON 响应: %s" % detail}
+    if not isinstance(data, dict):
+        return {"ok": False, "http": status, "error": "响应形状异常: %s" % detail}
+    code = data.get("code")
+    try:
+        code_int = int(code) if code is not None else 0
+    except (TypeError, ValueError):
+        code_int = None
+    message = str(data.get("message") or data.get("msg") or "")
+    checked = _payload_field(data, "checked_in", "checkedIn")
+    if isinstance(checked, (int, float)) and not isinstance(checked, bool):
+        checked = bool(checked)
+    enable = _payload_field(data, "enable", "enabled")
+    credits = _as_int(_payload_field(data, "credits", "balance"))
+    reward = _as_int(_payload_field(
+        data, "points", "reward", "reward_credits", "claim_credits",
+        "checkin_credits", "delta", "increase", "obtain", "gained", "amount"))
+    ok = code_int in (0, None)
+    return {
+        "ok": bool(ok),
+        "http": status,
+        "code": code_int,
+        "message": message,
+        "checked_in": checked if isinstance(checked, bool) else None,
+        "enable": enable if isinstance(enable, bool) else None,
+        "credits": credits,
+        "reward": reward,
+        "raw": data,
+        "action": action,
+    }
+
+
+def checkin_status(access_token, auth, realm, proxy="", timeout=30):
+    """查询今日签到状态与（可能的）积分余额。"""
+    realm = realm_key(realm)
+    host = str(realm_config(realm).get("checkin_host")
+               or realm_config(realm)["site_url"]).rstrip("/")
+    url = host + "/trae/api/v2/ug/checkin_credits/status"
+    status, raw = _request(url, method="POST",
+                           headers=_checkin_headers(access_token, auth, realm),
+                           body=CHECKIN_REQ_BODY, timeout=timeout, proxy=proxy)
+    return _checkin_result(status, raw, "status")
+
+
+def checkin_claim(access_token, auth, realm, proxy="", timeout=30):
+    """领取今日签到积分。"""
+    realm = realm_key(realm)
+    host = str(realm_config(realm).get("checkin_host")
+               or realm_config(realm)["site_url"]).rstrip("/")
+    url = host + "/trae/api/v2/ug/checkin_credits/claim"
+    status, raw = _request(url, method="POST",
+                           headers=_checkin_headers(access_token, auth, realm),
+                           body=CHECKIN_REQ_BODY, timeout=timeout, proxy=proxy)
+    return _checkin_result(status, raw, "claim")
+
+
+def _usage_points(data):
+    """从用量/权益响应里算剩余积分（各字段名做宽容匹配）。"""
+    for scope in _unwrap_payloads(data):
+        packs = (scope.get("user_entitlement_pack_list")
+                 or scope.get("userEntitlementPackList"))
+        if isinstance(packs, list) and packs:
+            total = 0.0
+            found = False
+            for pack in packs:
+                if not isinstance(pack, dict):
+                    continue
+                base = pack.get("entitlement_base_info") or pack
+                limit = base.get("credits_limit")
+                if limit is None:
+                    limit = base.get("creditsLimit")
+                usage = pack.get("usage") or {}
+                used = usage.get("credits_amount")
+                if used is None:
+                    used = usage.get("creditsAmount")
+                try:
+                    remain = float(limit or 0) - float(used or 0)
+                except (TypeError, ValueError):
+                    continue
+                if remain < 0:
+                    remain = 0
+                total += remain
+                found = True
+            if found:
+                return int(total)
+    for scope in _unwrap_payloads(data):
+        summary = scope.get("usage_summary") or scope.get("usageSummary")
+        if isinstance(summary, dict):
+            total = _as_int(summary.get("total_amount")
+                            if summary.get("total_amount") is not None
+                            else summary.get("totalAmount"))
+            if total is not None:
+                consumed = _as_int(summary.get("consumed_amount")
+                                   if summary.get("consumed_amount") is not None
+                                   else summary.get("consumedAmount")) or 0
+                return max(total - consumed, 0)
+            for key in ("credits_remain", "remaining_credits", "creditsRemaining",
+                        "credits_balance", "balance", "credits", "total_credits"):
+                value = _as_int(summary.get(key))
+                if value is not None:
+                    return value
+    for scope in _unwrap_payloads(data):
+        for key in ("credits_remain", "remaining_credits", "credits_balance",
+                    "balance", "credits", "total_credits"):
+            value = _as_int(scope.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def fetch_credits(access_token, auth, realm, proxy="", timeout=30):
+    """查询 Trae 积分余额；拿不到返回 ok=False，不编 0。"""
+    realm = realm_key(realm)
+    host = str(realm_config(realm).get("checkin_host")
+               or realm_config(realm)["site_url"]).rstrip("/")
+    headers = _checkin_headers(access_token, auth, realm)
+    errors = []
+    for url, body in (
+        (host + "/trae/api/v2/pay/ide_user_ent_usage", {}),
+        (host + "/trae/api/v2/pay/user_current_entitlement_list",
+         {"require_usage": True}),
+    ):
+        try:
+            status, raw = _request(url, method="POST", headers=headers,
+                                   body=body, timeout=timeout, proxy=proxy)
+            detail = raw[:200].decode("utf-8", "replace")
+            if status < 200 or status >= 300:
+                errors.append("HTTP %s: %s" % (status, detail))
+                continue
+            data = json.loads(raw.decode("utf-8", "replace"))
+            err = ((data.get("ResponseMetadata") or {}).get("Error") or {})
+            if err and str(err.get("Code") or "0") not in ("0", ""):
+                errors.append("%s: %s" % (err.get("Code"),
+                                          err.get("Message") or ""))
+                continue
+            points = _usage_points(data)
+            if points is not None:
+                return {"ok": True, "points": points, "raw": data}
+            errors.append("响应里没有积分字段: %s" % detail)
+        except Exception as exc:
+            errors.append(str(exc))
+    return {"ok": False, "error": " | ".join(errors) or "没有可用的积分接口"}
 
 
 # ---------------------------------------------------------------------------
@@ -630,12 +1280,28 @@ def hash_device_id(machine_id):
     return str(abs(value)).rjust(19, "0")
 
 
+def synthetic_device_id(machine_id):
+    """按本机 machineId 派生 15 位数字设备号（真实 Trae deviceId 的形态）。
+
+    真实客户端首次启动会生成 15 位数字 deviceId；``hash_device_id`` 是 19 位
+    的旧派生值，只适合做请求头占位。没有本机 icube 凭证时用这个 15 位值，
+    避免登录/签到被设备指纹校验直接判形态不合法。
+    """
+    digits = hash_device_id(machine_id)
+    if not digits:
+        return ""
+    return digits[-15:].rjust(15, "0")
+
+
 def _device_info(auth):
     auth = auth or {}
     machine_id = str(auth.get("machineId") or "")
     return {
         "cpu": os.environ.get("TRAE_CPU") or "Intel",
-        "device_id": hash_device_id(machine_id)
+        # OAuth 账号有真实 icube 设备 id（与授权页/签到同源），优先用它；
+        # 旧账号没有这个字段时仍按 machineId 派生，行为不变。
+        "device_id": str(auth.get("deviceId") or "").strip()
+        or synthetic_device_id(machine_id)
         or os.environ.get("TRAE_DEVICE_ID") or "",
         "machine_id": machine_id or os.environ.get("TRAE_MACHINE_ID") or "",
         "device_model": os.environ.get("TRAE_DEVICE_MODEL") or "82RF",
@@ -713,29 +1379,76 @@ def refresh_credential(realm, auth, refresh_token=None, proxy="", api_host=""):
         "ClientSecret": os.environ.get("TRAE_OAUTH_CLIENT_SECRET") or "-",
         "UserID": "",
     }
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    device_id = str((auth or {}).get("deviceId") or "").strip()
+    if device_id:
+        # 真实客户端的刷新请求也带设备头；缺了不致命，带上更贴近原生链路。
+        headers["x-device-id"] = device_id
+        headers["x-app-id"] = APP_ID
+        headers["x-platform-code"] = OAUTH_PAGE_PLATFORM_CODE
+        headers["x-cloudide-token"] = ""
     status, raw = _request(url, method="POST", body=body, timeout=30,
-                           proxy=proxy,
-                           headers={"Content-Type": "application/json"})
+                           proxy=proxy, headers=headers)
+    detail = raw[:300].decode("utf-8", "replace")
     if status < 200 or status >= 300:
-        detail = raw[:300].decode("utf-8", "replace")
         raise TraeError("Trae 刷新失败 (%d): %s" % (status, detail))
     try:
         data = json.loads(raw.decode("utf-8", "replace"))
     except ValueError:
         raise TraeError("Trae 刷新返回的不是 JSON")
-    token = str(data.get("token") or data.get("accessToken") or "")
+    if isinstance(data, dict):
+        err = ((data.get("ResponseMetadata") or {}).get("Error") or {})
+        if err and str(err.get("Code") or "0") not in ("0", ""):
+            raise TraeError("Trae 刷新被拒绝: %s %s" % (
+                err.get("Code"), err.get("Message") or ""))
+        code = data.get("code")
+        if code not in (None, 0, "0"):
+            raise TraeError("Trae 刷新被拒绝: code=%s %s" % (
+                code, data.get("message") or ""))
+        container = data.get("Result") or data.get("data") or data
+    else:
+        container = {}
+    token = _find_token(container, ("Token", "AccessToken", "accessToken",
+                                   "token", "Jwt", "JWT"))
     if not token:
-        raise TraeError("Trae 刷新返回里没有 token")
+        raise TraeError("Trae 刷新返回里没有 token: %s" % detail)
+    new_refresh = _find_token(container, ("RefreshToken", "refreshToken")) or refresh
     merged = dict(auth)
     merged.update({
         "token": token,
-        "refreshToken": str(data.get("refreshToken") or refresh),
-        "expiredAt": _as_epoch(data.get("expiredAt")) or _as_epoch(
-            _jwt_claims(token).get("exp")),
-        "refreshExpiredAt": _as_epoch(data.get("refreshExpiredAt")),
-        "tokenReleaseAt": _as_epoch(data.get("tokenReleaseAt")),
+        "refreshToken": new_refresh,
+        "expiredAt": _as_epoch(container.get("TokenExpireAt")
+                                or container.get("ExpiredAt")
+                                or container.get("expiredAt"))
+        or _as_epoch(_jwt_claims(token).get("exp")),
+        "refreshExpiredAt": _as_epoch(
+            container.get("RefreshTokenExpireAt")
+            or container.get("refreshExpiredAt")),
+        "tokenReleaseAt": _as_epoch(
+            container.get("TokenReleaseAt") or container.get("tokenReleaseAt")),
     })
     return credential_from_auth(merged, realm)
+
+
+def _find_token(data, keys):
+    """在响应容器里按候选键找第一个非空字符串（大小写不敏感）。"""
+    if isinstance(data, str):
+        return data.strip() or ""
+    if not isinstance(data, dict):
+        return ""
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    lowered = {str(k).lower(): v for k, v in data.items()}
+    for key in keys:
+        value = lowered.get(key.lower())
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def fetch_account_status(access_token, auth, realm, proxy="", timeout=15):

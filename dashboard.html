@@ -3705,19 +3705,28 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     <div id="qoderQuotaList" class="table-wrap"></div>
   </section>
 
-  <!-- Trae 账号视图：Trae 没有签到/成长任务体系，也没有公开的 per-model
-       倍率；「任务与福利」页在 Trae 模式下展示账号状态与模型目录规模。 -->
+  <!-- Trae 账号视图：国内版每天签到 150+50 积分；Trae 没有公开的
+       per-model 倍率，按账号额度计费。「任务与福利」页在 Trae 模式下展示
+       账号、积分与自动签到状态。除每日签到外的积分任务接口尚未证实，
+       这里不伪造自动执行。 -->
   <section id="sectionTraeOverview" class="trae-only">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
       <div>
-        <h2 style="margin:0">Trae 账号与模型目录</h2>
-        <div style="font-size:12px;color:var(--dim)">Trae 按账号额度计费，没有签到/成长任务体系；这里汇总当前版本的账号与可用模型。</div>
+        <h2 style="margin:0">Trae 账号、积分与签到</h2>
+        <div style="font-size:12px;color:var(--dim)">Trae 国内版每天签到可领 150+50 积分；网关可自动签到并查询积分余额。其他积分任务接口尚未证实，不做自动执行。Trae 按账号额度计费，没有 per-model 倍率。</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <button class="primary" id="btnTraeRefresh" onclick="loadTraeOverview(true, this)">刷新目录</button>
+        <label class="sec" style="display:inline-flex;align-items:center;gap:7px;cursor:pointer;user-select:none"
+               title="每天由网关自动为 Trae 国内版账号签到（150+50 积分）">
+          <input type="checkbox" id="traeAutoCheckin" onchange="saveTraeAutoCheckin(this.checked)" style="margin:0">
+          自动签到
+        </label>
+        <button class="primary" id="btnTraeCheckin" onclick="triggerTraeCheckin(this)">立即签到</button>
+        <button class="sec" id="btnTraeCredits" onclick="refreshTraeCredits(this)">刷新积分</button>
+        <button class="sec" id="btnTraeRefresh" onclick="loadTraeOverview(true, this)">刷新目录</button>
       </div>
     </div>
-    <div class="cards" style="margin-bottom:16px;grid-template-columns:repeat(auto-fit,minmax(185px,1fr))">
+    <div class="cards" style="margin-bottom:16px;grid-template-columns:repeat(auto-fit,minmax(165px,1fr))">
       <div class="card accent2">
         <div class="k">账号</div>
         <div class="v" id="traeAccountCount" style="font-size:20px">-</div>
@@ -3731,10 +3740,19 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
         <div class="v" id="traeModelCount">-</div>
       </div>
       <div class="card warn">
+        <div class="k">总积分</div>
+        <div class="v" id="traeTotalCredits" style="color:var(--warn);font-size:20px">-</div>
+      </div>
+      <div class="card">
+        <div class="k">今日已签到</div>
+        <div class="v" id="traeCheckinCount" style="font-size:20px">-</div>
+      </div>
+      <div class="card">
         <div class="k">最近到期</div>
-        <div class="v" id="traeExpiry" style="color:var(--warn);font-size:17px">-</div>
+        <div class="v" id="traeExpiry" style="font-size:16px">-</div>
       </div>
     </div>
+    <div id="traeCheckinHint" class="hint" style="margin:-4px 0 12px"></div>
     <div id="traeAccountList" class="table-wrap"></div>
   </section>
   <section id="sectionIntlTasks" class="wb-only" style="margin-bottom:24px">
@@ -4833,15 +4851,30 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
           </label>
         </div>
       </div>
+      <div style="border:1px solid var(--accent);border-radius:10px;padding:12px 14px;margin-bottom:16px;background:color-mix(in srgb, var(--accent) 6%, transparent)">
+        <div style="font-size:12px;color:var(--dim);margin-bottom:8px;font-weight:600">方式一：浏览器授权登录（推荐）</div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <button class="primary" id="btnTraeOAuth" onclick="startTraeOAuth(this)">在浏览器中登录 Trae</button>
+          <button class="sec" id="btnTraeOAuthCancel" style="display:none" onclick="cancelTraeOAuth()">取消等待</button>
+          <span class="hint" style="margin:0">会打开 Trae 授权页；登录完成自动回到网关并加入账号池。</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <input id="traeCallbackInput" placeholder="如果浏览器没有自动跳回，可粘贴回调地址（http://127.0.0.1:…/authorize?…）"
+                 style="flex:1;min-width:240px;background:var(--panel2);border:1px solid var(--line);
+                        border-radius:8px;padding:8px 11px;color:var(--fg);font:inherit">
+          <button class="sec" onclick="submitTraeCallback(this)">用回调地址完成</button>
+        </div>
+        <div class="hint" style="margin-top:6px">回调地址必须能被当前浏览器访问：本机看板默认用 127.0.0.1，远程访问时按看板地址回调；浏览器没有自动跳回时用上面的输入框粘贴地址兜底。</div>
+      </div>
       <div style="border:1px dashed var(--line);border-radius:10px;padding:12px 14px;margin-bottom:16px">
-        <div style="font-size:12px;color:var(--dim);margin-bottom:8px;font-weight:600">方式一：读取本机 Trae 客户端登录态</div>
+        <div style="font-size:12px;color:var(--dim);margin-bottom:8px;font-weight:600">方式二：读取本机 Trae 客户端登录态</div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <button class="sec" id="btnTraeImportDesktop" onclick="importTraeDesktop(this)">读取本机登录态</button>
           <span class="hint" style="margin:0">需要该版本的 Trae 客户端已登录（读取 storage.json）。</span>
         </div>
       </div>
       <div style="border-top:1px dashed var(--line);padding-top:14px">
-        <div style="font-size:12px;color:var(--dim);margin-bottom:8px;font-weight:600">方式二：手动粘贴登录令牌（JWT）</div>
+        <div style="font-size:12px;color:var(--dim);margin-bottom:8px;font-weight:600">方式三：手动粘贴登录令牌（JWT）</div>
         <textarea id="traeTokenInput" rows="3" placeholder="粘贴 Trae 的 Cloud-IDE-JWT（客户端登录态里的 token 字段）"
                style="width:100%;background:var(--panel2);border:1px solid var(--line);
                       border-radius:8px;padding:9px 12px;color:var(--fg);font:inherit;resize:vertical"></textarea>
@@ -5306,9 +5339,12 @@ async function submitQoderPat(btn){
 }
 
 
-/* ---- Trae 登录（本机客户端登录态导入 + 手动 JWT） ----
-   Trae 的桌面端登录态是 tc 加密信封，服务端负责解密；浏览器这边只触发
-   扫描/导入，凭证从不回传。 */
+/* ---- Trae 登录（浏览器授权 + 本机客户端登录态 + 手动 JWT） ----
+   Trae 的浏览器授权是 native_ide OAuth：网关签发 PKCE URL，浏览器登录后
+   302 回本机 /authorize，网关用 AuthCode 换 token。桌面端登录态是 tc
+   加密信封，服务端负责解密；浏览器这边只触发扫描/导入，凭证从不回传。 */
+let traeLoginState = null, traeLoginTimer = null;
+
 function traeLoginRealm(){
   const checked = document.querySelector('input[name="traeLoginRealm"]:checked');
   return checked ? checked.value : (window.VIEW_REALM === "cn" ? "cn" : "intl");
@@ -5321,6 +5357,17 @@ function setTraeLoginStatus(text, kind){
   el.style.color = kind === "ok" ? "var(--accent2)" : (kind === "bad" ? "var(--bad)" : (kind === "warn" ? "var(--warn)" : "var(--dim)"));
 }
 
+function stopTraeLoginPolling(){
+  if(traeLoginTimer){ clearTimeout(traeLoginTimer); traeLoginTimer = null; }
+}
+
+function setTraeOAuthWaiting(waiting){
+  const cancel = document.getElementById("btnTraeOAuthCancel");
+  if(cancel) cancel.style.display = waiting ? "" : "none";
+  const start = document.getElementById("btnTraeOAuth");
+  if(start) start.disabled = !!waiting;
+}
+
 function openTraeLogin(){
   const m = document.getElementById("traeLoginModal");
   if(m) m.classList.add("show");
@@ -5331,12 +5378,139 @@ function openTraeLogin(){
   if(rIntl) rIntl.checked = !isCn;
   const token = document.getElementById("traeTokenInput");
   if(token) token.value = "";
-  setTraeLoginStatus("国内版与国际版各读各的本机登录态；手动令牌需要与所选版本一致。");
+  const cb = document.getElementById("traeCallbackInput");
+  if(cb) cb.value = "";
+  stopTraeLoginPolling();
+  traeLoginState = null;
+  setTraeOAuthWaiting(false);
+  setTraeLoginStatus("推荐用浏览器授权：点「在浏览器中登录 Trae」，完成后本页会自动刷新。");
 }
 
 function closeTraeLogin(){
   const m = document.getElementById("traeLoginModal");
   if(m) m.classList.remove("show");
+  stopTraeLoginPolling();
+  if(traeLoginState){
+    postJSON("/accounts/login/cancel", {state: traeLoginState}).catch(()=>{});
+    traeLoginState = null;
+  }
+  setTraeOAuthWaiting(false);
+}
+
+async function startTraeOAuth(btn){
+  const realm = traeLoginRealm();
+  let callbackUrl = "";
+  try{
+    if(location.protocol === "http:" || location.protocol === "https:"){
+      callbackUrl = location.origin + "/authorize";
+    }
+  }catch(e){}
+  if(btn){ btn.disabled = true; btn.textContent = "正在打开授权页..."; }
+  setTraeLoginStatus("正在创建 Trae 授权链接…");
+  // 先同步开一个空白标签页占住用户手势：Chrome 在 await 之后弹窗会被拦。
+  let tab = null;
+  try{ tab = window.open("about:blank", "_blank"); }catch(e){}
+  try{
+    const r = await postJSON("/accounts/login/start", {
+      provider: "trae", realm: realm, callbackUrl: callbackUrl
+    });
+    if(!r || !r.authUrl){
+      if(tab) try{ tab.close(); }catch(e){}
+      throw new Error((r && (r.error || r.msg)) || "网关没有返回授权链接");
+    }
+    traeLoginState = r.state;
+    setTraeOAuthWaiting(true);
+    setTraeLoginStatus("已打开 Trae 授权页，请在浏览器里完成登录；完成后本页会自动刷新。");
+    let opened = null;
+    if(tab && !tab.closed){
+      try{ tab.location.href = r.authUrl; opened = tab; }catch(e){}
+    }
+    if(!opened){
+      opened = window.open(r.authUrl, "_blank");
+    }
+    if(!opened){
+      setTraeLoginStatus("浏览器拦截了新标签页，请允许弹窗后重试，或复制链接手动打开：" + r.authUrl, "warn");
+    }
+    traeLoginTimer = setTimeout(pollTraeLogin, 1500);
+  }catch(e){
+    setTraeLoginStatus("启动浏览器授权失败：" + e.message, "bad");
+    setTraeOAuthWaiting(false);
+    traeLoginState = null;
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = "在浏览器中登录 Trae"; }
+  }
+}
+
+async function pollTraeLogin(){
+  if(!traeLoginState) return;
+  traeLoginTimer = null;
+  try{
+    const r = await getJSON("/accounts/login/poll?state=" + encodeURIComponent(traeLoginState));
+    const status = (r && r.status) || "pending";
+    if(status === "ok"){
+      const who = (r.account && (r.account.nickname || r.account.uid || "")) || "";
+      setTraeLoginStatus("登录成功：" + who + " 已加入账号池", "ok");
+      toast("Trae 账号已添加", "ok");
+      traeLoginState = null;
+      setTraeOAuthWaiting(false);
+      stopTraeLoginPolling();
+      await loadAccounts();
+      await loadModels();
+      if(window.VIEW_REALM) await refresh();
+      renderTraeOverview();
+      setTimeout(closeTraeLogin, 1500);
+      return;
+    }
+    if(status === "pending"){
+      setTraeLoginStatus("等待浏览器完成授权…（完成后自动刷新）");
+      traeLoginTimer = setTimeout(pollTraeLogin, 2000);
+      return;
+    }
+    setTraeLoginStatus("登录失败：" + ((r && (r.message || r.error)) || "授权未完成"), "bad");
+    traeLoginState = null;
+    setTraeOAuthWaiting(false);
+  }catch(e){
+    // 轮询失败不终止：网络抖动后继续等浏览器回调。
+    traeLoginTimer = setTimeout(pollTraeLogin, 3000);
+  }
+}
+
+function cancelTraeOAuth(){
+  if(traeLoginState){
+    postJSON("/accounts/login/cancel", {state: traeLoginState}).catch(()=>{});
+    traeLoginState = null;
+  }
+  stopTraeLoginPolling();
+  setTraeOAuthWaiting(false);
+  setTraeLoginStatus("已取消等待浏览器授权。");
+}
+
+async function submitTraeCallback(btn){
+  const input = document.getElementById("traeCallbackInput");
+  const url = ((input && input.value) || "").trim();
+  if(!url){ setTraeLoginStatus("请先粘贴浏览器地址栏里的回调地址。", "warn"); return; }
+  if(btn){ btn.disabled = true; btn.textContent = "处理中..."; }
+  setTraeLoginStatus("正在用回调地址完成授权…");
+  try{
+    const r = await postJSON("/accounts/trae/callback", {url: url});
+    if(r && r.ok){
+      const who = (r.account && (r.account.nickname || r.account.uid || "")) || "";
+      setTraeLoginStatus("登录成功：" + who + " 已加入账号池", "ok");
+      toast("Trae 账号已添加", "ok");
+      if(input) input.value = "";
+      await loadAccounts();
+      await loadModels();
+      if(window.VIEW_REALM) await refresh();
+      renderTraeOverview();
+      setTimeout(closeTraeLogin, 1200);
+    }else{
+      setTraeLoginStatus("授权失败：" + ((r && (r.error || r.msg)) || "未知错误"), "bad");
+    }
+  }catch(e){
+    setTraeLoginStatus("请求失败：" + e.message, "bad");
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = "用回调地址完成"; }
+  }
 }
 
 async function importTraeDesktop(btn){
@@ -5406,9 +5580,42 @@ function renderTraeOverview(){
   const realm = window.VIEW_REALM === 'cn' ? 'cn' : 'intl';
   const elRealm = document.getElementById('traeRealmLabel');
   if(elRealm) elRealm.textContent = realm === 'cn' ? '国内版' : '国际版';
+  // 签到目前只有国内版接口已证实；国际版不显示主按钮，避免误以为能签。
+  const btnCheck = document.getElementById('btnTraeCheckin');
+  if(btnCheck) btnCheck.style.display = realm === 'cn' ? '' : 'none';
   const elModels = document.getElementById('traeModelCount');
   if(elModels) elModels.textContent = String((window.MODELS_DATA || []).length || 0);
-  // 最近到期的账号：只提示到期时间，不推测额度（Trae 没有公开的额度接口）。
+
+  const autoEl = document.getElementById('traeAutoCheckin');
+  if(autoEl && window.SETTINGS_DATA){
+    autoEl.checked = window.SETTINGS_DATA.trae_auto_checkin !== false;
+  }
+  const hint = document.getElementById('traeCheckinHint');
+  if(hint){
+    const auto = !!(autoEl && autoEl.checked);
+    if(realm !== 'cn'){
+      hint.textContent = '自动签到目前只支持 Trae 国内版；国际版接口尚未证实，不会伪造签到结果。';
+    }else if(!auto){
+      hint.textContent = '自动签到已关闭；可以点「立即签到」手动领取今日积分。';
+    }else{
+      hint.textContent = '自动签到已开启：调度器每天 09:00 / 21:00 巡检时领取（150+50 积分），同一设备每天只计一次。';
+    }
+  }
+
+  let totalCredits = 0, knownCredits = false, checkedCount = 0;
+  accounts.forEach(a => {
+    const value = (a.traeCredits !== null && a.traeCredits !== undefined)
+      ? Number(a.traeCredits)
+      : (a.credits && a.credits.unit === 'points' ? Number(a.credits.remain) : null);
+    if(value !== null && !isNaN(value)){ totalCredits += value; knownCredits = true; }
+    if(a.traeCheckedInToday) checkedCount += 1;
+  });
+  const elTotal = document.getElementById('traeTotalCredits');
+  if(elTotal) elTotal.textContent = knownCredits ? fmt(totalCredits) : '—';
+  const elChecked = document.getElementById('traeCheckinCount');
+  if(elChecked) elChecked.textContent = accounts.length ? (checkedCount + ' / ' + accounts.length) : '—';
+
+  // 最近到期的账号：只提示到期时间，不推测额度。
   let soonest = null;
   accounts.forEach(a => {
     const exp = Number(a.expiresAt || 0);
@@ -5424,21 +5631,124 @@ function renderTraeOverview(){
     return;
   }
   wrap.innerHTML = '<table class="tbl"><thead><tr>'
-    + '<th>账号</th><th>UID</th><th>版本</th><th>到期</th><th>状态</th></tr></thead><tbody>'
+    + '<th>账号</th><th>UID</th><th>版本</th><th>积分</th><th>今日签到</th>'
+    + '<th>最近签到</th><th>状态</th><th>到期</th><th>操作</th></tr></thead><tbody>'
     + accounts.map(a => {
         const bad = !!a.lastError;
         const status = bad ? ('异常：' + esc(a.lastError))
           : (a.enabled === false ? '已停用' : (a.inCooldown ? '冷却中' : '可用'));
         const cls = bad ? 'bad' : (a.enabled === false ? 'off' : (a.inCooldown ? 'warn' : 'ok'));
+        const value = (a.traeCredits !== null && a.traeCredits !== undefined)
+          ? Number(a.traeCredits)
+          : (a.credits && a.credits.unit === 'points' ? Number(a.credits.remain) : null);
+        const credits = (value !== null && !isNaN(value))
+          ? '<b>' + fmt(value) + '</b> <span style="color:var(--dim);font-size:11px">积分</span>'
+          : '<span style="color:var(--dim)" title="点「刷新积分」从 Trae 查询">—</span>';
+        const checked = a.realm !== 'cn'
+          ? '<span style="color:var(--dim)">—</span>'
+          : (a.traeCheckedInToday
+             ? '<span class="badge ok">已签到</span>'
+             : (a.canCheckin ? '<span class="badge warn">未签到</span>'
+                             : '<span class="badge off">未知</span>'));
+        const last = a.traeCheckinAt || a.lastCheckin || '';
+        const lastCell = last
+          ? '<span style="font-size:12px;color:var(--dim)" title="' + esc(a.traeCheckinMessage || '') + '">' + esc(String(last).slice(0, 19)) + '</span>'
+          : '<span style="color:var(--dim)">—</span>';
+        const uidAttr = esc(String(a.uid || '').replace(/[^\w.@-]/g, ''));
+        const canCheck = a.realm === 'cn' && a.enabled !== false;
         return '<tr>'
           + '<td>' + esc(a.nickname || (a.uid || '').slice(0, 8)) + '</td>'
           + '<td style="font-family:var(--mono);font-size:12px;color:var(--dim)">' + esc((a.uid || '').slice(0, 12)) + '</td>'
           + '<td>' + (a.realm === 'cn' ? '国内版' : '国际版') + '</td>'
-          + '<td style="font-size:12px;color:var(--dim)">' + esc(fmtTraeExpiry(a)) + '</td>'
+          + '<td>' + credits + '</td>'
+          + '<td>' + checked + '</td>'
+          + '<td>' + lastCell + '</td>'
           + '<td><span class="badge ' + cls + '">' + esc(status) + '</span></td>'
+          + '<td style="font-size:12px;color:var(--dim)">' + esc(fmtTraeExpiry(a)) + '</td>'
+          + '<td>' + (canCheck
+             ? '<button class="sec" style="padding:4px 9px;font-size:12px" onclick="triggerTraeCheckin(this, &quot;' + uidAttr + '&quot;)">签到</button>'
+             : '<span style="color:var(--dim)">—</span>') + '</td>'
           + '</tr>';
       }).join('')
     + '</tbody></table>';
+}
+
+async function saveTraeAutoCheckin(enabled){
+  try{
+    const r = await postJSON('/settings/save', {trae_auto_checkin: !!enabled});
+    if(r && (r.trae_auto_checkin === true || r.trae_auto_checkin === false)){
+      window.SETTINGS_DATA = Object.assign({}, window.SETTINGS_DATA || {}, {trae_auto_checkin: r.trae_auto_checkin});
+      toast(r.trae_auto_checkin ? 'Trae 自动签到已开启' : 'Trae 自动签到已关闭', 'ok');
+    }
+    renderTraeOverview();
+  }catch(e){
+    toast('保存自动签到开关失败：' + e.message, 'bad');
+    renderTraeOverview();
+  }
+}
+
+async function triggerTraeCheckin(btn, uid){
+  const oldText = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = '签到中...'; }
+  try{
+    const body = uid ? {uid: uid} : {realm: (window.VIEW_REALM === 'cn' ? 'cn' : 'intl')};
+    const r = await postJSON('/accounts/trae/checkin', body);
+    const results = (r && r.results) || [];
+    const ok = results.filter(x => x.ok);
+    const failed = results.filter(x => !x.ok);
+    if(ok.length){
+      const msg = ok.map(x => {
+        const who = x.nickname || (x.uid || '').slice(0, 8);
+        return who + '：' + (x.msg || (x.already ? '今日已签到' : '签到成功'))
+          + (x.reward ? ('（+' + x.reward + ' 积分）') : '');
+      }).join('；');
+      toast(msg, 'ok');
+    }
+    if(failed.length){
+      const msg = failed.map(x => {
+        const who = x.nickname || (x.uid || '').slice(0, 8);
+        return who + '：' + (x.error || x.msg || '签到失败');
+      }).join('；');
+      toast(msg, 'warn');
+    }
+    if(!results.length && r && r.msg) toast(r.msg, 'warn');
+    await loadAccounts();
+    renderTraeOverview();
+  }catch(e){
+    toast('Trae 签到请求失败：' + e.message, 'bad');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = oldText || '签到'; }
+  }
+}
+
+async function refreshTraeCredits(btn, uid){
+  const oldText = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = '查询中...'; }
+  try{
+    const r = await postJSON('/accounts/trae/credits',
+      uid ? {uid: uid} : {realm: (window.VIEW_REALM === 'cn' ? 'cn' : 'intl')});
+    const results = (r && r.results) || [];
+    const ok = results.filter(x => x.ok);
+    if(ok.length){
+      const msg = ok.map(x => {
+        const who = x.nickname || (x.uid || '').slice(0, 8);
+        const points = (x.credits && x.credits.remain !== undefined)
+          ? x.credits.remain : x.points;
+        return who + '：' + fmt(points || 0) + ' 积分';
+      }).join('；');
+      toast(msg, 'ok');
+    }
+    if(results.length && !ok.length){
+      toast(results.map(x => (x.nickname || (x.uid || '').slice(0, 8))
+        + '：' + (x.error || '查询失败')).join('；'), 'warn');
+    }
+    await loadAccounts();
+    renderTraeOverview();
+  }catch(e){
+    toast('Trae 积分查询失败：' + e.message, 'bad');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = oldText || '刷新积分'; }
+  }
 }
 
 async function loadTraeOverview(force, btn){
@@ -7477,6 +7787,23 @@ function activityStatusOf(a){
 }
 
 function activityStatusChip(a){
+  // Trae 国内版只有每日签到（150+50 积分）：显示真实的签到状态；国际版
+  // 接口未证实，仍显示占位符，不把「没记录」画成「已签到」。
+  if(a && a.provider === 'trae'){
+    if(a.realm !== 'cn'){
+      return '<span style="color:var(--dim)" title="Trae 国际版暂未证实签到接口">—</span>';
+    }
+    const done = !!a.traeCheckedInToday;
+    const at = a.traeCheckinAt || a.lastCheckin || '';
+    const msg = a.traeCheckinMessage || '';
+    const tip = (done ? '今日已签到' : '今日尚未签到')
+      + (at ? ' · ' + at : '')
+      + (msg ? ' · ' + msg : '');
+    const uidAttr = esc(String((a && a.uid) || '').replace(/[^\w.@-]/g, ''));
+    return '<span class="badge ' + (done ? 'ok' : 'warn') + '" style="cursor:pointer" title="'
+      + esc(tip) + '" onclick="triggerTraeCheckin(this, &quot;' + uidAttr + '&quot;)">'
+      + (done ? '已签到' : '未签到') + '</span>';
+  }
   // Qoder 没有签到/活跃这套概念（那是 WorkBuddy 的福利体系），显示占位符，
   // 别把一个空的「无记录」当成真实状态画出来。
   if(a && a.provider && a.provider !== 'workbuddy'){
@@ -7746,17 +8073,28 @@ function accountRow(a){
       expBadge = '<span class="badge mini warn" style="font-size:10px;padding:1px 4px" title="最近套餐包将于 ' + esc(cred.earliest_expiring.cycle_end_time.slice(5,10)) + ' 到期 (剩' + Math.ceil(d) + '天)">7天内到期</span>';
     }
   }
-  const credText = cred
-    ? ('<div style="display:inline-flex;align-items:center;gap:6px">'
-       + '<b style="color:var(--accent2)">' + fmt(cred.remain) + '</b>'
-       + '<span style="color:var(--dim)">/ ' + fmt(cred.size) + '</span>'
-       + expBadge
-       + '<span class="badge mini" style="font-size:10px;padding:1px 5px;cursor:pointer" onclick="openCreditsDetail(&quot;' + uidAttr + '&quot;)" title="点击查看积分与套餐明细">明细</span>'
-       + '</div>')
-    : ('<div style="display:inline-flex;align-items:center;gap:6px">'
-       + '<span style="color:var(--dim)">未查询</span>'
-       + '<span class="badge mini" style="font-size:10px;padding:1px 5px;cursor:pointer" onclick="openCreditsDetail(&quot;' + uidAttr + '&quot;)" title="点击查询积分明细">查询</span>'
-       + '</div>');
+  const credText = (a.provider === 'trae')
+    ? (cred && cred.unit === 'points'
+       ? ('<div style="display:inline-flex;align-items:center;gap:6px">'
+          + '<b style="color:var(--accent2)">' + fmt(cred.remain) + '</b>'
+          + '<span style="color:var(--dim);font-size:11px">积分</span>'
+          + '<span class="badge mini" style="font-size:10px;padding:1px 5px;cursor:pointer" onclick="refreshTraeCredits(this, &quot;' + uidAttr + '&quot;)" title="从 Trae 重新查询积分余额">刷新</span>'
+          + '</div>')
+       : ('<div style="display:inline-flex;align-items:center;gap:6px">'
+          + '<span style="color:var(--dim)">未查询</span>'
+          + '<span class="badge mini" style="font-size:10px;padding:1px 5px;cursor:pointer" onclick="refreshTraeCredits(this, &quot;' + uidAttr + '&quot;)" title="从 Trae 查询积分余额">查询</span>'
+          + '</div>'))
+    : (cred
+       ? ('<div style="display:inline-flex;align-items:center;gap:6px">'
+          + '<b style="color:var(--accent2)">' + fmt(cred.remain) + '</b>'
+          + '<span style="color:var(--dim)">/ ' + fmt(cred.size) + '</span>'
+          + expBadge
+          + '<span class="badge mini" style="font-size:10px;padding:1px 5px;cursor:pointer" onclick="openCreditsDetail(&quot;' + uidAttr + '&quot;)" title="点击查看积分与套餐明细">明细</span>'
+          + '</div>')
+       : ('<div style="display:inline-flex;align-items:center;gap:6px">'
+          + '<span style="color:var(--dim)">未查询</span>'
+          + '<span class="badge mini" style="font-size:10px;padding:1px 5px;cursor:pointer" onclick="openCreditsDetail(&quot;' + uidAttr + '&quot;)" title="点击查询积分明细">查询</span>'
+          + '</div>'));
   // 权重下拉：选项给 1-10；历史值超出范围时不让 select 悄悄跳回最近的档位，
   // 补一个选中项把真实值显示出来。
   const weight = Math.max(1, Math.min(100, Number(a.weight || 1) || 1));
@@ -8179,10 +8517,14 @@ async function loadAccounts(){
     await loadProxySlots();
     renderAccounts();
     updateUI();
+    // Trae 的账号 / 积分 / 签到表跟着 15 秒账号轮询一起刷新。
+    if(currentProvider() === 'trae' && typeof renderTraeOverview === 'function'){
+      renderTraeOverview();
+    }
     // 昵称刚到位，补画一次积分扣减历史：它和本请求是并行的，先渲染的那次只有 uid。
     if(LAST_CREDIT_DATA) renderCreditHistory();
-    // Auto-fetch credits once if not present. Trae 没有余额接口，别每次都白跑
-    // 一轮 /accounts/credits（每个账号都会回一条失败）。
+    // Auto-fetch credits once if not present. Trae 积分改为在 Trae 页按需查询
+    //（或后台定时刷新），避免每次打开网关页都打一轮 Trae 积分接口。
     if(currentProvider() !== 'trae' && window.ACCOUNTS.length && window.ACCOUNTS.some(a => !a.credits)){
       postJSON('/accounts/credits', {provider: currentProvider()}).then(r => {
         window.ACCOUNTS = r.accounts || ACCOUNTS;
@@ -8215,7 +8557,7 @@ const queryCredits = fetchCredits;
 async function toggleAccount(uid, enable, btn){
   if(btn) btn.disabled = true;
   try{
-    await postJSON('/accounts/set', {uid: uid, enabled: enable});
+    await postJSON('/accounts/set', {uid: uid, enabled: enable, provider: currentProvider()});
     await loadAccounts();
     toast(enable ? '账号已成功启用' : '账号已停用', 'ok');
   }catch(e){
@@ -8227,7 +8569,7 @@ async function toggleAccount(uid, enable, btn){
 async function setAccountWeight(uid, weight, sel){
   if(sel) sel.disabled = true;
   try{
-    await postJSON('/accounts/set', {uid: uid, weight: Number(weight)});
+    await postJSON('/accounts/set', {uid: uid, weight: Number(weight), provider: currentProvider()});
     await loadAccounts();
     toast(Number(weight) > 1 ? '权重已调整：该账号将优先接单' : '权重已恢复默认', 'ok');
   }catch(e){
@@ -8242,7 +8584,7 @@ async function editAccountNote(uid){
   const next = prompt('账号备注（留空清除；可用来标记「批量」/「自用」）:', (cur && cur.note) || '');
   if(next === null) return;
   try{
-    await postJSON('/accounts/set', {uid: uid, note: next});
+    await postJSON('/accounts/set', {uid: uid, note: next, provider: currentProvider()});
     await loadAccounts();
     toast(next.trim() ? '备注已保存' : '备注已清除', 'ok');
   }catch(e){
@@ -8310,7 +8652,7 @@ async function cycleAllProducts(btn){
 async function refreshOne(uid, btn){
   if(btn){ btn.disabled = true; btn.textContent = '刷新中...'; }
   try{
-    const r = await postJSON('/accounts/refresh', {uid: uid});
+    const r = await postJSON('/accounts/refresh', {uid: uid, provider: currentProvider()});
     const ok = (r.results||[])[0];
     toast(ok && ok.ok ? '账号凭证刷新成功' : ('刷新失败: ' + (ok && ok.error || '未知错误')), ok && ok.ok ? 'ok' : 'bad');
     await loadAccounts();
@@ -8339,7 +8681,7 @@ async function syncProfile(uid, btn){
 async function testAccount(uid, btn){
   if(btn){ btn.disabled = true; btn.textContent = '测试中...'; }
   try{
-    const r = await postJSON('/accounts/test', {uid: uid});
+    const r = await postJSON('/accounts/test', {uid: uid, provider: currentProvider()});
     if(r.ok){
       toast('测试通过 (' + r.elapsed_ms + 'ms) [' + r.model + ']: ' + (r.reply || '正常'), 'ok');
     } else {
@@ -8355,15 +8697,14 @@ async function testAccount(uid, btn){
 async function refreshAccounts(btn){
   if(btn){ btn.disabled = true; btn.textContent = '刷新中...'; }
   try{
-    // 逐个刷新当前提供商的账号：/accounts/refresh 按 uid 逐个走（服务端不带
-    // uid 时会对全部账号刷新，包括另一个提供商的——看板上这一下不该顺手去
-    // 刷新 Qoder 的凭证，反之亦然）。window.ACCOUNTS 已按 provider 过滤。
+    // 逐个刷新当前提供商的账号；请求显式带 provider，撞号时也不会刷到
+    // 另一个提供商的账号。window.ACCOUNTS 已按 provider 过滤。
     const uids = (window.ACCOUNTS || []).map(a => a.uid);
     if(!uids.length){ toast('当前提供商还没有账号', 'warn'); return; }
     const results = [];
     for(const uid of uids){
       try{
-        const r = await postJSON('/accounts/refresh', {uid: uid});
+        const r = await postJSON('/accounts/refresh', {uid: uid, provider: currentProvider()});
         results.push(...(r.results || []));
       }catch(e){
         results.push({uid: uid, ok: false, error: e.message});
@@ -8400,7 +8741,7 @@ async function deleteAccount(uid, name, btn){
   if(!confirm("确定删除账号 " + name + "？")) return;
   if(btn) btn.disabled = true;
   try{
-    await postJSON('/accounts/delete', {uid: uid});
+    await postJSON('/accounts/delete', {uid: uid, provider: currentProvider()});
     await loadAccounts();
     toast('已成功删除账号 ' + name, 'ok');
   }catch(e){
@@ -10377,6 +10718,7 @@ async function saveWinMaxHeight(btn){
 async function loadSettings(showToast){
   try {
     const data = await getJSON('/settings');
+    window.SETTINGS_DATA = data;
     const pwdState = document.getElementById('setPwdState');
     if(pwdState){
       pwdState.textContent = data.panel_password_is_default ? '(当前为默认密码)' : '(已自定义)';
@@ -10573,6 +10915,8 @@ async function loadSettings(showToast){
         usageKeepState.style.color = isDefault ? 'var(--dim)' : 'var(--accent2)';
       }
     if(showToast) toast('设置已刷新', 'ok');
+    // 设置里带着自动签到开关；Trae 页可能已经渲染过，读完后同步一次。
+    if(typeof renderTraeOverview === 'function') renderTraeOverview();
   } catch(e) {
     if(showToast) toast('读取设置失败: ' + e.message, 'bad');
   }
@@ -11721,7 +12065,7 @@ async function setAccountSlot(uid, slotId, el){
   if(slotId === '__legacy__') return;
   if(el) el.disabled = true;
   try{
-    await postJSON('/accounts/set', {uid: uid, proxySlot: slotId});
+    await postJSON('/accounts/set', {uid: uid, proxySlot: slotId, provider: currentProvider()});
     toast('出口已更新', 'ok');
     await loadAccounts();
     await loadProxySlots();
@@ -11973,7 +12317,7 @@ async function autoAssignSlots(){
   for(const a of unbound){
     const slot = slots[i % slots.length];
     i++;
-    try{ await postJSON('/accounts/set', {uid: a.uid, proxySlot: slot.id}); }catch(e){}
+    try{ await postJSON('/accounts/set', {uid: a.uid, proxySlot: slot.id, provider: currentProvider()}); }catch(e){}
   }
   await loadAccounts();
   await loadProxySlots();

@@ -17,6 +17,7 @@ import argparse
 import bisect
 import hashlib
 import heapq
+import html
 import ipaddress
 from collections import deque
 import re
@@ -10213,6 +10214,7 @@ def runtime_settings_view():
         "daily_chat_web": wb_settings.daily_chat_web(ACCOUNTS_DIR),
         "daily_chat_model": wb_settings.daily_chat_model(ACCOUNTS_DIR),
         "daily_chat_model_default": wb_accounts.DAILY_CHAT_MODEL,
+        "trae_auto_checkin": wb_settings.trae_auto_checkin(ACCOUNTS_DIR),
         "local_web_tools": wb_settings.local_web_tools(ACCOUNTS_DIR),
         "remaining_priority_enabled":
             wb_settings.remaining_priority_enabled(ACCOUNTS_DIR),
@@ -17310,6 +17312,10 @@ class Handler(BaseHTTPRequestHandler):
         # same wb_agents.py shipped in the repository, no secrets inside).
         if path == "/agents/cli":
             return self._get_agents_cli()
+        # Trae 浏览器授权的本机回调：浏览器跳回来时没有面板 token，必须在
+        # 面板鉴权之前处理；state / loginTraceID 与在途登录会话绑定。
+        if path == "/authorize":
+            return self._handle_trae_authorize(query)
         if self._is_panel_route(path) and not self._panel_ok():
             return self._error(401, "panel password required", "invalid_request_error")
         if path in ("/", "/dashboard", "/ui"):
@@ -18313,6 +18319,13 @@ class Handler(BaseHTTPRequestHandler):
                                    "invalid_request_error")
             wb_settings.set_daily_chat_web(ACCOUNTS_DIR, raw)
             reply["daily_chat_web"] = raw
+        if "trae_auto_checkin" in payload:
+            raw = payload.get("trae_auto_checkin")
+            if not isinstance(raw, bool):
+                return self._error(400, "trae_auto_checkin must be true or false",
+                                   "invalid_request_error")
+            wb_settings.set_trae_auto_checkin(ACCOUNTS_DIR, raw)
+            reply["trae_auto_checkin"] = raw
         if "daily_chat_model" in payload:
             raw = payload.get("daily_chat_model") or ""
             # Empty clears the override back to the built-in id. Anything else
@@ -18920,6 +18933,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._route_accounts_trae_scan(payload)
         if path == "/accounts/trae/import":
             return self._route_accounts_trae_import(payload)
+        if path == "/accounts/trae/checkin":
+            return self._route_accounts_trae_checkin(payload)
+        if path == "/accounts/trae/credits":
+            return self._route_accounts_trae_credits(payload)
+        if path == "/accounts/trae/callback":
+            return self._route_accounts_trae_callback(payload)
         if path == "/accounts/import/desktop":
             return self._route_accounts_import_desktop(payload)
         if path == "/accounts/refresh":
@@ -19368,14 +19387,75 @@ class Handler(BaseHTTPRequestHandler):
         provider = wb_accounts.normalize_provider(
             payload.get("provider") or self._request_provider()
             or wb_accounts.DEFAULT_PROVIDER)
+        callback_url = str(payload.get("callbackUrl") or "").strip()
+        if provider == "trae" and not callback_url:
+            # 浏览器回调必须打到网关本机端口；0.0.0.0 绑定换成 127.0.0.1。
+            try:
+                port = int(self.server.server_address[1])
+            except Exception:
+                port = 0
+            if port:
+                callback_url = "http://127.0.0.1:%d/authorize" % port
         try:
             started = POOL.start_login(realm=target_realm, platform=platform,
-                                       provider=provider)
+                                       provider=provider,
+                                       callback_url=callback_url)
         except Exception as exc:
             return self._error(502, "could not start login: %s" % exc)
         log("oauth login started (provider=%s, realm=%s, platform=%s, state=%s)"
             % (provider, target_realm, platform, started["state"][:8]))
         return self._json(200, started)
+
+    def _handle_trae_authorize(self, query):
+        """Trae 浏览器授权回调页（GET /authorize）。"""
+        params = {}
+        for key, values in (query or {}).items():
+            params[str(key)] = (values[-1] if isinstance(values, list) and values
+                                else values)
+        if not params:
+            return self._send_trae_callback_page(
+                400, False, "缺少回调参数", "浏览器没有带回 Trae 的授权参数。")
+        if POOL is None:
+            return self._send_trae_callback_page(
+                503, False, "账号池不可用", "网关还没有完成初始化，请稍后重试。")
+        try:
+            result = POOL.complete_trae_login("", params, require_pending=True)
+        except Exception as exc:
+            log("trae authorize callback failed: %s" % exc, level="WARN",
+                tag="accounts")
+            result = {"ok": False, "error": str(exc)}
+        if result.get("ok"):
+            account = result.get("account") or {}
+            nick = account.get("nickname") or account.get("uid") or "Trae 账号"
+            return self._send_trae_callback_page(
+                200, True, "Trae 授权成功",
+                "%s 已加入账号池，可以关闭此页回到网关看板。" % nick)
+        return self._send_trae_callback_page(
+            400, False, "Trae 授权失败",
+            result.get("error") or "AuthCode 交换失败，请回到看板重试。")
+
+    def _send_trae_callback_page(self, status, ok, title, message):
+        color = "#2cb044" if ok else "#d9534f"
+        label = "登录成功" if ok else "登录失败"
+        body = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>%s</title></head>
+<body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f1511;color:#e7efe9;display:flex;min-height:100vh;align-items:center;justify-content:center">
+<div style="max-width:520px;padding:40px 36px;border:1px solid #24352a;border-radius:16px;background:#141d17;text-align:center">
+<div style="font-size:44px;line-height:1;margin-bottom:18px">%s</div>
+<h1 style="font-size:22px;margin:0 0 10px;color:%s">%s</h1>
+<p style="font-size:14px;line-height:1.7;color:#a9b8ad;margin:0 0 22px">%s</p>
+<p style="font-size:12px;color:#6f8174;margin:0">Trae 网关 · %s</p>
+</div></body></html>""" % (
+            html.escape(title), "✓" if ok else "×", color, html.escape(label),
+            html.escape(str(message)), html.escape(title))
+        data = body.encode("utf-8")
+        self.send_response(int(status))
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
 
     def _route_accounts_login_pat(self, payload):
         """Qoder PAT 兑换登录：国内唯一入口，国际的设备码之外的兜底。
@@ -19466,6 +19546,86 @@ class Handler(BaseHTTPRequestHandler):
             "accounts": account_views(provider="trae"),
         })
 
+    def _trae_checkin_targets(self, payload):
+        uid = str((payload or {}).get("uid") or "").strip()
+        if uid and uid != "all":
+            target = POOL.get(uid, provider="trae") if POOL else None
+            return [target] if target else []
+        realm = str((payload or {}).get("realm") or "cn").lower()
+        return [a for a in (POOL.accounts if POOL else [])
+                if a.provider == "trae" and a.realm == realm and a.enabled]
+
+    def _route_accounts_trae_checkin(self, payload):
+        """手动/批量触发 Trae 每日签到（国内版）。"""
+        if POOL is None:
+            return self._json(200, {"ok": False, "msg": "账号池不可用"})
+        targets = self._trae_checkin_targets(payload)
+        if not targets:
+            return self._json(200, {"ok": False,
+                                    "msg": "未找到可用的 Trae 账号"})
+        results = []
+        for account in targets:
+            if account is None:
+                continue
+            res = account.checkin(trigger="manual")
+            nick = account.nickname or account.uid[:8]
+            add_log_entry(
+                "[Trae] 账号 [%s] 每日签到: %s" % (
+                    nick, res.get("msg") if res.get("ok") else res.get("error")),
+                level="INFO" if res.get("ok") else "WARN", tag="tasks")
+            results.append({"uid": account.uid, "nickname": account.nickname,
+                            "provider": "trae", **res})
+        return self._json(200, {
+            "ok": any(item.get("ok") for item in results),
+            "results": results,
+            "accounts": account_views(provider="trae"),
+        })
+
+    def _route_accounts_trae_credits(self, payload):
+        """刷新 Trae 积分余额（国内版）。"""
+        if POOL is None:
+            return self._json(200, {"ok": False, "msg": "账号池不可用"})
+        targets = self._trae_checkin_targets(payload)
+        if not targets:
+            return self._json(200, {"ok": False,
+                                    "msg": "未找到可用的 Trae 账号"})
+        results = []
+        for account in targets:
+            if account is None:
+                continue
+            res = account._fetch_credits_trae()
+            results.append({"uid": account.uid, "nickname": account.nickname,
+                            "provider": "trae",
+                            "credits": account.credits, **res})
+        return self._json(200, {
+            "ok": any(item.get("ok") for item in results),
+            "results": results,
+            "accounts": account_views(provider="trae"),
+        })
+
+    def _route_accounts_trae_callback(self, payload):
+        """面板粘贴回调地址完成 Trae 授权（远程访问/浏览器未自动跳回时用）。"""
+        if POOL is None:
+            return self._json(200, {"ok": False, "msg": "账号池不可用"})
+        raw = str((payload or {}).get("url") or "").strip()
+        if not raw:
+            return self._json(200, {"ok": False, "msg": "请粘贴完整的回调地址"})
+        try:
+            query = urlparse(raw).query if "?" in raw else raw
+            params = {k: (v[-1] if isinstance(v, list) and v else v)
+                      for k, v in parse_qs(query, keep_blank_values=True).items()}
+            result = POOL.complete_trae_login("", params)
+        except Exception as exc:
+            return self._json(200, {"ok": False, "error": str(exc)})
+        if result.get("ok"):
+            return self._json(200, {
+                "ok": True,
+                "account": result.get("account"),
+                "accounts": account_views(provider="trae"),
+            })
+        return self._json(200, {"ok": False,
+                                "error": result.get("error") or "授权失败"})
+
     def _route_accounts_login_cancel(self, payload):
         state = payload.get("state") or ""
         return self._json(200, {"cancelled": POOL.cancel_login(state)})
@@ -19537,7 +19697,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _route_accounts_refresh(self, payload):
         uid = payload.get("uid")
-        targets = [POOL.get(uid)] if uid else list(POOL.accounts)
+        provider = wb_accounts.provider_filter(
+            self._request_provider(payload.get("provider")))
+        if uid:
+            targets = [POOL.get(uid, provider=provider)]
+        else:
+            targets = [a for a in POOL.accounts
+                       if not provider or a.provider == provider]
         results = []
         for account in targets:
             if account is None:
@@ -19584,7 +19750,9 @@ class Handler(BaseHTTPRequestHandler):
         uid = payload.get("uid")
         if not uid:
             return self._error(400, "uid required")
-        account = POOL.get(uid)
+        provider = wb_accounts.provider_filter(
+            self._request_provider(payload.get("provider")))
+        account = POOL.get(uid, provider=provider)
         if not account:
             return self._error(404, "no such account")
         if account.provider == "trae":
@@ -19829,23 +19997,28 @@ class Handler(BaseHTTPRequestHandler):
         uid = payload.get("uid")
         if not uid:
             return self._error(400, "uid required")
+        provider = wb_accounts.provider_filter(
+            self._request_provider(payload.get("provider")))
         # Each field is applied on its own so a caller can change one thing
         # without restating the others; at least one must be present.
         updated = None
         if "proxySlot" in payload:
-            updated = POOL.set_proxy_slot(uid, payload.get("proxySlot"))
+            updated = POOL.set_proxy_slot(uid, payload.get("proxySlot"),
+                                          provider=provider)
             if updated is None:
                 return self._error(404, "no such account")
             log("account %s proxy slot set to %s"
                 % (uid[:8], updated.get("proxySlot") or "(direct)"))
         if "proxy" in payload:
-            updated = POOL.set_proxy(uid, payload.get("proxy"))
+            updated = POOL.set_proxy(uid, payload.get("proxy"),
+                                      provider=provider)
             if updated is None:
                 return self._error(404, "no such account")
             log("account %s proxy set to %s"
                 % (uid[:8], updated.get("proxy") or "(direct)"))
         if "enabled" in payload:
-            updated = POOL.set_enabled(uid, bool(payload.get("enabled")))
+            updated = POOL.set_enabled(uid, bool(payload.get("enabled")),
+                                        provider=provider)
             if updated is None:
                 return self._error(404, "no such account")
             log("account %s %s"
@@ -19857,12 +20030,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(400, "weight must be an integer between 1 and 100")
             if not 1 <= weight <= 100:
                 return self._error(400, "weight out of range (1-100)")
-            updated = POOL.set_weight(uid, weight)
+            updated = POOL.set_weight(uid, weight, provider=provider)
             if updated is None:
                 return self._error(404, "no such account")
             log("account %s weight set to %d" % (uid[:8], weight))
         if "note" in payload:
-            updated = POOL.set_note(uid, payload.get("note"))
+            updated = POOL.set_note(uid, payload.get("note"),
+                                    provider=provider)
             if updated is None:
                 return self._error(404, "no such account")
             log("account %s note set (%d chars)"
@@ -19889,7 +20063,14 @@ class Handler(BaseHTTPRequestHandler):
         uid = payload.get("uid")
         if not uid:
             return self._error(400, "uid required")
-        removed = POOL.remove(uid)
+        provider = wb_accounts.provider_filter(
+            self._request_provider(payload.get("provider")))
+        account = POOL.get(uid, provider=provider)
+        if account is None:
+            return self._error(404, "no such account")
+        # 显式按 provider 删除：两个提供商的 uid 空间独立，撞号时不能误删
+        # 另一个提供商的账号。
+        removed = POOL.remove(uid, provider=account.provider)
         log("account %s deleted" % uid[:8])
         return self._json(200, {"deleted": removed, "accounts": account_views()})
 
