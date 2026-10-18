@@ -1654,73 +1654,141 @@ def build_stream_headers(access_token, auth, realm, request_id=None):
 # ---------------------------------------------------------------------------
 # 刷新 / 账号状态
 
-def refresh_credential(realm, auth, refresh_token=None, proxy="", api_host=""):
-    """用 refreshToken 换一套新 token；失败抛 TraeError。"""
+def refresh_credential(realm, auth, refresh_token=None, proxy="", api_host="",
+                       trace=None):
+    """用 refreshToken 换一套新 token；失败抛 TraeError。
+
+    优先走新版 ``/trae/api/v3/oauth/ExchangeToken`` + DeviceProof（与真实
+    客户端刷新链路一致）；本机没有对应设备私钥时退回旧版
+    ``/cloudide/...`` + ClientSecret。两条链路都失败才报错，错误里保留
+    每个变体的状态与响应体。
+    """
     auth = dict(auth or {})
     refresh = str(refresh_token or auth.get("refreshToken") or "")
     if not refresh:
         raise TraeError("没有 refreshToken，请重新登录 Trae")
+    client_id = os.environ.get("TRAE_OAUTH_CLIENT_ID") or OAUTH_CLIENT_ID
     host = str(os.environ.get("TRAE_AUTH_HOST") or api_host or "").strip().rstrip("/") \
         or realm_config(realm)["auth_host"]
-    url = host + "/cloudide/api/v3/trae/oauth/ExchangeToken"
-    body = {
-        "ClientID": os.environ.get("TRAE_OAUTH_CLIENT_ID") or OAUTH_CLIENT_ID,
-        "RefreshToken": refresh,
-        "ClientSecret": os.environ.get("TRAE_OAUTH_CLIENT_SECRET") or "-",
-        "UserID": "",
-    }
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
+    exchange_base = str(
+        os.environ.get("TRAE_EXCHANGE_HOST")
+        or realm_config(realm).get("oauth_exchange_host")
+        or realm_config(realm)["auth_host"]).rstrip("/")
     device_id = str((auth or {}).get("deviceId") or "").strip()
+    variants = []
+    errors = []
+
+    # 新版刷新：DeviceProof 签名原文里的 AuthCode 位置换成 RefreshToken。
+    cred = None
     if device_id:
-        # 真实客户端的刷新请求也带设备头；缺了不致命，带上更贴近原生链路。
-        headers["x-device-id"] = device_id
-        headers["x-app-id"] = APP_ID
-        headers["x-platform-code"] = OAUTH_PAGE_PLATFORM_CODE
-        headers["x-cloudide-token"] = ""
-    status, raw = _request(url, method="POST", body=body, timeout=30,
-                           proxy=proxy, headers=headers)
-    detail = raw[:300].decode("utf-8", "replace")
-    if status < 200 or status >= 300:
-        raise TraeError("Trae 刷新失败 (%d): %s" % (status, detail))
-    try:
-        data = json.loads(raw.decode("utf-8", "replace"))
-    except ValueError:
-        raise TraeError("Trae 刷新返回的不是 JSON")
-    if isinstance(data, dict):
-        err = ((data.get("ResponseMetadata") or {}).get("Error") or {})
-        if err and str(err.get("Code") or "0") not in ("0", ""):
-            raise TraeError("Trae 刷新被拒绝: %s %s" % (
-                err.get("Code"), err.get("Message") or ""))
-        code = data.get("code")
-        if code not in (None, 0, "0"):
-            raise TraeError("Trae 刷新被拒绝: code=%s %s" % (
-                code, data.get("message") or ""))
-        container = data.get("Result") or data.get("data") or data
-    else:
-        container = {}
-    token = _find_token(container, ("Token", "AccessToken", "accessToken",
-                                   "token", "Jwt", "JWT"))
-    if not token:
-        raise TraeError("Trae 刷新返回里没有 token: %s" % detail)
-    new_refresh = _find_token(container, ("RefreshToken", "refreshToken")) or refresh
-    merged = dict(auth)
-    merged.update({
-        "token": token,
-        "refreshToken": new_refresh,
-        "expiredAt": _as_epoch(container.get("TokenExpireAt")
-                                or container.get("ExpiredAt")
-                                or container.get("expiredAt"))
-        or _as_epoch(_jwt_claims(token).get("exp")),
-        "refreshExpiredAt": _as_epoch(
-            container.get("RefreshTokenExpireAt")
-            or container.get("refreshExpiredAt")),
-        "tokenReleaseAt": _as_epoch(
-            container.get("TokenReleaseAt") or container.get("tokenReleaseAt")),
-    })
-    return credential_from_auth(merged, realm)
+        for item in local_device_credentials(realm):
+            if (str(item.get("deviceId") or "") == device_id
+                    and item.get("privateKeyPEM")):
+                cred = item
+                break
+    if cred:
+        proof_paths = ["/trae/api/v3/oauth/ExchangeToken",
+                       "/cloudide/api/v3/trae/oauth/ExchangeToken"]
+        for path in proof_paths:
+            url = (exchange_base if path.startswith("/trae/") else host) + path
+            for fmt in ("p1363", "der"):
+                try:
+                    proof, _raw = device_proof(
+                        cred["privateKeyPEM"], "POST", path, client_id,
+                        refresh, fmt=fmt)
+                except Exception as exc:
+                    errors.append("%s/%s 生成失败: %s" % (path, fmt, exc))
+                    continue
+                variants.append((
+                    "Refresh/Proof-%s-%s" % (fmt, path.split("/")[1]),
+                    url,
+                    {
+                        "ClientID": client_id,
+                        "RefreshToken": refresh,
+                        "DeviceID": device_id,
+                        "PlatformCode": OAUTH_PAGE_PLATFORM_CODE,
+                        "DeviceProof": proof,
+                    },
+                ))
+
+    # 旧协议兜底：cloudide 端点 + ClientSecret。
+    variants.append((
+        "Refresh/Legacy",
+        host + "/cloudide/api/v3/trae/oauth/ExchangeToken",
+        {
+            "ClientID": client_id,
+            "RefreshToken": refresh,
+            "ClientSecret": os.environ.get("TRAE_OAUTH_CLIENT_SECRET") or "-",
+            "UserID": "",
+        },
+    ))
+
+    for tag, url, body in variants:
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if device_id:
+            # 真实客户端的刷新请求也带设备头；缺了不致命，带上更贴近原生链路。
+            headers["x-device-id"] = device_id
+            headers["x-app-id"] = APP_ID
+            headers["x-platform-code"] = OAUTH_PAGE_PLATFORM_CODE
+            headers["x-cloudide-token"] = ""
+        try:
+            status, raw = _request(url, method="POST", body=body, timeout=30,
+                                   proxy=proxy, headers=headers)
+        except Exception as exc:
+            errors.append("%s 请求失败: %s" % (tag, exc))
+            continue
+        detail = raw[:300].decode("utf-8", "replace")
+        if status < 200 or status >= 300:
+            errors.append("%s HTTP %s: %s" % (tag, status, detail))
+            continue
+        try:
+            data = json.loads(raw.decode("utf-8", "replace"))
+        except ValueError:
+            errors.append("%s 返回的不是 JSON: %s" % (tag, detail))
+            continue
+        if isinstance(data, dict):
+            err = ((data.get("ResponseMetadata") or {}).get("Error") or {})
+            if err and str(err.get("Code") or "0") not in ("0", ""):
+                errors.append("%s 被拒绝: %s %s" % (
+                    tag, err.get("Code"), err.get("Message") or ""))
+                continue
+            code = data.get("code")
+            if code not in (None, 0, "0"):
+                errors.append("%s 被拒绝: code=%s %s" % (
+                    tag, code, data.get("message") or ""))
+                continue
+            container = data.get("Result") or data.get("data") or data
+        else:
+            container = {}
+        token = _find_token(container, ("Token", "AccessToken", "accessToken",
+                                       "token", "Jwt", "JWT"))
+        if not token:
+            errors.append("%s 返回里没有 token: %s" % (tag, detail))
+            continue
+        new_refresh = _find_token(container, ("RefreshToken", "refreshToken")) or refresh
+        merged = dict(auth)
+        merged.update({
+            "token": token,
+            "refreshToken": new_refresh,
+            "expiredAt": _as_epoch(container.get("TokenExpireAt")
+                                    or container.get("ExpiredAt")
+                                    or container.get("expiredAt"))
+            or _as_epoch(_jwt_claims(token).get("exp")),
+            "refreshExpiredAt": _as_epoch(
+                container.get("RefreshTokenExpireAt")
+                or container.get("refreshExpiredAt")),
+            "tokenReleaseAt": _as_epoch(
+                container.get("TokenReleaseAt") or container.get("tokenReleaseAt")),
+        })
+        if trace is not None:
+            trace.append(tag)
+        return credential_from_auth(merged, realm)
+
+    raise TraeError("Trae 刷新失败: %s" % (
+        " | ".join(errors) or "没有可用的刷新变体"))
 
 
 def _find_token(data, keys):
