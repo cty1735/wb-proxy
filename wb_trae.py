@@ -16,8 +16,9 @@
 * 聊天：``POST {api_host}/api/agent/v3/llm_utils_chat``，SSE 事件为
   ``output / done / token_usage / error``。
 
-Trae 没有 Qoder 那种 ``price_factor``：模型清单里不写倍率，看板按「按额度
-计费」展示，实际扣减以客户端账单为准。
+Trae 的模型倍率在 ``display_contact_config`` 的 ``consumption_rate`` 里
+（客户端选择器展示的 ``{rate}x`` 同款字段），活动补贴 / 低谷折扣也记录在
+同一个 JSON 的 ``activity_discount`` 里；看板按这些真实字段展示消耗倍率。
 
 网络层与账号池共用 wb_upstream_pool 的 keep-alive 池；代理出口通过 proxy
 参数传进来，与 WorkBuddy / Qoder 账号同一套行为。
@@ -1847,10 +1848,150 @@ def _entry_tags(entry):
     return blob
 
 
+#: 模型目录请求的 function 集合：客户端选择器按 function 拉不同清单
+#: （solo_agent / solo_coder / chat_v3 ...），合并后才是用户能选的模型。
+_MODEL_FUNCTIONS = ("chat_v3", "solo_agent", "solo_coder")
+
+#: 上游目录里的内部条目：不在模型选择器里出现，网关也不暴露。
+_MODEL_INTERNAL = frozenset((
+    "summary", "fast_apply", "fast_apply_new", "title_generation",
+    "input_optimization",
+))
+
+_CREDITS_NOTE_REMOTE = "来自 Trae 账号模型目录的消耗倍率（客户端选择器同款字段）"
+_CREDITS_NOTE_SNAPSHOT = "内置快照参考值；实际倍率以账号模型目录为准"
+
+
+def _entry_contact(entry):
+    """display_contact_config 是 JSON 字符串，解析成 dict；失败给空。"""
+    contact = entry.get("display_contact_config")
+    if isinstance(contact, str) and contact.strip():
+        try:
+            contact = json.loads(contact)
+        except ValueError:
+            return {}
+    return contact if isinstance(contact, dict) else {}
+
+
+def _entry_context(entry):
+    """context_window_tokens 是 {dev/prod: N}；兼容老字段。"""
+    value = entry.get("context_window_tokens") or entry.get("contextWindowTokens")
+    if isinstance(value, dict):
+        for key in ("prod", "dev", "max", "default"):
+            number = value.get(key)
+            if isinstance(number, (int, float)) and not isinstance(number, bool) \
+                    and number > 0:
+                return int(number)
+        for number in value.values():
+            if isinstance(number, (int, float)) and not isinstance(number, bool) \
+                    and number > 0:
+                return int(number)
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+        return int(value)
+    return _first_int(entry, "context_window", "contextWindow",
+                      "max_input_tokens", "maxInputTokens",
+                      "token_limit", "max_context_tokens")
+
+
+def format_consumption_rate(value):
+    """把 consumption_rate 数值转成看板认识的倍率字符串（0.06 / 0.78）。"""
+    try:
+        rate = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if rate < 0:
+        return ""
+    text = ("%f" % rate).rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _format_minute(value):
+    """低谷时段写的是分钟数（480 -> 08:00）。"""
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        return ""
+    if minutes < 0 or minutes > 1440:
+        return ""
+    return "%02d:%02d" % (minutes // 60, minutes % 60)
+
+
+def _off_peak_window_text(windows):
+    """把 off_peak 的 time_windows 压成「每天 00:00-08:00、22:00-24:00」。"""
+    parts = []
+    all_days = True
+    for window in windows if isinstance(windows, list) else []:
+        if not isinstance(window, dict):
+            continue
+        start = _format_minute(window.get("start_minute"))
+        end = _format_minute(window.get("end_minute"))
+        if not start or not end:
+            continue
+        weekdays = window.get("weekdays")
+        if not (isinstance(weekdays, list) and len(set(weekdays)) >= 7):
+            all_days = False
+        parts.append("%s-%s" % (start, end))
+    if not parts:
+        return ""
+    return ("每天 " if all_days else "") + "、".join(parts)
+
+
+def _consumption_info(entry):
+    """从 display_contact_config 读消耗倍率与活动折扣。
+
+    返回 (credits, note, off_peak)：当前倍率、说明文案、低谷倍率。
+    字段与 Trae 客户端选择器同源（consumption_rate / activity_discount）。
+    """
+    contact = _entry_contact(entry)
+    section = contact.get("consumption_rate")
+    rate = None
+    if isinstance(section, dict) and section.get("enable") is not False:
+        data = section.get("data")
+        if isinstance(data, dict) and data.get("rate") is not None:
+            rate = data.get("rate")
+    credits = format_consumption_rate(rate)
+    note = ""
+    off_peak = ""
+    activity = contact.get("activity_discount")
+    if isinstance(activity, dict) and activity.get("enable") is not False:
+        data = activity.get("data") if isinstance(activity.get("data"), dict) else {}
+        sub_key = str(activity.get("subKey") or activity.get("sub_key") or "")
+        off = data.get("off_peak") if isinstance(data.get("off_peak"), dict) else {}
+        if "off_peak" in sub_key or off:
+            after = format_consumption_rate(off.get("after_consumption_rate"))
+            if after:
+                off_peak = after
+                when = _off_peak_window_text(off.get("time_windows"))
+                note = "低谷时段%s降至 %sx" % (("（%s）" % when) if when else "", after)
+        elif data.get("current") or data.get("subsidy"):
+            current = data.get("current") if isinstance(data.get("current"), dict) else {}
+            before = format_consumption_rate(current.get("before_consumption_rate"))
+            now = format_consumption_rate(current.get("consumption_rate")) or credits
+            member = data.get("member") if isinstance(data.get("member"), dict) else {}
+            member_rate = format_consumption_rate(member.get("after_consumption_rate"))
+            if before and now and before != now:
+                extra = ""
+                if member_rate and member_rate != now:
+                    extra = "，会员 %sx" % member_rate
+                note = "限时补贴：原价 %sx → %sx%s" % (before, now, extra)
+    if not note and credits:
+        note = _CREDITS_NOTE_REMOTE
+    return credits, note, off_peak
+
+
 def normalise_model_entry(entry):
-    """把 get_detail_param 的一条记录塑造成网关的模型元数据。"""
+    """把 get_detail_param 的一条记录塑造成网关的模型元数据。
+
+    目录的展示字段在 display_config、倍率在 display_contact_config；
+    内部条目（advisor / auto / 自定义占位 / 辅助功能 / 对用户隐藏）直接
+    丢弃，context_window_tokens / reasoning_effort_config 一并翻译成网关
+    认识的名字。
+    """
     if not isinstance(entry, dict):
         return None
+    display = entry.get("display_config")
+    if not isinstance(display, dict):
+        display = {}
     config = (entry.get("config_name") or entry.get("configName")
               or entry.get("model") or entry.get("id") or "")
     config = str(config).strip()
@@ -1858,30 +1999,65 @@ def normalise_model_entry(entry):
         return None
     if entry.get("enable") is False or entry.get("enabled") is False:
         return None
-    name = str(entry.get("display_name") or entry.get("displayName")
+    if entry.get("config_switch") is False:
+        return None
+    if entry.get("is_invisible_to_user") is True:
+        return None
+    if config.startswith("custom_model_") or config in _MODEL_INTERNAL:
+        return None
+    lowered = config.lower()
+    if "_advisor" in lowered or lowered.endswith("-auto") \
+            or lowered.startswith("search_agent") \
+            or lowered.startswith("file_search"):
+        return None
+    name = str(display.get("display_name") or display.get("displayName")
+               or entry.get("display_name") or entry.get("displayName")
                or entry.get("name") or config).strip() or config
-    context = _first_int(entry, "context_window", "contextWindow",
-                         "max_input_tokens", "maxInputTokens",
-                         "token_limit", "max_context_tokens")
+    credits, credits_note, off_peak = _consumption_info(entry)
+    context = _entry_context(entry)
     max_out = _first_int(entry, "max_output_tokens", "maxOutputTokens",
                          "max_tokens", "maxTokens")
     tags = _entry_tags(entry)
-    reasoning = bool(entry.get("is_reasoning") or entry.get("reasoning")
+    contact = _entry_contact(entry)
+    reasoning_section = contact.get("reasoning") if isinstance(
+        contact.get("reasoning"), dict) else {}
+    multimodal_section = contact.get("multimodal") if isinstance(
+        contact.get("multimodal"), dict) else {}
+    reasoning = bool(str(display.get("model_capability") or "") == "reasoning_model"
+                     or reasoning_section.get("enable")
+                     or entry.get("is_reasoning") or entry.get("reasoning")
                      or entry.get("supports_reasoning")
                      or entry.get("thinking") or "reason" in tags
                      or "思考" in tags)
-    vision = bool(entry.get("is_vl") or entry.get("multimodal")
+    vision = bool(display.get("multimodal") or multimodal_section.get("enable")
+                  or entry.get("is_vl") or entry.get("multimodal")
                   or entry.get("supports_vision")
                   or "vision" in tags or "vl" in tags or "image" in tags)
     tools = entry.get("supports_tool_call")
     if tools is None:
-        tools = entry.get("toolcall_compatible", True)
+        tools = entry.get("toolcall_compatible")
+    if tools is None:
+        extra = entry.get("extra_config")
+        if isinstance(extra, str) and extra.strip():
+            try:
+                extra = json.loads(extra)
+            except ValueError:
+                extra = None
+        tools = extra.get("native_function_call") if isinstance(extra, dict) else None
+    if tools is None:
+        tools = True
     efforts = []
-    thinking = entry.get("thinking_config") or entry.get("thinkingConfig")
-    if isinstance(thinking, dict):
-        enabled = thinking.get("enabled")
-        if isinstance(enabled, dict) and isinstance(enabled.get("efforts"), dict):
-            efforts = sorted(str(k) for k in enabled["efforts"].keys())
+    effort_config = entry.get("reasoning_effort_config")
+    if isinstance(effort_config, dict):
+        options = effort_config.get("options")
+        if isinstance(options, list):
+            efforts = [str(item) for item in options if str(item).strip()]
+    if not efforts:
+        thinking = entry.get("thinking_config") or entry.get("thinkingConfig")
+        if isinstance(thinking, dict):
+            enabled = thinking.get("enabled")
+            if isinstance(enabled, dict) and isinstance(enabled.get("efforts"), dict):
+                efforts = sorted(str(k) for k in enabled["efforts"].keys())
     model = {
         "id": config,
         "name": name,
@@ -1893,10 +2069,14 @@ def normalise_model_entry(entry):
         "efforts": efforts,
         "input": ["text", "image"] if vision else ["text"],
         "supports_tool_call": bool(tools),
-        # Trae 没有 per-model price_factor：留空，看板显示「按额度计费」。
-        "credits": "",
+        # 消耗倍率（客户端选择器里的 {rate}x），拿不到就留空。
+        "credits": credits,
         "source": "remote",
     }
+    if credits_note:
+        model["credits_note"] = credits_note
+    if off_peak:
+        model["off_peak_rate"] = off_peak
     return model
 
 
@@ -1906,8 +2086,8 @@ def _extract_entries(data):
         return [item for item in data if isinstance(item, dict)]
     if not isinstance(data, dict):
         return []
-    for key in ("config_infos", "configInfos", "models", "model_list",
-                "modelList", "configs"):
+    for key in ("config_info_list", "config_infos", "configInfos", "models",
+                "model_list", "modelList", "configs"):
         value = data.get(key)
         if isinstance(value, list):
             return [item for item in value if isinstance(item, dict)]
@@ -1921,66 +2101,130 @@ def _extract_entries(data):
     return []
 
 
+def _entry_score(entry):
+    """给「同一模型出现在多个 function 清单」时挑字段更全的一份。"""
+    score = 0
+    display = entry.get("display_config") if isinstance(entry.get("display_config"), dict) else {}
+    if str(display.get("display_name") or entry.get("display_name") or "").strip():
+        score += 4
+    if _consumption_info(entry)[0]:
+        score += 2
+    if _entry_context(entry):
+        score += 1
+    return score
+
+
+def _merge_entry(merged, order, entry):
+    """把一条原始条目并进 config_name 索引。
+
+    同一模型在不同 function 里字段可能不同（倍率 / 展示名 / 可见性），
+    合并时取字段更全的一份；可见性按「任一清单可见即可见」处理。
+    """
+    config = str(entry.get("config_name") or entry.get("configName")
+                 or entry.get("model") or entry.get("id") or "").strip()
+    if not config:
+        return
+    current = merged.get(config)
+    if current is None:
+        merged[config] = dict(entry)
+        order.append(config)
+        return
+    if _entry_score(entry) > _entry_score(current):
+        current.update(entry)
+    if entry.get("is_invisible_to_user") is not True:
+        # 新条目在某个 function 里可见：可见性并过去（字段更新可能被分数
+        # 比较跳过，可见性不能跟着跳过）。
+        current["is_invisible_to_user"] = entry.get("is_invisible_to_user")
+
+
 def fetch_model_list(access_token, auth, realm, proxy="", timeout=25):
-    """拉一次上游模型目录，返回规范化后的条目列表。"""
+    """拉一次上游模型目录（多个 function 合并后规范化）。
+
+    客户端选择器按 function 拉各自的清单；网关把主要 function 合并、
+    按可见性过滤后就是用户实际能选的模型（含真实消耗倍率）。
+    """
     host = api_host_for(realm, auth)
     url = host + "/api/ide/v1/get_detail_param"
-    body = {
-        "function": "chat_v3",
-        "config_names": None,
-        "need_prompt": False,
-        "current_config_info": None,
-        "poly_prompt": True,
-        "mode_type": None,
-        "agent_type": None,
-    }
     headers = build_common_headers(access_token, auth, realm)
-    status, raw = _request(url, method="POST", body=body, timeout=timeout,
-                           proxy=proxy, headers=headers)
-    if status < 200 or status >= 300:
-        detail = raw[:300].decode("utf-8", "replace")
-        raise TraeError("Trae 模型目录失败 (%d): %s" % (status, detail))
-    try:
-        data = json.loads(raw.decode("utf-8", "replace"))
-    except ValueError:
-        raise TraeError("Trae 模型目录返回的不是 JSON")
-    entries = _extract_entries(data)
-    models = []
-    seen = set()
-    for entry in entries:
-        model = normalise_model_entry(entry)
-        if not model or model["id"] in seen:
+    merged = {}
+    order = []
+    errors = []
+    ok = False
+    for func in _MODEL_FUNCTIONS:
+        body = {
+            "function": func,
+            "config_names": None,
+            "need_prompt": False,
+            "current_config_info": None,
+            "poly_prompt": True,
+            "mode_type": None,
+            "agent_type": None,
+        }
+        try:
+            status, raw = _request(url, method="POST", body=body, timeout=timeout,
+                                   proxy=proxy, headers=headers)
+        except Exception as exc:
+            errors.append("%s: %s" % (func, exc))
             continue
-        seen.add(model["id"])
+        if status < 200 or status >= 300:
+            errors.append("%s: HTTP %d" % (func, status))
+            continue
+        try:
+            data = json.loads(raw.decode("utf-8", "replace"))
+        except ValueError:
+            errors.append("%s: 非 JSON" % func)
+            continue
+        ok = True
+        for entry in _extract_entries(data):
+            _merge_entry(merged, order, entry)
+    if not ok:
+        raise TraeError("Trae 模型目录失败: %s"
+                        % (" | ".join(errors) or "没有可用的 function"))
+    models = []
+    seen_ids = set()
+    seen_names = set()
+    for config in order:
+        model = normalise_model_entry(merged[config])
+        if not model:
+            continue
+        if model["id"].lower() in seen_ids:
+            continue
+        name_key = model["name"].strip().lower()
+        if name_key and name_key in seen_names:
+            # 同一展示名的多个 config（Official / 别名）只留第一份。
+            continue
+        seen_ids.add(model["id"].lower())
+        if name_key:
+            seen_names.add(name_key)
         models.append(model)
-    return models
+    # 目录里混着个别没有倍率的条目（自定义模型占位）；只要有一批带倍率
+    # 的模型，就以带倍率的那批为准。
+    rated = [m for m in models if m.get("credits")]
+    return rated or models
 
 
-#: 静态兜底清单：只用于「还没有 Trae 账号」时的面板展示。真正的模型 id
-#: 以账号目录（get_detail_param）为准；这里给的是国内版常见的 config_name。
+#: 静态兜底清单：只用于「还没有 Trae 账号」时的面板展示。国内版的行是
+#: 2026-10-18 从真实账号目录抄下的可见模型——
+#: (config_name, 显示名, 推理, 视觉, 上下文, 消耗倍率, 低谷倍率)，
+#: 倍率与客户端选择器的 consumption_rate 同源；真正以账号目录为准。
 _STATIC_MODELS = {
     "cn": [
-        ("glm-5.2", "GLM-5.2", True, False, 200000),
-        ("glm-5.1", "GLM-5.1", True, False, 200000),
-        ("glm-5", "GLM-5", True, False, 128000),
-        ("glm-4.7", "GLM-4.7", True, False, 128000),
-        ("glm-4.6", "GLM-4.6", True, False, 128000),
-        ("DeepSeek-V4-Pro", "DeepSeek-V4-Pro", True, False, 128000),
-        ("DeepSeek-V4-Flash", "DeepSeek-V4-Flash", False, False, 128000),
-        ("deepseek-V3.1", "DeepSeek-V3.1", True, False, 128000),
-        ("Doubao-Seed-2.0-Code", "Doubao-Seed-2.0-Code", True, True, 256000),
-        ("Doubao-Seed-2.1-Pro", "Doubao-Seed-2.1-Pro", True, True, 256000),
-        ("Doubao-Seed-2.1-Turbo", "Doubao-Seed-2.1-Turbo", True, True, 256000),
-        ("kimi-k2.7-code", "Kimi-K2.7-Code", True, False, 256000),
-        ("kimi-k2.6", "Kimi-K2.6", True, False, 256000),
-        ("kimi-k2.5", "Kimi-K2.5", True, False, 128000),
-        ("minimax-m3", "MiniMax-M3", True, False, 200000),
-        ("minimax-m2.7", "MiniMax-M2.7", True, False, 200000),
-        ("qwen-3.7-plus", "Qwen3.7-Plus", True, False, 128000),
-        ("qwen-3.6-plus", "Qwen3.6-Plus", True, False, 128000),
-        ("qwen-3.5", "Qwen3.5", True, False, 128000),
-        ("qwen3-coder", "Qwen3-Coder", True, False, 128000),
-        ("glm-5v-turbo", "GLM-5V-Turbo", True, True, 128000),
+        ("Doubao-Seed-Code", "Seed-Code", True, True, 256000, 0.06, None),
+        ("glm-5.1", "GLM-5.1", True, False, 116000, 0.83, None),
+        ("glm-5", "GLM-5", True, False, 116000, 0.7, None),
+        ("glm-5.2", "GLM-5.2", True, False, 116000, 0.78, None),
+        ("DeepSeek-V4-Flash", "DeepSeek-V4-Flash", True, False, 116000, 0.2, 0.1),
+        ("DeepSeek-V4-Pro-Official", "DeepSeek-V4-Pro 正式版", True, False, 116000, 0.72, 0.36),
+        ("DeepSeek-V4-Pro", "DeepSeek-V4-Pro", True, False, 116000, 0.72, 0.36),
+        ("minimax-m3", "MiniMax-M3", True, True, 116000, 0.26, None),
+        ("qwen-3.7-plus", "Qwen3.7-Plus", True, True, 200000, 0.25, None),
+        ("qwen-3.5", "Qwen3.5-Plus", True, True, 116000, 0.26, None),
+        ("Doubao-Seed-2.0-Code", "Doubao-Seed-2.0-Code", True, True, 184000, 0.39, None),
+        ("glm-5v-turbo", "GLM-5V-Turbo", True, True, 200000, 0.51, None),
+        ("kimi-k2.6", "Kimi-K2.6", True, True, 200000, 0.75, None),
+        ("kimi-k2.5", "Kimi-K2.5", True, True, 200000, 0.48, None),
+        ("minimax-m2.7", "MiniMax-M2.7", True, False, 200000, 0.27, None),
+        ("qwen-3.6-plus", "Qwen3.6-Plus", True, True, 200000, 0.26, None),
     ],
     "intl": [
         ("claude-opus-4-7", "Claude Opus 4.7", True, True, 200000),
@@ -2047,11 +2291,19 @@ def alias_for(realm, model_id):
 
 
 def static_models(realm):
-    """内置兜底清单（形状与 normalise_model_entry 的输出一致）。"""
+    """内置兜底清单（形状与 normalise_model_entry 的输出一致）。
+
+    行格式：(id, name, reasoning, vision, context, rate?)，rate 是 2026-10-18
+    从国内版账号目录抄下来的消耗倍率，只做无账号时的面板展示。
+    """
     key = realm_key(realm)
     models = []
-    for mid, name, reasoning, vision, context in _STATIC_MODELS.get(key, ()):
-        models.append({
+    for row in _STATIC_MODELS.get(key, ()):
+        mid, name, reasoning, vision, context = row[:5]
+        rate = row[5] if len(row) > 5 else None
+        off_peak = row[6] if len(row) > 6 else None
+        credits = format_consumption_rate(rate) if rate is not None else ""
+        model = {
             "id": mid,
             "name": name,
             "key": mid,
@@ -2062,9 +2314,17 @@ def static_models(realm):
             "efforts": [],
             "input": ["text", "image"] if vision else ["text"],
             "supports_tool_call": True,
-            "credits": "",
+            "credits": credits,
             "source": "system",
-        })
+        }
+        if credits:
+            note = _CREDITS_NOTE_SNAPSHOT
+            if off_peak is not None:
+                note = "内置快照参考值；低谷时段降至 %sx" % format_consumption_rate(off_peak)
+            model["credits_note"] = note
+        if off_peak is not None:
+            model["off_peak_rate"] = format_consumption_rate(off_peak)
+        models.append(model)
     return models
 
 
@@ -2112,6 +2372,15 @@ def model_entry_meta(model):
     }
     if model.get("efforts"):
         meta["reasoning"] = {"supportedEfforts": list(model["efforts"])}
-    # 没有 price_factor：显式带上说明，面板显示「按额度计费」而不是「-」。
-    meta["credits_note"] = "Trae 按账号额度计费，没有 per-model 倍率"
+    # 消耗倍率（客户端选择器的 {rate}x）+ 活动折扣说明；没有倍率的条目
+    # 显式说明来源，面板显示「按额度计费」而不是「-」。
+    if model.get("credits"):
+        meta["credits"] = model["credits"]
+        meta["credits_note"] = model.get("credits_note") or _CREDITS_NOTE_REMOTE
+    elif model.get("credits_note"):
+        meta["credits_note"] = model["credits_note"]
+    else:
+        meta["credits_note"] = "上游目录没有该模型的消耗倍率；实际扣减以 Trae 客户端账单为准"
+    if model.get("off_peak_rate"):
+        meta["off_peak_rate"] = model["off_peak_rate"]
     return meta

@@ -984,6 +984,50 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 #pageAnalytics .skel{color:var(--dim2);font-size:12px;padding:22px 0;text-align:center}
 #pageAnalytics .foot-note{color:var(--dim2);font-size:11px;text-align:center;margin-top:20px}
 
+
+/* ====================== KPI 明细：点卡片看拆解 ====================== */
+/* 卡片本身就是入口：cursor + focus 描边 + 悬停/聚焦时在标题行浮出的「明细」徽标
+   （只改透明度，不占位、不引起布局位移）。 */
+#pageAnalytics .kpi[data-kpi]{cursor:pointer}
+#pageAnalytics .kpi[data-kpi]:focus-visible{outline:2px solid var(--accent-2);outline-offset:2px}
+#pageAnalytics .kpi .det-hint{
+  font-size:9.5px;font-weight:650;letter-spacing:.03em;color:var(--accent-2);
+  background:var(--panel2);border:1px solid var(--line);border-radius:999px;
+  padding:0 5px;line-height:14px;opacity:0;transition:opacity .18s ease;pointer-events:none;
+}
+#pageAnalytics .kpi[data-kpi]:hover .det-hint,
+#pageAnalytics .kpi[data-kpi]:focus-visible .det-hint{opacity:1}
+
+/* 明细弹窗：两列「按账号 / 按模型」拆解。弹窗挂在 body 下（和其余弹窗同处），
+   拿不到 #pageAnalytics 作用域的私有变量，所以这里只用全局 token。 */
+.kpi-bd-scope{font-size:11px;color:var(--dim);font-weight:400;white-space:nowrap}
+@media (max-width:640px){.kpi-bd-scope{white-space:normal}}
+.kpi-bd-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(122px,1fr));gap:8px;margin-bottom:16px}
+.kpi-bd-tile{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:8px 10px;min-width:0}
+.kpi-bd-tile .l{font-size:10.5px;color:var(--dim)}
+.kpi-bd-tile .v{font-size:15px;font-weight:650;margin-top:2px;letter-spacing:-.01em;font-variant-numeric:tabular-nums;white-space:nowrap}
+.kpi-bd-tile .v small{font-size:10.5px;font-weight:500;color:var(--dim);margin-left:2px}
+.kpi-bd-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px 22px}
+.kpi-bd-h{font-size:10.5px;font-weight:650;color:var(--dim);letter-spacing:.05em;margin-bottom:8px}
+.kpi-bd-h .cnt{font-weight:400;color:var(--dim-light);margin-left:5px}
+.kpi-bd-list{display:flex;flex-direction:column;gap:10px}
+.kpi-bd-row{display:flex;flex-direction:column;gap:4px}
+.kpi-bd-row .hd{display:flex;align-items:baseline;gap:6px;font-size:12px;min-width:0}
+.kpi-bd-row .hd .nm{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kpi-bd-row .hd .vv{margin-left:auto;font-weight:650;white-space:nowrap;font-variant-numeric:tabular-nums}
+.kpi-bd-row .hd .vv i{font-style:normal;font-weight:400;font-size:10.5px;color:var(--dim);margin-left:5px}
+.kpi-bd-row .bar{height:5px;border-radius:3px;background:var(--panel2);border:1px solid var(--line);overflow:hidden}
+.kpi-bd-row .bar i{display:block;height:100%;background:var(--accent);opacity:.8}
+.kpi-bd-row .sub{font-size:10.5px;color:var(--dim-light);line-height:1.55;word-break:break-word}
+.kpi-bd-tag{font-size:9.5px;font-weight:650;border-radius:5px;padding:1px 5px;line-height:14px;white-space:nowrap}
+.kpi-bd-tag.cn{color:#1f6b31;background:#dcf5e2;border:1px solid #b7e6c3}
+.kpi-bd-tag.intl{color:#17527e;background:#d9e9f7;border:1px solid #b3d0e8}
+[data-theme="dark"] .kpi-bd-tag.cn{color:#9fe8ae;background:rgba(44,176,68,.28);border-color:rgba(44,176,68,.5)}
+[data-theme="dark"] .kpi-bd-tag.intl{color:#b5d6f5;background:rgba(106,155,204,.32);border-color:rgba(106,155,204,.5)}
+.kpi-bd-ok{color:var(--accent2)} .kpi-bd-gold{color:var(--warn)} .kpi-bd-bad{color:var(--bad)}
+.kpi-bd-empty{color:var(--dim-light);font-size:11.5px;padding:18px 0;text-align:center}
+.kpi-bd-foot{font-size:10.5px;color:var(--dim-light);line-height:1.65;margin-top:16px;padding-top:10px;border-top:1px solid var(--line)}
+
 </style>
 <script>
 /* Runs before <body> is parsed, so the page the user last had is the
@@ -1132,7 +1176,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     '(全部显示)': '(all shown)',
     '(共': '(total',
     '(其他)': '(other)',
-    '(夜间0.5x)': '(0.5x at night)',
+    '(夜间': '(night ',
     '(已保存:': '(saved:',
     '(已关闭)': '(off)',
     '(已启用)': '(on)',
@@ -1873,6 +1917,11 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     '该模型在上游目录里没有倍率字段；Qoder 按账号额度（credits）计费，实际扣减见「最近请求」的「积分」列。': 'This model has no rate field in the upstream catalog; Qoder bills in account credits, and the actual charge is in the Credits column of Recent requests.',
     '官网文档参考值；实际倍率以账号模型清单（price_factor）为准': 'Reference value from the official docs; the actual rate comes from the account model list (price_factor).',
     '来自账号模型清单的 price_factor；活动折扣可能让实际倍率不同': 'Taken from the account model list price_factor; promotions may change the effective rate.',
+    '来自 Trae 账号模型目录的消耗倍率（客户端选择器同款字段）': 'Consumption rate from the Trae account model catalog (same field the desktop picker shows).',
+    '内置快照参考值；实际倍率以账号模型目录为准': 'Reference value from the built-in snapshot; the account model catalog is authoritative.',
+    '该模型在上游目录里没有消耗倍率字段；实际扣减以 Trae 客户端账单为准。': 'This model has no consumption-rate field in the upstream catalog; the actual charge follows the Trae client billing.',
+    '限时补贴': 'Limited-time subsidy',
+    '低谷时段': 'Off-peak hours',
     '展示 Qoder 的官方对话大模型、上下文容量、推理/视觉能力、思考控制与默认采样参数；倍率为 Credits 消耗参考系数': 'Official Qoder chat models with context size, reasoning/vision abilities, thinking controls and default sampling parameters; the rate is the reference Credit multiplier.',
     '深色': 'Dark',
     '添加 WorkBuddy 账号 (OAuth 授权)': 'Add a WorkBuddy account (OAuth)',
@@ -2259,7 +2308,38 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     '每日活跃对话成功完成': 'Daily activity chat completed',
     '国际版不适用国内成长任务中心': 'The Global version has no China growth-task center',
     '猫猫今日已完成旅行，明日 00:00 刷新': 'The cat already finished its trip today; resets at 00:00 tomorrow',
-    '猫猫正在旅行途中，请稍后再来查看！': 'The cat is still travelling; check again later!'
+    '猫猫正在旅行途中，请稍后再来查看！': 'The cat is still travelling; check again later!',
+    // 数据看板：KPI 卡片明细弹窗（点卡片展开的「按账号 / 按模型」拆解）
+    '指标明细': 'Metric details',
+    'TOKEN 消耗明细': 'Token usage details',
+    '请求数明细': 'Request details',
+    '生成速度明细': 'Generation speed details',
+    '缓存命中率明细': 'Cache hit rate details',
+    'API 等价花费明细': 'API-equivalent cost details',
+    '请求成功率明细': 'Request success rate details',
+    '按账号': 'By account',
+    '按模型': 'By model',
+    '主要模型': 'Top models',
+    '主要账号': 'Top accounts',
+    'Token 总量': 'Total tokens',
+    '更新于': 'updated at',
+    '与卡片同源': 'same source as the card',
+    '该区间暂无请求': 'No requests in this range',
+    '该区间暂无数据': 'No data in this range',
+    '该区间暂无可拆解的记录。': 'No records to break down in this range.',
+    '数据加载中…': 'Loading…',
+    '输入只算提示 Token 里未命中缓存的部分，思考已计入输出；失败请求已经产生的 Token 同样计入。':
+      'Input counts only the uncached part of the prompt tokens; reasoning is already part of output. Tokens a failed request already produced are counted too.',
+    '请求数是成功完成的次数，失败单独统计；成功率 = 成功 /（成功 + 失败）。':
+      'Requests counts completed calls and failures are tracked separately. Success rate = succeeded / (succeeded + failed).',
+    '平均生成速度按每条请求自己的生成速度取平均；首字与耗时同为窗口内平均。':
+      'Generation speed is the mean of the per-request speeds; TTFT and duration are window averages as well.',
+    '缓存命中率 = 缓存 Token / 输入 Token，与卡片同一口径；下面的排序按缓存复用量。':
+      'Cache hit rate = cached tokens / input tokens, the same measure as the card; rows are ordered by cached tokens.',
+    '按 OpenRouter 同名模型的价格把每条请求的 Token 折算成人民币；未定价的模型仍计入 Token 与请求数，但不产生金额。':
+      'Tokens of each request are converted to CNY using the price of the same model on OpenRouter; unpriced models still count toward tokens and requests, but add no amount.',
+    '成功率 = 成功 /（成功 + 失败）；客户端主动中断不计入失败。':
+      'Success rate = succeeded / (succeeded + failed); client-side cancellations are not counted as failures.'
   };
   var HANT_PHRASES = {
     " · 周期已过": " · 週期已過",
@@ -2464,6 +2544,12 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     "该模型在上游目录里没有倍率字段；Qoder 按账号额度（credits）计费，实际扣减见「最近请求」的「积分」列。": "此模型在上游目錄中沒有倍率欄位；Qoder 依帳號額度（credits）計費，實際扣減請見「最近請求」的「積分」欄。",
     "官网文档参考值；实际倍率以账号模型清单（price_factor）为准": "官網文件參考值；實際倍率以帳號模型清單（price_factor）為準",
     "来自账号模型清单的 price_factor；活动折扣可能让实际倍率不同": "來自帳號模型清單的 price_factor；活動折扣可能讓實際倍率不同",
+    "来自 Trae 账号模型目录的消耗倍率（客户端选择器同款字段）": "來自 Trae 帳號模型目錄的消耗倍率（客戶端選擇器同款欄位）",
+    "内置快照参考值；实际倍率以账号模型目录为准": "內建快照參考值；實際倍率以帳號模型目錄為準",
+    "该模型在上游目录里没有消耗倍率字段；实际扣减以 Trae 客户端账单为准。": "此模型在上游目錄中沒有消耗倍率欄位；實際扣減以 Trae 客戶端帳單為準。",
+    "限时补贴": "限時補貼",
+    "低谷时段": "低谷時段",
+    "(夜间": "(夜間",
     "已为": "已為",
     "已为 ": "已為 ",
     "已从桌面客户端进程回收密钥（只留在内存里）": "已從桌面客戶端程序回收金鑰（只留在記憶體裡）",
@@ -3038,7 +3124,8 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     [/第 (\d+) \/ (\d+) 页 · 共 ([\d,]+) 条记录/, function(m, a, b, c){ return 'Page ' + a + ' / ' + b + ' · ' + c + ' records'; }],
     [/共 (\d+) 个，启用 (\d+) 个/, function(m, a, b){ return a + ' total, ' + b + ' enabled'; }],
     [/含失败共 ([\d,]+) 次/, function(m, n){ return n + ' calls including failures'; }],
-    [/失败 ([\d,]+) 次/, function(m, n){ return n + ' failed'; }]
+    [/失败 ([\d,]+) 次/, function(m, n){ return n + ' failed'; }],
+    [/其他 (\d+) 项/, function(m, n){ return '+' + n + ' more'; }]
   ];
   var KEYS = Object.keys(DICT);
   KEYS.sort(function(a, b){ return b.length - a.length; });
@@ -3705,15 +3792,15 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     <div id="qoderQuotaList" class="table-wrap"></div>
   </section>
 
-  <!-- Trae 账号视图：国内版每天签到 150+50 积分；Trae 没有公开的
-       per-model 倍率，按账号额度计费。「任务与福利」页在 Trae 模式下展示
-       账号、积分与自动签到状态。除每日签到外的积分任务接口尚未证实，
-       这里不伪造自动执行。 -->
+  <!-- Trae 账号视图：国内版每天签到 150+50 积分；模型倍率来自账号目录
+       （display_contact_config.consumption_rate，客户端选择器同款）。
+       「任务与福利」页在 Trae 模式下展示账号、积分与自动签到状态。
+       除每日签到外的积分任务接口尚未证实，这里不伪造自动执行。 -->
   <section id="sectionTraeOverview" class="trae-only">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
       <div>
         <h2 style="margin:0">Trae 账号、积分与签到</h2>
-        <div style="font-size:12px;color:var(--dim)">Trae 国内版每天签到可领 150+50 积分；网关可自动签到并查询积分余额。其他积分任务接口尚未证实，不做自动执行。Trae 按账号额度计费，没有 per-model 倍率。</div>
+        <div style="font-size:12px;color:var(--dim)">Trae 国内版每天签到可领 150+50 积分；网关可自动签到并查询积分余额。其他积分任务接口尚未证实，不做自动执行。模型按账号积分（额度）计费，消耗倍率取自账号目录，与客户端选择器一致。</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <label class="sec" style="display:inline-flex;align-items:center;gap:7px;cursor:pointer;user-select:none"
@@ -3876,41 +3963,43 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     </div>
   </div>
 
-  <!-- ====================== ① KPI（B 版：大卡 + 大面积 sparkline + 环形卡） ====================== -->
+  <!-- ====================== ① KPI（B 版：大卡 + 大面积 sparkline + 环形卡） ======================
+       每张卡都是「明细」入口：点击（或聚焦后回车/空格）打开该指标按账号 / 按模型的拆解，
+       数据与卡面同源（同一份 /usage/analytics）。 -->
   <div class="kpis" id="kpis">
-    <div class="kpi big"><div class="accentbar" style="background:var(--accent)"></div>
-      <div class="k"><span class="ic">◆</span>TOKEN 消耗 <span class="delta" id="deltaTokens"></span></div>
+    <div class="kpi big" data-kpi="tokens" tabindex="0" role="button" aria-label="TOKEN 消耗明细"><div class="accentbar" style="background:var(--accent)"></div>
+      <div class="k"><span class="ic">◆</span>TOKEN 消耗 <span class="det-hint">明细</span><span class="delta" id="deltaTokens"></span></div>
       <div class="v" id="kTokens">—</div>
       <div class="s" id="kTokensSub">—</div>
       <div class="tokflow" id="kTokensFlow"></div>
       <canvas class="spark" id="sparkTokens"></canvas>
     </div>
-    <div class="kpi big">
-      <div class="k"><span class="ic">⇄</span>请求数 <span class="delta" id="deltaReqs"></span></div>
+    <div class="kpi big" data-kpi="reqs" tabindex="0" role="button" aria-label="请求数明细">
+      <div class="k"><span class="ic">⇄</span>请求数 <span class="det-hint">明细</span><span class="delta" id="deltaReqs"></span></div>
       <div class="v" id="kReqs">—</div>
       <div class="s" id="kReqsSub">—</div>
       <canvas class="spark" id="sparkReqs"></canvas>
     </div>
-    <div class="kpi big">
-      <div class="k"><span class="ic">⚡</span>生成速度</div>
+    <div class="kpi big" data-kpi="speed" tabindex="0" role="button" aria-label="生成速度明细">
+      <div class="k"><span class="ic">⚡</span>生成速度 <span class="det-hint">明细</span></div>
       <div class="v" id="kSpeed">—</div>
       <div class="s" id="kSpeedSub">—</div>
       <canvas class="spark" id="sparkSpeed"></canvas>
     </div>
-    <div class="kpi big">
-      <div class="k"><span class="ic">♻</span>缓存命中率 <span class="delta" id="deltaCache"></span></div>
+    <div class="kpi big" data-kpi="cache" tabindex="0" role="button" aria-label="缓存命中率明细">
+      <div class="k"><span class="ic">♻</span>缓存命中率 <span class="det-hint">明细</span><span class="delta" id="deltaCache"></span></div>
       <div class="v" id="kCache">—</div>
       <div class="s" id="kCacheSub">—</div>
       <canvas class="spark" id="sparkCache"></canvas>
     </div>
-    <div class="kpi big">
-      <div class="k"><span class="ic">¥</span>API 等价花费 <span class="delta" id="deltaCost"></span></div>
+    <div class="kpi big" data-kpi="cost" tabindex="0" role="button" aria-label="API 等价花费明细">
+      <div class="k"><span class="ic">¥</span>API 等价花费 <span class="det-hint">明细</span><span class="delta" id="deltaCost"></span></div>
       <div class="v" id="kCost">—</div>
       <div class="s" id="kCostSub">—</div>
       <canvas class="spark" id="sparkCost"></canvas>
     </div>
-    <div class="kpi ringcard">
-      <div class="k"><span class="ic">✓</span>请求成功率</div>
+    <div class="kpi ringcard" data-kpi="success" tabindex="0" role="button" aria-label="请求成功率明细">
+      <div class="k"><span class="ic">✓</span>请求成功率 <span class="det-hint">明细</span></div>
       <div class="ringwrap">
         <div class="ring" id="ringSuccess"><div class="hole"><b id="ringPct">—</b><span>成功</span></div></div>
       </div>
@@ -5076,6 +5165,22 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
   </div>
 </div>
 
+<!-- 数据看板：KPI 卡明细（点击 KPI 卡片打开；内容由 renderKpis 的同源数据现场渲染，
+     轮询刷新时如果弹窗还开着，内容一起重画） -->
+<div class="modal-mask" id="kpiDetailModal" onclick="if(event.target===this) closeKpiDetail()">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="kpiDetailTitle"
+       style="width:min(900px,96vw);max-height:92vh;display:flex;flex-direction:column">
+    <div class="modal-hd">
+      <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;min-width:0">
+        <h2 id="kpiDetailTitle">指标明细</h2>
+        <span class="kpi-bd-scope" id="kpiDetailScope"></span>
+      </div>
+      <button class="modal-x" onclick="closeKpiDetail()" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-bd" id="kpiDetailBody" style="overflow-y:auto;flex:1"></div>
+  </div>
+</div>
+
 <script>
 let loginState = null, loginTimer = null;
 
@@ -5828,12 +5933,12 @@ const GATEWAY_DESC_TRAE = "管理 Trae 账号池与代理出口，查看当日�
 // 副标题必须跟着换，否则页面在说一件它没做的事。
 const TASKS_DESC_WB = "每日活跃打卡、Buddy 加油站、成长任务与福利积分总览。";
 const TASKS_DESC_QODER = "Qoder 账号的套餐与加油包额度总览：剩余、已用与到期。";
-const TASKS_DESC_TRAE = "Trae 账号状态与模型目录总览（Trae 按账号额度计费，没有签到体系）。";
-// 模型清单页的说明：Qoder / Trae 的模型目录没有倍率 / 折扣（按账号额度计费），
-// 照搬 WorkBuddy 的「及在售倍率」会指向一列并不存在的数字。
+const TASKS_DESC_TRAE = "Trae 账号状态、积分与模型目录总览（国内版每天可签到，模型倍率随账号目录更新）。";
+// 模型清单页的说明：Qoder 的目录可能没有倍率（按账号额度计费）；Trae 的
+// 倍率来自账号目录的 consumption_rate（客户端选择器同款），可正常展示。
 const MODELS_DESC_WB = "展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率";
 const MODELS_DESC_QODER = "展示 Qoder 的官方对话大模型、上下文容量、推理/视觉能力、思考控制与默认采样参数；倍率为 Credits 消耗参考系数";
-const MODELS_DESC_TRAE = "展示 Trae 的官方对话大模型、上下文容量、推理/视觉能力与默认采样参数；Trae 按账号额度计费，没有 per-model 倍率";
+const MODELS_DESC_TRAE = "展示 Trae 的官方对话大模型、上下文容量、推理/视觉能力与默认采样参数；倍率为客户端选择器同款消耗倍率（Credits 消耗系数，含低谷折扣）";
 // 三个版本卡片上展示的上游主机名，跟着提供商换。
 const PROVIDER_HOSTS = {
   workbuddy: {intl: "www.workbuddy.ai", cn: "copilot.tencent.com"},
@@ -6314,7 +6419,7 @@ function renderModelsSourceLine(meta){
       + '清单在 5 分钟缓存期内复用，过期自动重取；网关后台每天也会兜底获取一次；点「刷新模型清单」可立即从上游更新。'
     : (currentProvider() === 'trae')
     ? '清单构建顺序：先请求上游 API（Trae get_detail_param，用当前视图版本的账号）→ 失败则用内置快照。'
-      + '清单在 5 分钟缓存期内复用，过期自动重取；点「刷新模型清单」可立即从上游更新。Trae 没有 per-model 倍率。'
+      + '清单在 5 分钟缓存期内复用，过期自动重取；点「刷新模型清单」可立即从上游更新。倍率是客户端同款消耗倍率（含低谷折扣）。'
     : '清单构建顺序：先请求上游 API（/v3/config，用当前视图版本的账号）→ 失败则读取本机桌面客户端缓存文件 → 都拿不到才用内置快照。'
       + '清单在 5 分钟缓存期内复用，过期自动重取；网关后台每天也会兜底获取一次；点「刷新模型清单」可立即从上游更新。';
   if(!meta || !meta.source){
@@ -6375,15 +6480,17 @@ function renderAvailableModels(){
       credBadge = '<span class="badge ok" style="background:var(--accent2-soft);color:var(--accent2)"' + credTitle + '>限时免费 0.00x</span>';
     } else if(credText){
       // 统一成倍率写法：'x0.79' / '0.79' / 数字 0.5 都显示成 '0.79x' / '0.5x'。
+      // 低谷折扣用上游目录里的真实倍率（off_peak_rate），不再按模型 id 写死。
       const raw = credText.replace(/^x/i, '') + 'x';
-      const night = ((m.id === 'glm-5.2' || m.id === 'deepseek-v4-pro') && window.VIEW_REALM === 'cn')
-        ? ' <span style="font-size:10px;color:var(--accent)">(夜间0.5x)</span>' : '';
+      const offPeak = String(m.off_peak_rate == null ? '' : m.off_peak_rate).trim().replace(/^x/i, '');
+      const night = offPeak
+        ? ' <span style="font-size:10px;color:var(--accent)">(夜间' + esc(offPeak) + 'x)</span>' : '';
       credBadge = '<span class="badge s"' + credTitle + '>' + esc(raw) + night + '</span>';
     } else if(currentProvider() === 'qoder' || currentProvider() === 'trae'){
-      // 目录里没有 price_factor（Qoder 的老客户端 / 精简目录，或 Trae 本身）
+      // 目录里没给倍率（Qoder 的老客户端 / 精简目录，或 Trae 的自定义模型）
       // 时别留一列「-」，说清楚是按账号额度扣费、实际扣减看「最近请求」。
       credBadge = '<span class="badge s" title="' + esc(currentProvider() === 'trae'
-        ? 'Trae 按账号额度计费，没有 per-model 倍率；实际扣减以 Trae 客户端账单为准。'
+        ? '该模型在上游目录里没有消耗倍率字段；实际扣减以 Trae 客户端账单为准。'
         : '该模型在上游目录里没有倍率字段；Qoder 按账号额度（credits）计费，实际扣减见「最近请求」的「积分」列。') + '">按额度计费</span>';
     }
 
@@ -14270,6 +14377,17 @@ function fmtSec(ms){
   return s >= 100 ? s.toFixed(0) + ' s' : s.toFixed(s >= 10 ? 1 : 2) + ' s';
 }
 function fmtPct(v, d){ return (v == null || !isFinite(v)) ? '—' : Number(v).toFixed(d ?? 1) + '%'; }
+/* 成功率着色：>=99 绿、>=95 金、其余红；没有样本（分母为 0）时给「—」，
+   不把「没有请求」画成 0% 或 100%。 */
+function rateSpan(pct){
+  if (pct == null || !isFinite(pct)) return '<b>—</b>';
+  const cls = pct >= 99 ? 'ratio-ok' : (pct >= 95 ? 'ratio-gold' : 'ratio-bad');
+  return `<span class="${cls}"><b>${fmtPct(pct)}</b></span>`;
+}
+function rateCls(pct){
+  if (pct == null || !isFinite(pct)) return '';
+  return pct >= 99 ? 'kpi-bd-ok' : (pct >= 95 ? 'kpi-bd-gold' : 'kpi-bd-bad');
+}
 function fmtCostCny(v){
   if (v == null || !isFinite(v)) return '—';
   return '￥' + Number(v).toLocaleString('zh-CN', {minimumFractionDigits:2, maximumFractionDigits:2});
@@ -14309,6 +14427,7 @@ const state = {
   perf: null,
   heat: null,
   openKey: null,
+  kpiOpen: null,   /* 当前打开的 KPI 明细（data-kpi 键），null = 没开 */
 };
 let prevSummary = null; /* B 版：上一等长周期汇总（环比） */
 
@@ -14506,17 +14625,24 @@ function renderKpis(){
     `<i style="width:${Math.max(1.5,(v||0)/tot*100)}%;background:${c}" title="${n} ${fmtCompact(v)}"></i>`).join('');
 
   // ② 请求
-  const okRate = w.requests ? (w.requests - w.errors) / w.requests * 100 : 100;
-  $('kReqs').innerHTML = `${numSpan(w.requests)}<small>次</small>`;
-  $('kReqsSub').innerHTML = `失败 <b>${numSpan(w.errors)}</b> · 成功率 <span class="${okRate>=99?'ratio-ok':(okRate>=95?'ratio-gold':'ratio-bad')}"><b>${fmtPct(okRate)}</b></span>`;
+  // requests = 成功数、errors = 失败数（/usage/analytics 的口径），成功率的分母
+  // 必须是两者之和：拿「成功 − 失败」再除以成功，会把失败在分子里再扣一次。
+  const okReq = w.requests || 0, errReq = w.errors || 0;
+  const done = okReq + errReq;
+  const okRate = done ? okReq / done * 100 : null;
+  $('kReqs').innerHTML = `${numSpan(okReq)}<small>次</small>`;
+  $('kReqsSub').innerHTML = `失败 <b>${numSpan(errReq)}</b> · 成功率 ${rateSpan(okRate)}`;
 
-  // ⑥′ 环形成功率卡
+  // ⑥′ 环形成功率卡：无请求时也要重画（显示「—」），否则切到空口径的提供商会
+  // 一直挂着上一次的数字。
   const ringEl = $('ringSuccess');
-  if (ringEl && w.requests){
-    const p = Math.max(0, Math.min(100, okRate));
+  if (ringEl){
+    const p = okRate == null ? 0 : Math.max(0, Math.min(100, okRate));
     ringEl.style.setProperty('--p', p.toFixed(1));
-    $('ringPct').textContent = p >= 99.95 ? '100%' : p.toFixed(1) + '%';
-    $('kSuccessSub').innerHTML = `${fmtCompact(w.requests)} 次 · 失败 <b data-tip="${fullNum(w.errors)}">${fmtCompact(w.errors)}</b> 次`;
+    $('ringPct').textContent = okRate == null ? '—' : (p >= 99.95 ? '100%' : p.toFixed(1) + '%');
+    $('kSuccessSub').innerHTML = done
+      ? `成功 <b>${fmtCompact(okReq)}</b> 次 · 失败 <b data-tip="${fullNum(errReq)}">${fmtCompact(errReq)}</b> 次`
+      : '该区间暂无请求';
   }
 
   // ③ 速度（TTFT 并入副行）
@@ -14545,6 +14671,9 @@ function renderKpis(){
   setDelta('deltaReqs', w.requests, prevSummary ? prevSummary.req : null);
   setDelta('deltaCache', selfCache, prevCache);
   setDelta('deltaCost', w.credit, prevSummary ? prevSummary.cred : null);
+
+  // 明细弹窗开着时跟着轮询一起重画（内容与卡面同源，不能停在上一轮的数字上）。
+  refreshKpiDetail();
 }
 function peakThroughput(){
   const s = state.series;
@@ -14553,6 +14682,248 @@ function peakThroughput(){
   for (const b of s.series) m = Math.max(m, (b.total_tokens||0) / s.bucket_seconds);
   return m > 0 ? m : null;
 }
+
+/* ---------------- KPI 明细弹窗 ----------------
+   六张卡片各自对应一份「按账号 / 按模型」的拆解，数据全部来自同一份
+   /usage/analytics 载荷（accounts[].window(_models)、models[].window），与卡面
+   同源同口径，所以每项都能和卡面对上——「API 等价花费」的账号行直接给出该账号
+   在各模型上花了多少，模型行给出是哪些账号把它用掉的。
+   入口是卡片本身（data-kpi）：点击、或聚焦后回车/空格打开；弹窗开着时跟着
+   5 秒轮询重画，不会停在上一轮的数字上。 */
+const KPI_RANGE_LABEL = {today:'今日', d3:'近 3 日', week:'本周', month:'本月', d30:'近 30 天', all:'全部'};
+function kpiProviderLabel(){
+  const p = analyticsProvider || 'all';
+  return p === 'workbuddy' ? 'WorkBuddy' : p === 'qoder' ? 'Qoder' : p === 'trae' ? 'Trae' : '全部提供商';
+}
+/* 成功率：成功 /（成功 + 失败）。没有样本时返回 null，调用方给「—」而不是 0%。 */
+function kpiRate(s){
+  const done = (s.requests || 0) + (s.errors || 0);
+  return done ? (s.requests || 0) / done * 100 : null;
+}
+/* 弹窗里的数字不带 #pageAnalytics 作用域，用 .kpi-bd-* 自己的着色类。 */
+function kpiRateSpan(pct){
+  if (pct == null || !isFinite(pct)) return '—';
+  return `<span class="${rateCls(pct)}">${fmtPct(pct)}</span>`;
+}
+/* 另一维度（账号行里的模型、模型行里的账号）按对应口径排序取前三。 */
+const KPI_PART_WEIGHT = {
+  tokens: p => p.tokens || 0,
+  reqs:   p => p.requests || 0,
+  cost:   p => p.cost_cny || 0,
+};
+const KPI_PART_FMT = {
+  tokens: v => fmtCompact(v) + ' tok',
+  reqs:   v => fmtCompact(v) + ' 次',
+  cost:   v => fmtCostCny(v),
+};
+
+const KPI_SPECS = {
+  tokens: {
+    title: 'TOKEN 消耗明细',
+    head: 'TOKEN 总量', unit: ' tok',
+    weight: s => s.total_tokens || 0,
+    num: s => numSpan(s.total_tokens),
+    share: true, part: 'tokens',
+    cols: s => [
+      ['输入', numSpan((s.prompt_tokens || 0) - (s.cached_tokens || 0))],
+      ['输出', numSpan(s.completion_tokens)],
+      ['思考', numSpan(s.reasoning_tokens)],
+      ['缓存', numSpan(s.cached_tokens)],
+    ],
+    note: '输入只算提示 Token 里未命中缓存的部分，思考已计入输出；失败请求已经产生的 Token 同样计入。',
+  },
+  reqs: {
+    title: '请求数明细',
+    head: '请求数', unit: ' 次',
+    weight: s => s.requests || 0,
+    num: s => numSpan(s.requests),
+    share: true, part: 'reqs',
+    cols: s => [['失败', numSpan(s.errors)], ['成功率', kpiRateSpan(kpiRate(s))]],
+    note: '请求数是成功完成的次数，失败单独统计；成功率 = 成功 /（成功 + 失败）。',
+  },
+  speed: {
+    title: '生成速度明细',
+    head: '平均生成速度', unit: ' tok/s', rowUnit: ' tok/s',
+    weight: s => s.speed_avg || 0,
+    num: s => s.speed_avg != null ? Number(s.speed_avg).toFixed(1) : '—',
+    cols: s => [['首字延迟', fmtSec(s.ttft_ms_avg)], ['平均耗时', fmtSec(s.elapsed_ms_avg)], ['请求', numSpan(s.requests)]],
+    note: '平均生成速度按每条请求自己的生成速度取平均；首字与耗时同为窗口内平均。',
+  },
+  cache: {
+    title: '缓存命中率明细',
+    head: '缓存命中率', unit: '',
+    weight: s => s.cached_tokens || 0,
+    num: s => `<span class="${rateCls(s.cache_hit_pct)}">${fmtPct(s.cache_hit_pct)}</span>`,
+    cols: s => [['缓存复用', numSpan(s.cached_tokens) + ' tok'], ['输入', numSpan(s.prompt_tokens) + ' tok'], ['请求', numSpan(s.requests)]],
+    note: '缓存命中率 = 缓存 Token / 输入 Token，与卡片同一口径；下面的排序按缓存复用量。',
+  },
+  cost: {
+    title: 'API 等价花费明细',
+    head: 'API 等价花费', unit: '',
+    weight: s => s.cost_cny || 0,
+    num: s => `<span style="color:var(--bad)">${fmtCostCny(s.cost_cny)}</span>`,
+    share: true, part: 'cost',
+    cols: s => [['积分', numSpan(s.credit, 1)], ['Token', numSpan(s.total_tokens)], ['请求', numSpan(s.requests)]],
+    note: '按 OpenRouter 同名模型的价格把每条请求的 Token 折算成人民币；未定价的模型仍计入 Token 与请求数，但不产生金额。',
+  },
+  success: {
+    title: '请求成功率明细',
+    head: '请求成功率', unit: '',
+    weight: s => s.requests || 0,
+    num: s => kpiRateSpan(kpiRate(s)),
+    cols: s => [['成功', numSpan(s.requests)], ['失败', numSpan(s.errors)]],
+    note: '成功率 = 成功 /（成功 + 失败）；客户端主动中断不计入失败。',
+  },
+};
+
+function kpiPartsLine(parts, kind, noun){
+  const w = KPI_PART_WEIGHT[kind], f = KPI_PART_FMT[kind];
+  const list = (parts || []).filter(p => w(p) > 0).sort((a, b) => w(b) - w(a));
+  if (!list.length) return '';
+  const head = list.slice(0, 3), rest = list.slice(3);
+  let txt = head.map(p => `${esc(p.name)} ${f(w(p))}`).join(' · ');
+  if (rest.length) txt += ` · 其他 ${rest.length} 项 ${f(rest.reduce((s, p) => s + w(p), 0))}`;
+  return `<div class="sub">${noun}：${txt}</div>`;
+}
+
+function kpiRowsHTML(rows, spec, total, max){
+  return rows.map(r => {
+    const s = r.stat || {};
+    const v = spec.weight(s);
+    const pct = total > 0 ? v / total * 100 : 0;
+    const tag = r.realm ? `<span class="kpi-bd-tag ${r.realm === 'intl' ? 'intl' : 'cn'}">${r.realm === 'intl' ? '国际版' : '国内版'}</span>` : '';
+    const cols = (spec.cols ? spec.cols(s) : [])
+      .filter(c => c && c[1] != null && c[1] !== '' && c[1] !== '—')
+      .map(c => `${c[0]} <b>${c[1]}</b>`).join(' · ');
+    const parts = spec.part ? kpiPartsLine(r.parts, spec.part, r.isAcct ? '主要模型' : '主要账号') : '';
+    return `<div class="kpi-bd-row">
+      <div class="hd">
+        <span class="nm"${r.tip ? ` data-tip="${esc(r.tip)}"` : ''}>${esc(r.name)}</span>${tag}
+        <span class="vv">${spec.num(s)}${spec.rowUnit || ''}${spec.share ? `<i>${pct.toFixed(1)}%</i>` : ''}</span>
+      </div>
+      <div class="bar"><i style="width:${Math.max(1.5, v / max * 100).toFixed(1)}%"></i></div>
+      ${cols ? `<div class="sub">${cols}</div>` : ''}
+      ${parts}
+    </div>`;
+  }).join('');
+}
+
+function kpiSideHTML(title, rows, spec){
+  if (!rows.length){
+    return `<div><div class="kpi-bd-h">${title}</div><div class="kpi-bd-empty">该区间暂无数据</div></div>`;
+  }
+  const total = rows.reduce((s, r) => s + spec.weight(r.stat || {}), 0);
+  const max = Math.max(1, ...rows.map(r => spec.weight(r.stat || {})));
+  return `<div>
+    <div class="kpi-bd-h">${title}<span class="cnt">${rows.length}</span></div>
+    <div class="kpi-bd-list">${kpiRowsHTML(rows, spec, total, max)}</div>
+  </div>`;
+}
+
+/* 一账号一份 window 统计 + 它的 window_models；模型侧反向建一张「谁用了它」的表。 */
+function kpiDetailPayload(){
+  const a = state.analytics || {};
+  const accts = [], models = [], byModel = {};
+  for (const acc of (a.accounts || [])){
+    const av = acc.window_models || {};
+    const parts = Object.keys(av).map(k => ({
+      name: k, tokens: av[k].tokens || 0, requests: av[k].requests || 0, cost_cny: av[k].cost_cny || 0,
+    }));
+    const nickname = acc.nickname || String(acc.uid || '').slice(0, 8);
+    accts.push({
+      name: nickname, stat: acc.window || {}, parts, realm: acc.realm, isAcct: true,
+      tip: 'UID：' + (acc.uid || '') + (acc.domain ? '\n' + acc.domain : ''),
+    });
+    for (const p of parts){
+      (byModel[p.name] = byModel[p.name] || []).push({
+        name: nickname, tokens: p.tokens, requests: p.requests, cost_cny: p.cost_cny,
+      });
+    }
+  }
+  const raw = a.models;
+  const list = Array.isArray(raw) ? raw
+    : Object.keys(raw || {}).map(k => ({ model: k, window: raw[k] }));
+  for (const m of list){
+    const id = m.model || m.name || '';
+    models.push({ name: id, stat: m.window || {}, parts: byModel[id] || [], isAcct: false });
+  }
+  return { accts, models };
+}
+
+function kpiTilesHTML(spec, w){
+  const tiles = [
+    [spec.head, spec.num(w) + (spec.unit || '')],
+    ['请求数', `${numSpan(w.requests)} 次` + (w.errors ? ` · 失败 <b>${numSpan(w.errors)}</b>` : '')],
+    ['Token 总量', numSpan(w.total_tokens)],
+  ];
+  if (spec.head === 'API 等价花费') tiles.push(['积分消耗', numSpan(w.credit, 1)]);
+  else tiles.push(['API 等价花费', `${fmtCostCny(w.cost_cny)} · 积分 ${numSpan(w.credit, 1)}`]);
+  return `<div class="kpi-bd-tiles">` + tiles.map(([l, v]) =>
+    `<div class="kpi-bd-tile"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('') + `</div>`;
+}
+
+function kpiDetailHTML(kind){
+  const spec = KPI_SPECS[kind];
+  const a = state.analytics;
+  if (!spec) return '';
+  if (!a) return '<div class="kpi-bd-empty">数据加载中…</div>';
+  const w = (a.summary || {}).window || {};
+  const { accts, models } = kpiDetailPayload();
+  const alive = r => {
+    const s = r.stat || {};
+    return (s.requests || 0) + (s.errors || 0) + (s.total_tokens || 0) > 0;
+  };
+  const rank = (x, y) => spec.weight(y.stat || {}) - spec.weight(x.stat || {});
+  const aRows = accts.filter(alive).sort(rank);
+  const mRows = models.filter(alive).sort(rank);
+  if (!aRows.length && !mRows.length){
+    return kpiTilesHTML(spec, w) + '<div class="kpi-bd-empty">该区间暂无可拆解的记录。</div>';
+  }
+  return kpiTilesHTML(spec, w)
+    + `<div class="kpi-bd-grid">${kpiSideHTML('按账号', aRows, spec)}${kpiSideHTML('按模型', mRows, spec)}</div>`
+    + `<div class="kpi-bd-foot">${spec.note}</div>`;
+}
+
+function kpiScopeText(){
+  const time = new Date().toLocaleTimeString('zh-CN', {hour12: false});
+  return `${kpiProviderLabel()} · ${KPI_RANGE_LABEL[state.range] || '今日'} · 更新于 ${time} · 与卡片同源`;
+}
+
+let kpiFocusBack = null;
+function openKpiDetail(kind, card){
+  const spec = KPI_SPECS[kind], m = $('kpiDetailModal');
+  if (!spec || !m) return;
+  state.kpiOpen = kind;
+  kpiFocusBack = card || null;
+  $('kpiDetailTitle').textContent = spec.title;
+  const sc = $('kpiDetailScope');
+  if (sc) sc.textContent = kpiScopeText();
+  $('kpiDetailBody').innerHTML = kpiDetailHTML(kind);
+  m.classList.add('show');
+  const x = m.querySelector('.modal-x');
+  if (x && x.focus){ try{ x.focus(); }catch(e){} }
+}
+function closeKpiDetail(){
+  const m = $('kpiDetailModal');
+  if (m) m.classList.remove('show');
+  state.kpiOpen = null;
+  if (kpiFocusBack && kpiFocusBack.focus){ try{ kpiFocusBack.focus(); }catch(e){} }
+  kpiFocusBack = null;
+}
+/* 轮询重画：内容跟着新数据走，但保住弹窗自身的滚动位置。 */
+function refreshKpiDetail(){
+  const body = $('kpiDetailBody');
+  if (!state.kpiOpen || !body) return;
+  const spec = KPI_SPECS[state.kpiOpen];
+  if (spec) $('kpiDetailTitle').textContent = spec.title;
+  const sc = $('kpiDetailScope');
+  if (sc) sc.textContent = kpiScopeText();
+  const top = body.scrollTop;
+  body.innerHTML = kpiDetailHTML(state.kpiOpen);
+  body.scrollTop = top;
+}
+window.openKpiDetail = openKpiDetail;
+window.closeKpiDetail = closeKpiDetail;
 
 /* ---------------- 时序图 ---------------- */
 const seriesCanvas = $('seriesCanvas');
@@ -14993,6 +15364,21 @@ $('rangeSeg').addEventListener('click', ev => {
   [...$('rangeSeg').children].forEach(b => b.classList.toggle('on', b === btn));
   state.range = btn.dataset.range;
   loadRange();
+});
+/* KPI 卡：点击 / 回车 / 空格打开明细；Esc 关闭（焦点还给那张卡）。 */
+$('kpis').addEventListener('click', ev => {
+  const card = ev.target.closest('.kpi[data-kpi]');
+  if (card) openKpiDetail(card.dataset.kpi, card);
+});
+$('kpis').addEventListener('keydown', ev => {
+  if (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
+  const card = ev.target.closest('.kpi[data-kpi]');
+  if (!card) return;
+  ev.preventDefault();
+  openKpiDetail(card.dataset.kpi, card);
+});
+document.addEventListener('keydown', ev => {
+  if (ev.key === 'Escape' && state.kpiOpen) closeKpiDetail();
 });
 $('metricSeg').addEventListener('click', ev => {
   const btn = ev.target.closest('button'); if (!btn) return;

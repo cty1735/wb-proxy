@@ -11032,6 +11032,8 @@ def model_entry(mid, meta):
         item["credits"] = meta["credits"]
     if meta.get("credits_note"):
         item["credits_note"] = meta["credits_note"]
+    if meta.get("off_peak_rate"):
+        item["off_peak_rate"] = meta["off_peak_rate"]
     if meta.get("vendor"):
         item["vendor"] = meta["vendor"]
     if meta.get("temperature") is not None:
