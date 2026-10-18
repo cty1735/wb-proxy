@@ -28,6 +28,14 @@ class TraeChatError(RuntimeError):
     """Trae 聊天通道错误（上游 error 事件 / 流损坏）。"""
 
 
+#: 直连 llm_utils_chat 还不认的目录条目 -> 同底层模型的稳定 config_name。
+#: ``deepseek-v4.1-flash`` 在客户端 solo_agent 会话里可用，但直连
+#: llm_utils_chat 稳定返回 4001「param invalid」（与消息、会话、UA 无关）；
+#: ``DeepSeek-V4-Flash`` 的底层 provider 模型同为 ``ali-deepseek-v4-flash``。
+_UPSTREAM_CONFIG_FALLBACKS = {
+    "deepseek-v4.1-flash": "DeepSeek-V4-Flash",
+}
+
 #: 上游 finish_reason -> OpenAI 口径。
 _FINISH_REASONS = {
     "stop": "stop",
@@ -105,6 +113,36 @@ def _tool_result_text(content):
     return "[工具结果]\n" + text
 
 
+def _normalize_tool_calls(tool_calls):
+    """OpenAI assistant.tool_calls -> Trae ToolCall 形状。
+
+    Trae 的 protobuf JSON 是 ``tool_calls[].function_call.{name,arguments}``；
+    OpenAI 是 ``tool_calls[].function.{name,arguments}``。原样透传时上游读不到
+    ``function_call.name``，会报 2001 "required field Name is not set"。
+    ``arguments`` 同样必须是字符串。
+    """
+    out = []
+    for call in tool_calls if isinstance(tool_calls, list) else []:
+        if not isinstance(call, dict):
+            continue
+        fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+        fc = call.get("function_call") if isinstance(call.get("function_call"), dict) else {}
+        name = str(fn.get("name") or fc.get("name") or "")
+        if not name:
+            continue
+        args = fn.get("arguments") if "arguments" in fn else fc.get("arguments")
+        if args is None:
+            args = "{}"
+        if not isinstance(args, str):
+            args = json.dumps(args, ensure_ascii=False)
+        item = {"function_call": {"name": name, "arguments": args}}
+        call_id = call.get("id") or fc.get("id")
+        if call_id:
+            item["id"] = str(call_id)
+        out.append(item)
+    return out
+
+
 def transform_messages(messages):
     """把 OpenAI messages 转成 Trae 的 role/content 形状。"""
     out = []
@@ -122,7 +160,9 @@ def transform_messages(messages):
         item = {"role": role, "content": _content_parts(content)}
         tool_calls = raw.get("tool_calls")
         if role == "assistant" and isinstance(tool_calls, list) and tool_calls:
-            item["tool_calls"] = tool_calls
+            normalized = _normalize_tool_calls(tool_calls)
+            if normalized:
+                item["tool_calls"] = normalized
         out.append(item)
     return out
 
@@ -194,6 +234,36 @@ def resolve_model_config(realm, model_id, access_token=None, auth=None,
     }
 
 
+def _normalize_tools(tools):
+    """OpenAI tools -> Trae 的 FunctionDefinition 形状。
+
+    Trae 的 Go 结构体把 ``function.parameters`` 声明成 ``string``，直接透传
+    OpenAI 的对象会 400（cannot unmarshal object ... of type string），所以
+    这里把 parameters 序列化成 JSON 文本；已经是字符串的原样保留。
+    """
+    out = []
+    for tool in tools if isinstance(tools, list) else []:
+        if not isinstance(tool, dict):
+            continue
+        item = dict(tool)
+        fn = item.get("function")
+        if isinstance(fn, dict):
+            fn = dict(fn)
+            params = fn.get("parameters")
+            if isinstance(params, (dict, list)):
+                fn["parameters"] = json.dumps(params, ensure_ascii=False)
+            elif params is None:
+                fn["parameters"] = "{}"
+            item["function"] = fn
+        out.append(item)
+    return out
+
+
+def _normalize_tool_choice(choice):
+    """Trae 的 ``tool_choice`` 是字符串；OpenAI 的对象形式降级成 auto。"""
+    return choice if isinstance(choice, str) else "auto"
+
+
 def build_chat_request(chat_req, resolved, identity, session_id=None,
                        data_dir=None):
     """构造一次 Trae 聊天请求。
@@ -207,6 +277,10 @@ def build_chat_request(chat_req, resolved, identity, session_id=None,
     identity = identity if isinstance(identity, dict) else {}
     entry = resolved.get("entry") if isinstance(resolved.get("entry"), dict) else {}
     config_name = str(resolved.get("key") or entry.get("key") or "")
+    # 目录里的新条目不一定被 llm_utils_chat 接受；按需换成稳定的同源
+    # config_name（对客户端仍保留原模型 id）。
+    upstream_config = _UPSTREAM_CONFIG_FALLBACKS.get(
+        config_name.lower(), config_name)
     realm = identity.get("realm") or resolved.get("realm") or "cn"
     function = str(resolved.get("function") or "chat_v3")
     access_token = str(identity.get("access_token") or "")
@@ -219,9 +293,9 @@ def build_chat_request(chat_req, resolved, identity, session_id=None,
         "function": function,
         "stream": True,
     }
-    if config_name and function != "inline_chat":
-        body["config_name"] = config_name
-        body["model"] = config_name
+    if upstream_config and function != "inline_chat":
+        body["config_name"] = upstream_config
+        body["model"] = upstream_config
     elif identity.get("model_name"):
         body["model"] = str(identity["model_name"])
 
@@ -242,12 +316,15 @@ def build_chat_request(chat_req, resolved, identity, session_id=None,
     stop = chat_req.get("stop")
     if stop:
         body["stop"] = [str(stop)] if isinstance(stop, str) else list(stop)
-    # 工具定义按 OpenAI 形状透传；上游多余字段会忽略，支持时就能直接产出
-    # tool_calls 事件（见 iter_openai_chunks 的 tool_calls 分支）。
+    # 工具定义按 OpenAI 形状透传，但 parameters 要转成 JSON 字符串；
+    # tool_choice 也只接受字符串（见 _normalize_tools / _normalize_tool_choice）。
     tools = chat_req.get("tools")
     if isinstance(tools, list) and tools:
-        body["tools"] = tools
-        body["tool_choice"] = chat_req.get("tool_choice", "auto")
+        normalized = _normalize_tools(tools)
+        if normalized:
+            body["tools"] = normalized
+            body["tool_choice"] = _normalize_tool_choice(
+                chat_req.get("tool_choice", "auto"))
 
     request_id = str(uuid.uuid4())
     headers = wb_trae.build_stream_headers(access_token, auth, realm,
@@ -327,10 +404,16 @@ def _tool_call_deltas(raw_calls):
         if not isinstance(call, dict):
             continue
         fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+        if not fn:
+            # Trae 的增量事件用 function_call（与请求侧同名字段）。
+            fn = call.get("function_call") if isinstance(
+                call.get("function_call"), dict) else {}
         item = {"index": call.get("index", index)}
-        call_id = str(call.get("id") or "")
+        call_id = str(call.get("id") or fn.get("id") or "")
         name = str(fn.get("name") or call.get("name") or "")
         args = fn.get("arguments")
+        if args is None:
+            args = fn.get("partial_arguments")
         if args is None:
             args = call.get("arguments")
         if call_id:
@@ -464,6 +547,12 @@ def iter_openai_chunks(resp, model):
                 inner = payload.get("data") if isinstance(payload.get("data"), dict) else payload
                 code = inner.get("code") or inner.get("error_code") or ""
                 message = inner.get("message") or inner.get("msg") or "unknown error"
+                if str(code) == "4011":
+                    message = ("Trae 上游限流（4011）：账号或出口的请求频率/额度已超限，"
+                               "稍后再试或换一个账号；原始信息: %s" % message)
+                elif str(code) == "4015":
+                    message = ("Trae 上游风控拦截（4015）：账号或 IP 被判定有风险；"
+                               "原始信息: %s" % message)
                 raise TraeChatError("Trae 上游错误 %s: %s" % (code, message))
 
             if event_name in ("extra_info", "metadata", "timing_cost",

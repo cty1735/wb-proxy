@@ -512,9 +512,15 @@ def api_host_is_credible(host, realm):
 
 
 def api_host_for(realm, auth=None, override=""):
-    """该账号实际要打的聊天 / 模型端点。"""
+    """该账号实际要打的聊天 / 模型端点。
+
+    ``override`` 也要过一遍可信度检查：桌面端登录态里的 ``apiHost`` 国内版
+    写的是 OAuth 域 ``https://api.trae.cn``，直接当 override 用会把聊天请求
+    打到认证域上（TLB 404 / 连接被重置），这正是 ``_denied_api_hosts`` 要挡
+    的形状。不可信时按 realm 的默认聊天域兜底。
+    """
     override = str(override or "").strip().rstrip("/")
-    if override:
+    if override and api_host_is_credible(override, realm):
         return override
     auth = auth or {}
     host = str(auth.get("apiHost") or auth.get("host") or "").strip().rstrip("/")
@@ -1655,6 +1661,21 @@ def ide_version(realm, auth=None):
     return realm_config(realm)["ide_version"]
 
 
+def stream_user_agent(realm):
+    """聊天请求的 User-Agent。
+
+    网关对 ``Python-urllib`` / ``curl`` 这类命令行 UA 会直接返回 4011
+    「rate limit」（任何模型、任何 body 都一样），换成 IDE 客户端同款 UA
+    才会进入正常的参数校验。可用 ``TRAE_USER_AGENT`` 覆盖。
+    """
+    override = os.environ.get("TRAE_USER_AGENT")
+    if override:
+        return override
+    if realm_key(realm) == "cn":
+        return "VSCode 1.107.1 (TRAE SOLO CN)"
+    return "VSCode 1.107.1 (TRAE)"
+
+
 def build_common_headers(access_token, auth, realm):
     """聊天 / 目录共用的客户端头。"""
     auth = auth or {}
@@ -1664,6 +1685,7 @@ def build_common_headers(access_token, auth, realm):
     version = ide_version(realm, auth)
     return {
         "Content-Type": "application/json",
+        "User-Agent": stream_user_agent(realm),
         "Authorization": "Cloud-IDE-JWT %s" % access_token,
         "X-Cloudide-Token": str(access_token),
         "x-app-id": os.environ.get("TRAE_APP_ID") or APP_ID,

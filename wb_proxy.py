@@ -15,6 +15,7 @@ start-wb-proxy.command (or ./start-wb-proxy.sh) on macOS/Linux.
 """
 import argparse
 import bisect
+import errno
 import hashlib
 import heapq
 import html
@@ -52,6 +53,7 @@ except ValueError:
     MAX_CONCURRENT_CHAT = CHAT_SLOTS_FLOOR
 CHAT_SLOT_WAIT_SECONDS = float(os.environ.get("WB_CHAT_SLOT_WAIT", 30))
 import socket
+import ssl
 import sys
 import threading
 import time
@@ -13526,13 +13528,46 @@ def is_transient(exc):
     (SSL: UNEXPECTED_EOF_WHILE_READING / Remote end closed connection).
     Treating that as a dead account took the only intl account offline for 60s
     and turned one hiccup into a 502 storm.
+
+    判定不能只靠文案：Windows 上的 WinError 10053/10054 是本地化字符串
+    （中文系统是「你的主机中的软件中止了一个已建立的连接」/「远程主机强迫
+    关闭了一个现有的连接」），英文关键词一个都不命中，于是本应换号重试的
+    瞬时故障被原样抛成 502，账号归属也丢了。先按异常类型与 errno/winerror
+    判，再退回中英文关键词兜底。
     """
-    t = ("%s %s" % (type(exc).__name__, exc)).lower()
+    chain = []
+    cur = exc
+    for _ in range(4):
+        if cur is None:
+            break
+        chain.append(cur)
+        nxt = getattr(cur, "reason", None)
+        if nxt is None or nxt is cur:
+            break
+        cur = nxt
+
+    transient_types = (TimeoutError, ConnectionResetError, ConnectionAbortedError,
+                       BrokenPipeError, ssl.SSLError)
+    transient_errnos = {
+        errno.ECONNRESET, errno.ECONNABORTED, errno.ETIMEDOUT, errno.EPIPE,
+        10053, 10054, 10060, 10061,   # WSAECONNABORTED/RESET/TIMEDOUT/REFUSED
+        110, 111,                     # Linux ETIMEDOUT/ECONNREFUSED
+    }
+    for item in chain:
+        if isinstance(item, transient_types):
+            return True
+        if getattr(item, "errno", None) in transient_errnos:
+            return True
+        if getattr(item, "winerror", None) in transient_errnos:
+            return True
+
+    t = " ".join("%s %s" % (type(item).__name__, item) for item in chain).lower()
     markers = (
         "ssl", "unexpected_eof", "eof occurred", "remote end closed",
         "connection reset", "connection aborted", "connectionreseterror",
         "connectionabortederror", "timed out", "timeout", "temporarily unavailable",
         "bad gateway", "502", "503", "504", "incompleteread",
+        "远程主机强迫关闭", "你的主机中的软件中止", "连接被重置", "连接中止",
     )
     return any(m in t for m in markers)
 
@@ -21233,6 +21268,11 @@ class Handler(BaseHTTPRequestHandler):
                              fp=fp, outcome="upstream_aborted", key=self._key_id())
                 try:
                     flush_out()
+                    # 上游在流中途报错（Trae 的 event:error、限流等）：状态码已经
+                    # 是 200，只能把错误塞进 SSE，别让客户端只看到空回答或截断流。
+                    err = json.dumps({"error": {
+                        "message": str(exc), "type": "server_error", "code": 502}})
+                    self.wfile.write(f"data: {err}\n\n".encode("utf-8"))
                     self.wfile.write(b"data: [DONE]\n\n")
                     self.wfile.flush()
                 except Exception:
