@@ -1028,6 +1028,31 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 .kpi-bd-empty{color:var(--dim-light);font-size:11.5px;padding:18px 0;text-align:center}
 .kpi-bd-foot{font-size:10.5px;color:var(--dim-light);line-height:1.65;margin-top:16px;padding-top:10px;border-top:1px solid var(--line)}
 
+/* ====================== 任务与福利：今日新增积分 → 每日明细 ====================== */
+/* 「今日新增积分」卡与看板 KPI 卡同一交互：整卡可点开，悬停 / 聚焦时标题行浮出
+   「明细」小签（只改透明度，不占位、不引起布局位移）。 */
+#sectionGrowthTasks .card[data-cnpoints]{cursor:pointer}
+#sectionGrowthTasks .card[data-cnpoints]:focus-visible{outline:2px solid var(--accent2);outline-offset:2px}
+#sectionGrowthTasks .card[data-cnpoints] .k{display:flex;align-items:center;gap:6px}
+#sectionGrowthTasks .card[data-cnpoints] .det-hint{
+  font-size:9.5px;font-weight:650;letter-spacing:.03em;color:var(--accent);
+  background:var(--panel2);border:1px solid var(--line);border-radius:999px;
+  padding:0 5px;line-height:14px;opacity:0;transition:opacity .18s ease;pointer-events:none;
+}
+#sectionGrowthTasks .card[data-cnpoints]:hover .det-hint,
+#sectionGrowthTasks .card[data-cnpoints]:focus-visible .det-hint{opacity:1}
+
+/* 每日明细：按天分组的福利发放清单（弹窗挂在 body 下，用全局 token）。 */
+.dp-days{display:flex;flex-direction:column;gap:12px}
+.dp-day{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel)}
+.dp-day-hd{display:flex;align-items:baseline;gap:7px;padding:7px 12px;background:var(--panel2);
+  border-bottom:1px solid var(--line);font-size:12px;flex-wrap:wrap}
+.dp-day-hd .d{font-weight:650;font-variant-numeric:tabular-nums}
+.dp-day-hd .w{font-size:10.5px;color:var(--dim)}
+.dp-day-hd .n{font-size:10.5px;color:var(--dim-light)}
+.dp-day-hd .t{margin-left:auto;font-weight:650;color:var(--accent2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.dp-day-bd{padding:10px 12px}
+
 </style>
 <script>
 /* Runs before <body> is parsed, so the page the user last had is the
@@ -2339,7 +2364,36 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     '按 OpenRouter 同名模型的价格把每条请求的 Token 折算成人民币；未定价的模型仍计入 Token 与请求数，但不产生金额。':
       'Tokens of each request are converted to CNY using the price of the same model on OpenRouter; unpriced models still count toward tokens and requests, but add no amount.',
     '成功率 = 成功 /（成功 + 失败）；客户端主动中断不计入失败。':
-      'Success rate = succeeded / (succeeded + failed); client-side cancellations are not counted as failures.'
+      'Success rate = succeeded / (succeeded + failed); client-side cancellations are not counted as failures.',
+    // 任务与福利：今日新增积分 → 每日明细（与「已获取福利总积分」同一口径）。
+    // 单行的日期标记（「· 今天」）与星期用带前缀的独立词条，避免「今天」二字
+    // 在别处的长句里被拆开误译。
+    '今日新增积分': "Today's points",
+    '今日新增积分明细': "Today's point details",
+    '每日福利积分明细': 'Daily welfare points',
+    '今天签到 / 成长任务 / 活动等福利发放到账的积分；点开按天查看每天领了多少':
+      'Points granted today by check-ins, growth tasks and events; open it to see how much you earned each day',
+    '近 7 天 +': 'Last 7 days +',
+    ' · 昨日 +': ' · yesterday +',
+    ' · 今天': ' · today',
+    ' · 昨天': ' · yesterday',
+    '快照可见合计': 'Visible snapshot total',
+    '全部国内账号': 'All China accounts',
+    '积分快照不可用': 'Points snapshot unavailable',
+    '积分快照还没加载：先执行一次签到 / 做任务，或点下面的「刷新」。':
+      'The points snapshot is not loaded yet: run a check-in / task once, or click Refresh below.',
+    '当前快照里没有可统计的福利发放记录（签到 / 成长任务 / 活动等）。':
+      'The current snapshot has no countable welfare grants (check-ins, growth tasks, events...).',
+    '积分明细已刷新': 'Point details refreshed',
+    '积分明细刷新失败: ': 'Failed to refresh point details: ',
+    '周一': 'Mon', '周二': 'Tue', '周三': 'Wed', '周四': 'Thu', '周五': 'Fri', '周六': 'Sat', '周日': 'Sun',
+    '口径：国内版账号的签到 / 成长任务 / 活动 / 裂变等福利发放，与「已获取福利总积分」同一判据。':
+      'Scope: welfare grants (check-ins, growth tasks, events, referral packs) for China accounts - the same measure as the welfare points total.',
+    '数据来自最近一次积分快照（数据截至 ': 'The figures come from the latest points snapshot (as of ',
+    '），要先签到 / 做任务或点「一键刷新积分」才会更新；上游只保留当前仍可见的积分包，更早的发放可能已不在快照里。':
+      '); run a check-in / task or click Refresh credits to update it. Upstream keeps only currently visible credit packages, so older grants may already be gone from the snapshot.',
+    '另有 ': 'plus ',
+    ' 笔发放没有时间戳，未计入按天统计。': ' grants have no timestamp and are left out of the daily totals.'
   };
   var HANT_PHRASES = {
     " · 周期已过": " · 週期已過",
@@ -3125,7 +3179,8 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
     [/共 (\d+) 个，启用 (\d+) 个/, function(m, a, b){ return a + ' total, ' + b + ' enabled'; }],
     [/含失败共 ([\d,]+) 次/, function(m, n){ return n + ' calls including failures'; }],
     [/失败 ([\d,]+) 次/, function(m, n){ return n + ' failed'; }],
-    [/其他 (\d+) 项/, function(m, n){ return '+' + n + ' more'; }]
+    [/其他 (\d+) 项/, function(m, n){ return '+' + n + ' more'; }],
+    [/^(\d+) 项 · ([\d,]+) 笔$/, function(m, a, b){ return a + ' sources · ' + b + ' grants'; }]
   ];
   var KEYS = Object.keys(DICT);
   KEYS.sort(function(a, b){ return b.length - a.length; });
@@ -3912,6 +3967,14 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
       <div class="card accent">
         <div class="k">已获取福利总积分</div>
         <div class="v" id="cnTotalGranted" style="color:var(--accent)">-</div>
+      </div>
+      <!-- 今日新增：与「已获取福利总积分」同一份积分快照、同一判据，只取今天这一天；
+           整卡是入口，点开按天看每天做任务 / 签到领了多少。 -->
+      <div class="card accent" data-cnpoints tabindex="0" role="button" aria-label="今日新增积分明细"
+           title="今天签到 / 成长任务 / 活动等福利发放到账的积分；点开按天查看每天领了多少">
+        <div class="k">今日新增积分 <span class="det-hint">明细</span></div>
+        <div class="v" id="cnTodayGained">-</div>
+        <div class="s" id="cnTodayGainedSub">-</div>
       </div>
     </div>
 
@@ -5178,6 +5241,27 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
       <button class="modal-x" onclick="closeKpiDetail()" aria-label="关闭">×</button>
     </div>
     <div class="modal-bd" id="kpiDetailBody" style="overflow-y:auto;flex:1"></div>
+  </div>
+</div>
+
+<!-- 任务与福利：每日福利积分明细（点「今日新增积分」卡打开；数据与卡片同源，
+     打开期间签到 / 做任务刷新后一起重画） -->
+<div class="modal-mask" id="cnPointsModal" onclick="if(event.target===this) closeCnPoints()">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="cnPointsTitle"
+       style="width:min(880px,96vw);max-height:92vh;display:flex;flex-direction:column">
+    <div class="modal-hd">
+      <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;min-width:0">
+        <h2 id="cnPointsTitle">每日福利积分明细</h2>
+        <span class="kpi-bd-scope" id="cnPointsScope"></span>
+      </div>
+      <button class="modal-x" onclick="closeCnPoints()" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-bd" id="cnPointsBody" style="overflow-y:auto;flex:1"></div>
+    <div class="modal-ft">
+      <button class="sec" onclick="reloadCnPoints(this)">刷新</button>
+      <span style="flex:1"></span>
+      <button class="sec" onclick="closeCnPoints()">关闭</button>
+    </div>
   </div>
 </div>
 
@@ -6678,26 +6762,26 @@ async function loadGrowthTasks(){
     const elLottery = document.getElementById("lotteryChances");
     if(elLottery) elLottery.textContent = (sum.lottery_chances != null ? sum.lottery_chances : '-') + ' 次';
 
+    // 积分快照取一次：累计福利积分、今日新增卡、每日明细弹窗共用同一份载荷。
+    //「排除纯体验包」的判据抽成 cnGrantPerk()，三处（含弹窗）口径一致。
+    let grants = null;
+    try{ grants = await getJSON('/accounts/credits/grants'); }catch(e){ grants = null; }
+
     const cnTotalEl = document.getElementById("cnTotalGranted");
     if(cnTotalEl){
-      try{
-        const g = await getJSON('/accounts/credits/grants');
-        let gRows = (g.rows || []).filter(x => x.realm === 'cn');
-        if(CURRENT_GROWTH_UID && CURRENT_GROWTH_UID !== 'all'){
-          gRows = gRows.filter(x => x.uid === CURRENT_GROWTH_UID);
-        }
-        // 排除掉不带任务/活动属性的纯体验包，统计签到、成长、活动等福利
-        const perksRows = gRows.filter(x => {
-          const r = String(x.grant_reason || '');
-          const n = String(x.name || '');
-          return r.includes('签到') || r.includes('成长') || r.includes('活动') || r.includes('裂变') || n.includes('裂变');
-        });
-        const totalAmt = perksRows.reduce((acc, x) => acc + (Number(x.size || x.amount) || 0), 0);
+      if(grants){
+        const scoped = (grants.rows || []).filter(x => x.realm === 'cn'
+          && (CURRENT_GROWTH_UID === 'all' || x.uid === CURRENT_GROWTH_UID));
+        const totalAmt = scoped.filter(cnGrantPerk).reduce((acc, x) => acc + (Number(x.size || x.amount) || 0), 0);
         cnTotalEl.textContent = '+' + fmt(totalAmt) + ' 积分';
-      }catch(e){
+      } else {
         cnTotalEl.textContent = '-';
       }
     }
+    renderCnPointsCard(grants);
+    // 快照太旧时顺手拉一次上游积分（静默、节流），否则「今日新增」会停在昨天
+    // 那一次签到时留下的快照上。拉到新快照后卡片与弹窗自己重画。
+    autoRefreshCnCreditsIfNeeded(grants);
 
     const elCat = document.getElementById("catState");
     const elCatDesc = document.getElementById("catDesc");
@@ -6750,6 +6834,252 @@ async function loadGrowthTasks(){
     console.error('loadGrowthTasks error:', e);
   }
 }
+
+/* ---------------- 国内版每日福利积分（今日新增 → 每日明细） ----------------
+   数据源与「已获取福利总积分」完全同源：GET /accounts/credits/grants 的最近一次
+   快照（只读内存，不发上游请求）。口径也一致——只算国内版、只算签到 / 成长 /
+   活动 / 裂变这类福利发放，所以「今日新增」永远是「已获取福利总积分」的一部分。
+   「今天」取快照自带的 generated_iso 日期（网关本机时间），不取浏览器时区：
+   快照里的 create_iso 本来就是网关本机时间转出来的。
+   弹窗按发放日期分天汇总，每天再按「账号 + 来源」并成一行（×N），
+   行上的比例条是这笔占当天领到的多少。 */
+let CN_POINTS = null;
+let cnPointsFocusBack = null;
+
+/* 福利发放的判据：与「已获取福利总积分」同一套（排除不带任务 / 活动属性的纯体验包）。 */
+function cnGrantPerk(x){
+  const r = String(x.grant_reason || '');
+  const n = String(x.name || '');
+  return r.includes('签到') || r.includes('成长') || r.includes('活动') || r.includes('裂变') || n.includes('裂变');
+}
+function cnDayKey(s){
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(s || ''));
+  return m ? m[1] : '';
+}
+/* 只用来做「差几天」的整数运算，绕开夏令时与浏览器时区。 */
+function cnDayIndex(iso){
+  const p = String(iso || '').split('-');
+  return Math.round(Date.UTC(+p[0], +p[1] - 1, +p[2]) / 86400000);
+}
+function cnTodayKey(g){
+  const k = cnDayKey(g && g.generated_iso);
+  if(k) return k;
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return d.getFullYear() + '-' + mm + '-' + dd;
+}
+const CN_WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+/* 把 grants 载荷折成「每天领了多少」。载荷为空（快照没拉到）时返回 null。 */
+function cnPointsData(g){
+  if(!g) return null;
+  const scope = (typeof CURRENT_GROWTH_UID !== 'undefined' && CURRENT_GROWTH_UID) ? CURRENT_GROWTH_UID : 'all';
+  const cnRows = (g.rows || []).filter(x => x.realm === 'cn');
+  const perks = cnRows.filter(x => scope === 'all' || x.uid === scope).filter(cnGrantPerk);
+  const todayKey = cnTodayKey(g);
+  const todayIdx = cnDayIndex(todayKey);
+  let scopeLabel = '全部国内账号';
+  if(scope !== 'all'){
+    // 昵称先认快照行（它总是有），再退到账号列表，最后退到 uid 前 8 位。
+    const row = cnRows.find(x => x.uid === scope && String(x.nickname || '').trim());
+    const acc = (window.ACCOUNTS || []).find(a => a.uid === scope);
+    scopeLabel = (row && row.nickname) || (acc && acc.nickname) || creditAccountLabel(scope);
+  }
+  const out = {todayKey, todayIdx, today: 0, yesterday: 0, last7: 0, total: 0, unknown: 0,
+               count: perks.length, days: [], scope, scopeLabel,
+               snapshot: String(g.fetched_iso || g.generated_iso || '')};
+  const days = new Map();
+  perks.forEach(x => {
+    const size = Number(x.size || x.amount) || 0;
+    out.total += size;
+    const key = cnDayKey(x.create_iso);
+    if(!key){ out.unknown += 1; return; }   // 没带发放时间的记录没法归天，单独计数
+    const idx = cnDayIndex(key);
+    const diff = todayIdx - idx;
+    if(diff === 0) out.today += size;
+    if(diff === 1) out.yesterday += size;
+    if(diff >= 0 && diff <= 6) out.last7 += size;
+    let day = days.get(key);
+    if(!day){ day = {key, idx, total: 0, groups: new Map()}; days.set(key, day); }
+    day.total += size;
+    const label = String(x.grant_reason || '').trim() || String(x.name || '').trim() || '福利发放';
+    const gkey = String(x.uid || '') + ' ' + label;
+    let grp = day.groups.get(gkey);
+    if(!grp){
+      grp = {nick: String(x.nickname || '').trim() || creditAccountLabel(x.uid),
+             label, pkg: String(x.name || '').trim(), size: 0, count: 0, first: '', last: ''};
+      day.groups.set(gkey, grp);
+    }
+    grp.size += size;
+    grp.count += 1;
+    const hm = String(x.create_iso || '').slice(11, 16);
+    if(hm){
+      if(!grp.first || hm < grp.first) grp.first = hm;
+      if(!grp.last || hm > grp.last) grp.last = hm;
+    }
+  });
+  out.days = [...days.values()].sort((a, b) => b.idx - a.idx);
+  out.days.forEach(d => { d.groups = [...d.groups.values()].sort((a, b) => b.size - a.size); });
+  return out;
+}
+
+function cnPointsScopeText(){
+  const d = CN_POINTS;
+  if(!d) return '';
+  const parts = [d.scopeLabel];
+  if(d.snapshot) parts.push('数据截至 ' + String(d.snapshot).slice(5, 16));
+  parts.push('与「已获取福利总积分」同口径');
+  return parts.join(' · ');
+}
+
+function cnPointsHTML(){
+  const d = CN_POINTS;
+  if(!d) return '<div class="kpi-bd-empty">积分快照还没加载：先执行一次签到 / 做任务，或点下面的「刷新」。</div>';
+  if(!d.count) return '<div class="kpi-bd-empty">当前快照里没有可统计的福利发放记录（签到 / 成长任务 / 活动等）。</div>';
+  const tiles = [
+    ['今日新增', '+' + fmt(d.today) + ' <small>积分</small>'],
+    ['昨日', '+' + fmt(d.yesterday) + ' <small>积分</small>'],
+    ['近 7 天', '+' + fmt(d.last7) + ' <small>积分</small>'],
+    ['快照可见合计', '+' + fmt(d.total) + ' <small>积分</small>'],
+  ];
+  const tileHtml = '<div class="kpi-bd-tiles">' + tiles.map(([l, v]) =>
+    '<div class="kpi-bd-tile"><div class="l">' + l + '</div><div class="v">' + v + '</div></div>').join('') + '</div>';
+  const daysHtml = d.days.map(day => {
+    const p = day.key.split('-');
+    const wd = CN_WEEKDAYS[new Date(+p[0], +p[1] - 1, +p[2]).getDay()];
+    const mark = day.idx === d.todayIdx ? '今天' : (day.idx === d.todayIdx - 1 ? '昨天' : '');
+    const grantsCount = day.groups.reduce((a, g) => a + g.count, 0);
+    const head = '<div class="dp-day-hd">'
+      + '<span class="d">' + day.key.slice(5) + '</span>'
+      + '<span class="w">' + wd + (mark ? ' · ' + mark : '') + '</span>'
+      + '<span class="n">' + day.groups.length + ' 项 · ' + fmt(grantsCount) + ' 笔</span>'
+      + '<span class="t">+' + fmt(day.total) + ' 积分</span>'
+      + '</div>';
+    const rows = day.groups.map(grp => {
+      const pct = day.total > 0 ? Math.max(2, Math.round(grp.size / day.total * 100)) : 0;
+      const when = grp.first ? (grp.first === grp.last ? grp.first : grp.first + '–' + grp.last) : '';
+      const parts = [];
+      if(when) parts.push(when);
+      if(d.scope === 'all') parts.push(grp.nick);
+      if(grp.pkg && grp.pkg !== grp.label) parts.push(grp.pkg);
+      if(grp.count > 1) parts.push('×' + grp.count);
+      return '<div class="kpi-bd-row">'
+        + '<div class="hd"><span class="nm">' + esc(grp.label) + '</span>'
+        + '<span class="vv">+' + fmt(grp.size) + ' <i>积分</i></span></div>'
+        + '<div class="bar"><i style="width:' + pct + '%"></i></div>'
+        + (parts.length ? '<div class="sub">' + esc(parts.join(' · ')) + '</div>' : '')
+        + '</div>';
+    }).join('');
+    return '<div class="dp-day">' + head + '<div class="dp-day-bd"><div class="kpi-bd-list">' + rows + '</div></div></div>';
+  }).join('');
+  const foot = '<div class="kpi-bd-foot">'
+    + '口径：国内版账号的签到 / 成长任务 / 活动 / 裂变等福利发放，与「已获取福利总积分」同一判据。'
+    + '数据来自最近一次积分快照（数据截至 <b>' + esc(String(d.snapshot).slice(5, 16) || '—') + '</b>），'
+    + '要先签到 / 做任务或点「一键刷新积分」才会更新；上游只保留当前仍可见的积分包，更早的发放可能已不在快照里。'
+    + (d.unknown ? '另有 ' + d.unknown + ' 笔发放没有时间戳，未计入按天统计。' : '')
+    + '</div>';
+  return tileHtml + '<div class="dp-days">' + daysHtml + '</div>' + foot;
+}
+
+/* 卡片与弹窗共用：载荷到达就重画卡面；弹窗开着时一起重画（保住滚动位置）。 */
+function renderCnPointsCard(g){
+  CN_POINTS = cnPointsData(g);
+  const el = document.getElementById('cnTodayGained');
+  const sub = document.getElementById('cnTodayGainedSub');
+  if(el) el.textContent = CN_POINTS ? ('+' + fmt(CN_POINTS.today) + ' 积分') : '-';
+  if(sub) sub.textContent = CN_POINTS
+    ? ('近 7 天 +' + fmt(CN_POINTS.last7) + ' · 昨日 +' + fmt(CN_POINTS.yesterday))
+    : '积分快照不可用';
+  refreshCnPointsDialog();
+}
+
+function refreshCnPointsDialog(){
+  const m = document.getElementById('cnPointsModal');
+  if(!m || !m.classList || !m.classList.contains('show')) return;
+  const body = document.getElementById('cnPointsBody');
+  if(!body) return;
+  const sc = document.getElementById('cnPointsScope');
+  if(sc) sc.textContent = cnPointsScopeText();
+  const top = body.scrollTop;
+  body.innerHTML = cnPointsHTML();
+  body.scrollTop = top;
+}
+
+function openCnPoints(card){
+  const m = document.getElementById('cnPointsModal');
+  if(!m) return;
+  cnPointsFocusBack = card || null;
+  const sc = document.getElementById('cnPointsScope');
+  if(sc) sc.textContent = cnPointsScopeText();
+  const body = document.getElementById('cnPointsBody');
+  if(body) body.innerHTML = cnPointsHTML();
+  m.classList.add('show');
+  const x = m.querySelector('.modal-x');
+  if(x && x.focus){ try{ x.focus(); }catch(e){} }
+}
+function closeCnPoints(){
+  const m = document.getElementById('cnPointsModal');
+  if(m) m.classList.remove('show');
+  if(cnPointsFocusBack && cnPointsFocusBack.focus){ try{ cnPointsFocusBack.focus(); }catch(e){} }
+  cnPointsFocusBack = null;
+}
+
+/* 弹窗里的「刷新」：只重取快照（该接口不发上游请求），不触发任务。 */
+async function reloadCnPoints(btn){
+  if(btn){ btn.disabled = true; btn.textContent = '刷新中...'; }
+  try{
+    const g = await getJSON('/accounts/credits/grants', POLL_READ);
+    renderCnPointsCard(g);
+    if(btn) toast('积分明细已刷新', 'ok');
+  }catch(e){
+    if(!isAuthError(e)) toast('积分明细刷新失败: ' + e.message, 'bad');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '刷新'; }
+  }
+}
+window.openCnPoints = openCnPoints;
+window.closeCnPoints = closeCnPoints;
+window.reloadCnPoints = reloadCnPoints;
+
+/* 快照太旧就静默拉一次上游积分（「今日新增」的新鲜度全靠它）。节流照 Trae 那套：
+   同一次会话里 10 分钟只自动拉一次，失败不弹窗、保持旧快照。 */
+function autoRefreshCnCreditsIfNeeded(grants){
+  if(typeof currentProvider === 'function' && currentProvider() !== 'workbuddy') return;
+  const fetched = Number((grants && grants.fetched_at) || 0) || 0;
+  if(fetched && (Date.now() / 1000 - fetched) < 30 * 60) return;
+  if(Date.now() - (window.CN_AUTO_CREDITS_AT || 0) < 10 * 60 * 1000) return;
+  window.CN_AUTO_CREDITS_AT = Date.now();
+  (async function(){
+    try{
+      await postJSON('/accounts/credits', {realm: 'cn', provider: 'workbuddy'});
+      renderCnPointsCard(await getJSON('/accounts/credits/grants', POLL_READ));
+    }catch(e){ /* 静默：旧快照照常显示，用户仍可点「刷新」看错误 */ }
+  })();
+}
+
+/* 入口：卡片点击 / 回车 / 空格（与看板 KPI 卡同一套键盘行为），Esc 关闭。 */
+(function(){
+  const host = document.getElementById('sectionGrowthTasks');
+  if(host){
+    host.addEventListener('click', ev => {
+      const card = ev.target.closest('.card[data-cnpoints]');
+      if(card) openCnPoints(card);
+    });
+    host.addEventListener('keydown', ev => {
+      if(ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
+      const card = ev.target.closest('.card[data-cnpoints]');
+      if(!card) return;
+      ev.preventDefault();
+      openCnPoints(card);
+    });
+  }
+  document.addEventListener('keydown', ev => {
+    if(ev.key !== 'Escape') return;
+    const m = document.getElementById('cnPointsModal');
+    if(m && m.classList && m.classList.contains('show')) closeCnPoints();
+  });
+})();
 
 /* Qoder 额度与福利视图（「任务与福利」页在 Qoder 模式下的内容）。
  *
