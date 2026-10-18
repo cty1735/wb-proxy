@@ -1033,19 +1033,27 @@ def _context_window(entry):
 
 
 def normalise_model_entry(entry):
-    """把 /model/list 的一条记录塑造成网关的模型元数据；不可用时返回 None。"""
+    """把 /model/list 的一条记录塑造成网关的模型元数据；不可用时返回 None。
+
+    上游对「还没给这个账号开放」的模型只把 ``enable`` 置 False（国内版账
+    号尤其明显：只有限免模型 enable=True，其余都带 minimal_version 的
+    ``999.999.999`` 占位）。网关仍然把它们展示出来，但打上
+    ``available=False`` 与不可用原因，面板置灰提示；客户端版本占位
+    （999.999.999）不算真实版本门槛，不当成「未开通」的原因。
+    """
     if not isinstance(entry, dict):
         return None
     key = entry.get("key")
     display = entry.get("display_name")
-    if not key or not display or not entry.get("enable"):
+    if not key or not display:
         return None
+    enabled = entry.get("enable")
     thinking = entry.get("thinking_config")
     efforts = []
     if isinstance(thinking, dict):
-        enabled = thinking.get("enabled")
-        if isinstance(enabled, dict) and isinstance(enabled.get("efforts"), dict):
-            efforts = sorted(str(name) for name in enabled["efforts"].keys())
+        enabled_cfg = thinking.get("enabled")
+        if isinstance(enabled_cfg, dict) and isinstance(enabled_cfg.get("efforts"), dict):
+            efforts = sorted(str(name) for name in enabled_cfg["efforts"].keys())
     # 官方模型选择器里的 Credit 倍率就是这个字段（见 docs 的说明）。
     factor = entry.get("price_factor")
     if factor is None:
@@ -1065,7 +1073,37 @@ def normalise_model_entry(entry):
     }
     if credits:
         model["credits_note"] = _CREDITS_NOTE_REMOTE
+    if enabled is False:
+        model["available"] = False
+        model["unavailable_reason"] = _unavailable_reason(entry)
     return model
+
+
+#: minimal_version 的「占位版本号」：上游用 999.999.999 表示「还没定版本门
+#: 槛」，不是真的要求客户端到 999。看到它就不该报「需要升级客户端」。
+_PLACEHOLDER_VERSIONS = frozenset(("999.999.999", "999.999.9999"))
+
+
+def _minimal_version(entry):
+    """minimal_version 里最先满足的客户端版本门槛（vsc / app / cli）。"""
+    raw = entry.get("minimal_version") or entry.get("minimalVersion")
+    if not isinstance(raw, dict):
+        return ""
+    for name in ("vsc", "app", "cli", "vscode", "ide"):
+        value = raw.get(name)
+        if isinstance(value, str) and value and value not in _PLACEHOLDER_VERSIONS:
+            return value
+    return ""
+
+
+def _unavailable_reason(entry):
+    """enable=False 的原因文案：优先版本门槛，否则「未对该账号开放」。"""
+    version = _minimal_version(entry)
+    if version:
+        return "需要客户端 %s 及以上" % version
+    if entry.get("is_free") is True:
+        return "限免活动未开放给该账号"
+    return "未对该账号开放"
 
 
 #: 官网文档里的 Credit 消耗参考系数（按上游 key）。只在拿不到上游目录
@@ -1206,6 +1244,11 @@ def model_entry_meta(model):
         meta["credits"] = model["credits"]
     if model.get("credits_note"):
         meta["credits_note"] = model["credits_note"]
+    if model.get("available") is False:
+        # 上游 enable=False：模型还在目录里，但这个账号现在用不了。
+        # 透给 /v1/models，面板置灰展示并给出原因。
+        meta["available"] = False
+        meta["unavailable_reason"] = model.get("unavailable_reason") or "当前不可用"
     return meta
 
 

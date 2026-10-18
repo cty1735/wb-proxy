@@ -568,6 +568,28 @@ def row_matches_provider(row, provider):
     # None means every provider, same contract as row_matches_realm.
     if not provider or provider == "all": return True
     return row_provider(row) == wb_accounts.normalize_provider(provider)
+
+
+def row_free_model(row):
+    """True when the row's model is free on the exit that served it.
+
+    限时免费（目录 credits 为 x0.00）的模型不产积分也不产费用：上游本来就回报
+    0 积分，看板若再按 OpenRouter 等价价折算一笔，卡面的「积分消耗」与「API 等价
+    花费」就会把免费额度算成支出。判定走 _catalog_rates_by_realm()——与面板
+    「模型清单」的倍率徽章、日积分护栏的免费豁免同一份本地目录（含桌面缓存文件），
+    一分钟缓存一次；取不到倍率的模型按「不免费」处理，宁可少排除也不多排除。
+
+    与 credits_is_free 一样，判定用的是模型目录而不是这行的 credit 字段：一个
+    从未计过费的免费模型（请求还没发生）也必须被认出来。
+    """
+    model = row.get("model")
+    if not model:
+        return False
+    rates = _catalog_rates_by_realm().get(row_realm(row) or "") or {}
+    raw = rates.get(model)
+    return bool(raw) and credits_is_free(raw)
+
+
 def provider_scope(provider, fallback=None):
     """Map a caller-supplied provider onto a log filter.
 
@@ -1796,7 +1818,9 @@ def _scan_daily_usage(offset, state):
                 continue
             tokens = row.get("total_tokens") or 0
             state["tokens"][uid] = state["tokens"].get(uid, 0) + tokens
-            credit = row.get("credit") or 0
+            # 限时免费的模型不产积分（详见 row_free_model）：护栏的「今日已消费
+            # 积分」与看板同口径，免费额度不能把账号推向限额。
+            credit = 0 if row_free_model(row) else (row.get("credit") or 0)
             if credit:
                 state["credits"][uid] = state["credits"].get(uid, 0.0) + credit
             mid = row.get("model")
@@ -3142,6 +3166,11 @@ def remaining_schedule_weights():
 _free_models_cache = {"at": 0.0, "data": None}
 _FREE_MODELS_TTL = 60.0
 
+# 目录里读得到的消耗倍率，按出口缓存。免费模型判定、KPI 明细的「倍率」列和
+# 「积分 / 费用排除免费模型」都读这一份（见 _catalog_rates_by_realm）。
+_catalog_rates_cache = {"at": 0.0, "data": None}
+_CATALOG_RATES_TTL = 60.0
+
 
 def credits_is_free(value):
     """True when a catalogue credits string means "this one costs nothing".
@@ -3151,6 +3180,80 @@ def credits_is_free(value):
     under the credit guard instead of slipping past it.
     """
     return str(value or "").strip().lower() in ("x0.00", "x0", "0", "0.00")
+
+
+def _static_catalog_sources(realm):
+    """[(models, provider)] for the realm's bundled snapshots.
+
+    The bundles answer without an account, so they are what the offline
+    deployments and the "no free sibling could be fetched" fallback both
+    rely on. WorkBuddy's own tables live in wb_catalog; Qoder and Trae ship
+    theirs inside their provider modules.
+    """
+    out = []
+    if realm == "cn":
+        wb_source = getattr(wb_catalog, "STATIC_CN_MODELS", [])
+    else:
+        wb_source = getattr(wb_catalog, "STATIC_INTL_MODELS", [])
+    if wb_source:
+        out.append((wb_source, "workbuddy"))
+    for module_name in ("wb_qoder", "wb_trae"):
+        module = globals().get(module_name)
+        if module is None:
+            continue
+        try:
+            rows = module.static_models(realm)
+        except Exception:
+            continue
+        if rows:
+            out.append((rows, module_name.split("_", 1)[1]))
+    return out
+
+
+def _catalog_rates_by_realm():
+    """realm -> {model id: credits string} for every locally known catalogue.
+
+    Reads the same snapshots free_models_by_realm() reads - the bundled tables
+    and the desktop cache file, all local - and is cached with the same TTL, so
+    the request path and the usage folds pay nothing for it. Only the WorkBuddy
+    desktop cache file is consulted for remote-era rates: the Qoder/Trae caches
+    are keyed by account, not by realm, and their bundled tables already carry
+    the rate the panel shows.
+
+    Qoder's ids are display names ("Efficient"), because that is what its
+    catalogue advertises and what the usage rows record.
+    """
+    now = time.time()
+    data = _catalog_rates_cache.get("data")
+    if data is not None and (now - _catalog_rates_cache.get("at", 0.0)) < _CATALOG_RATES_TTL:
+        return data
+    out = {}
+    for realm in ("intl", "cn"):
+        rates = {}
+        for rows, _provider in _static_catalog_sources(realm):
+            for item in rows or []:
+                if not isinstance(item, dict):
+                    continue
+                mid = str(item.get("id") or "").strip()
+                raw = str(item.get("credits") or "").strip()
+                if mid and raw:
+                    rates[mid] = raw
+        cached = read_cached_remote_catalog(realm)
+        if cached:
+            ids, meta = cached
+            # 只收 meta 自己点名的那批：parse_remote_catalog 的 walk 会顺带
+            # 收下 agents[].models 之类的中间节点（它们的 id 是 "credits" 这种
+            # 字段名），不能当模型倍率用。
+            for mid in ids or []:
+                item = (meta or {}).get(mid)
+                if not isinstance(item, dict):
+                    continue
+                raw = str(item.get("credits") or "").strip()
+                if raw:
+                    rates[str(mid)] = raw
+        out[realm] = rates
+    _catalog_rates_cache.update({"at": now, "data": out})
+    return out
 
 
 def free_models_by_realm():
@@ -4083,16 +4186,25 @@ def _fold_usage_snapshot(row, snap, r, p, since, until, pricing_on=None, also=No
     if until and at > until:
         return
     outcome = row_outcome(row)
-    # Each row is priced against the version that was in force when it
-    # happened, so a later price change cannot rewrite yesterday's totals.
-    # _row_cost 按行记忆（见「行级结果记忆」）：同一个视图里这一行只算一次，
-    # 第二个视图直接取上次的结果；pricing 是本次扫描的价表代次。
-    cost = _row_cost(row, pricing, pricing_on)
+    # 限时免费的模型不产积分也不产费用（详见 row_free_model）：它的 credit 归零、
+    # 金额不再折算，也不再进「未定价」名单。Token/请求/成功率照常统计——免费额度
+    # 是用掉的量，只是不花钱。判定在这里做一次，下面的每一份 bucket 都吃这个结论。
+    free = row_free_model(row)
+    if free:
+        cost = {"cny": 0.0, "known": False, "disabled": True}
+    else:
+        # Each row is priced against the version that was in force when it
+        # happened, so a later price change cannot rewrite yesterday's totals.
+        # _row_cost 按行记忆（见「行级结果记忆」）：同一个视图里这一行只算一次，
+        # 第二个视图直接取上次的结果；pricing 是本次扫描的价表代次。
+        cost = _row_cost(row, pricing, pricing_on)
     if outcome != "client_aborted":
         # 折进去的每一行都把「用到的价」记进状态指纹（中止行只记 errors，
         # 不碰价，所以不记）。记的是这次折叠真正读到的价，价表无关的变动
-        # 因此不再判废这条状态（见「用到的价」状态指纹一节）。
-        _priced_note(priced, row, cost, pricing)
+        # 因此不再判废这条状态（见「用到的价」状态指纹一节）。免费行没有读
+        # 任何价，所以同样不记。
+        if not free:
+            _priced_note(priced, row, cost, pricing)
     model = row.get("model")
     targets = (snap,) if not also else (snap,) + tuple(also)
     if outcome != "completed":
@@ -4104,12 +4216,15 @@ def _fold_usage_snapshot(row, snap, r, p, since, until, pricing_on=None, also=No
             # the completed-only rule this page has always used, and a client
             # abort is skipped because its usage block is incomplete.
             if outcome != "client_aborted":
-                tgt["credit"] += (row.get("credit") or 0)
-                _fold_cost(tgt, cost, model)
+                if not free:
+                    tgt["credit"] += (row.get("credit") or 0)
+                    _fold_cost(tgt, cost, model)
         return
     # Read each tracked field once: the row lands in four buckets below and
-    # every one of them walks the same fields.
-    present = [(k, row[k] or 0) for k in USAGE_FIELDS if k in row]
+    # every one of them walks the same fields. A free model contributes no
+    # credit to any of them, so its credit field is zeroed on the way in.
+    present = [(k, (0 if (free and k == "credit") else (row[k] or 0)))
+               for k in USAGE_FIELDS if k in row]
     m = model or "unknown"
     rr = row_realm(row)
     acct_id = row.get("account")
@@ -4120,7 +4235,8 @@ def _fold_usage_snapshot(row, snap, r, p, since, until, pricing_on=None, also=No
         tgt["requests"] += 1
         for k, value in present:
             tgt[k] += value
-        _fold_cost(tgt, cost, model)
+        if not free:
+            _fold_cost(tgt, cost, model)
         per = tgt["by_model"].setdefault(m, {"requests": 0, "accounts": {}, "cost_cny": 0.0, **{k: 0 for k in USAGE_FIELDS}})
         per_realm = tgt["by_model_realm"].setdefault(m, {}).setdefault(
             rr, {"requests": 0, "accounts": {}, "cost_cny": 0.0, **{k: 0 for k in USAGE_FIELDS}})
@@ -4877,7 +4993,9 @@ def _usage_timeseries_scan(realm, lo, hi, step, provider=None):
                         bucket[field] += (row.get(field) or 0)
                 else:
                     bucket["errors"] += 1
-                credit = row.get("credit") or 0
+                # 免费模型的 credit 不计入（见 _feed_series_bucket）：桶里累加的
+                # 与切片路径逐条一致。
+                credit = 0 if row_free_model(row) else (row.get("credit") or 0)
                 if outcome != "client_aborted":
                     bucket["credit"] += credit
                 if credit > 0:
@@ -5921,6 +6039,9 @@ def recent_usage(limit=100, realm=None, page=1, provider=None):
         r["cost_band_note"] = cost["band_note"] if cost["known"] else None
         r["cost_via_derived"] = (bool(cost["via_derived"]) if cost["known"]
                                  else None)
+        # 限时免费的模型：面板把这行的积分与折算价显示成「免费」，与卡面
+        # 「积分消耗 / API 等价花费」排除免费模型同一口径（见 row_free_model）。
+        r["free"] = row_free_model(r)
     return {
         "total": total,
         "page": page,
@@ -6733,11 +6854,20 @@ def _fold_usage_analytics(row, realm, maps, half, pricing_on=None, also=None,
     if outcome == "client_aborted":
         return
     is_err = outcome != "completed"
-    cost = _row_cost(row, pricing, pricing_on)
+    # 限时免费的模型不产积分也不产费用：它的 credit 归零、金额不再折算，与
+    # _fold_usage_snapshot 同一口径（详见 row_free_model）。failure 行也算
+    # 「已花的钱照记」那条规矩，但免费模型的失败行依然不记。
+    free = row_free_model(row)
+    if free:
+        cost = {"cny": 0.0, "known": False, "disabled": True}
+    else:
+        cost = _row_cost(row, pricing, pricing_on)
     # 折进去的每一行都把「用到的价」记进状态指纹（中止行在上面整行跳过）。
     _priced_note(priced, row, cost, pricing)
     cost_cny = cost["cny"] if cost["known"] else 0.0
     vals = _analytics_row_values(row)
+    if free:
+        vals = vals[:5] + (0.0,) + vals[6:]
     acct_uid = row.get("account") or "(unattributed)"
     m_id = row.get("model") or "(unknown)"
     # A row written before this feature existed has no `key` field at all; a
@@ -8132,7 +8262,8 @@ def _feed_series_bucket(bucket, row):
 
     口径与 _usage_timeseries_uncached 的折叠逐条一致：completed 计 requests
     与令牌，其它结果（含客户端中止）计 errors；credit 只要不是客户端中止就
-    累加。
+    累加。限时免费的模型不计 credit（详见 row_free_model）——序列桶的积分
+    与卡片同口径，不能把免费额度画成支出。
     """
     outcome = row_outcome(row)
     if outcome == "completed":
@@ -8142,7 +8273,7 @@ def _feed_series_bucket(bucket, row):
             bucket[field] += (row.get(field) or 0)
     else:
         bucket["errors"] += 1
-    if outcome != "client_aborted":
+    if outcome != "client_aborted" and not row_free_model(row):
         bucket["credit"] += (row.get("credit") or 0)
 
 
@@ -8253,7 +8384,7 @@ def _fold_usage_series(row, r, state, provider=None):
         sub = bucket["hours"][hour] = _new_series_bucket(
             bucket["at"] + int(hour) * 3600)
     _feed_series_bucket(sub, row)
-    if (row.get("credit") or 0) > 0:
+    if (row.get("credit") or 0) > 0 and not row_free_model(row):
         _series_credit_push(state["credits"], row, at)
 
 
@@ -8733,7 +8864,39 @@ def _compute_usage_analytics_uncached(realm=None, since=None, until=None,
         # by several accounts and one account can serve several keys, so this
         # is a second view of the same spend, not a breakdown of it.
         "keys": keys_list,
+        # 目录倍率（只覆盖这份载荷里出现的模型）：明细弹窗据此标出「免费 /
+        # 限时免费」与倍率，也是「积分与费用排除免费模型」的展示侧依据。
+        "model_rates": _payload_model_rates(model_map, acct_map),
     }
+
+
+def _payload_model_rates(model_map, acct_map):
+    """{model id: {"rate": str, "free": bool}} for the models in the payload.
+
+    Reads the same local catalog snapshots the free-model fold uses, so the
+    badge a model gets in the details dialog is the same test that decided
+    whether its credits and cost were counted. A model the catalogue does not
+    describe is left out entirely rather than guessed at.
+    """
+    wanted = set(model_map or {})
+    for entry in (acct_map or {}).values():
+        wanted.update((entry.get("window_models") or {}).keys())
+        wanted.update((entry.get("all_models") or {}).keys())
+    rates = _catalog_rates_by_realm()
+    out = {}
+    for mid in sorted(wanted):
+        if not mid or not isinstance(mid, str) or mid.startswith("("):
+            continue
+        raw = None
+        for realm in ("intl", "cn"):
+            raw = (rates.get(realm) or {}).get(mid)
+            if raw:
+                break
+        if not raw:
+            continue
+        out[mid] = {"rate": str(raw).strip().lower(),
+                    "free": credits_is_free(raw)}
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -8785,7 +8948,10 @@ _USAGE_CACHE_KIND_NAME = "usage-aggregate-cache-%s.json"
 # d2, d3] / ["off"]）换成「折叠行真正用到的价」记录（T15）。旧条目的字段形状
 # 对不上新判定，采纳端直接拒——升级后第一次刷新一次性重折（与 v3→v4 同处置），
 # 之后价表再变只按「用到的价」判废（无关模型的价变动不再重折）。
-_USAGE_CACHE_SCHEMA = 5
+# v6：限时免费模型不再折积分与金额（见 row_free_model / _catalog_rates_by_realm）。
+# 折过的状态里带着上一口径的 credit 与 cost_cny，逐条改不回来，所以旧条目整体
+# 作废：升级后第一次刷新做一次全量重折（与 v3→v4、v4→v5 同处置），之后照旧增量。
+_USAGE_CACHE_SCHEMA = 6
 # 升级前唯一布局的版本号：v3 单文件。只出现在只读回退路径上。
 _USAGE_CACHE_LEGACY_SCHEMA = 3
 # 五类状态的固定集合（文件名、kind 标签与写盘循环都用它）。
@@ -10752,11 +10918,11 @@ def _fetch_qoder_models(realm):
 
 
 def _fetch_trae_models(realm):
-    """Trae 目录：远端 get_detail_param，失败回内置快照。
+    """Trae 目录：远端 get_detail_param（动态目录 + 上游倍率），失败回内置快照。
 
     与 Qoder 目录同款：300s 内存缓存 + _catalog_lock，缓存键 "trae:<realm>"。
     Trae 的模型清单随账号和区域变化，所以有代表账号时一律走远端；没有账号
-    （或上游失败）才用内置清单兜底。
+    或上游取不到时才用内置清单兜底。不读本机客户端的任何缓存文件。
     """
     key = _catalog_cache_key(realm, "trae")
     r = realm or CURRENT_REALM
@@ -10782,8 +10948,8 @@ def _fetch_trae_models(realm):
             models, source = wb_trae.static_models(r), "bundled"
         if not models:
             models, source = wb_trae.static_models(r), "bundled"
-        if source != "remote":
-            # 面板只认识 remote / endpoint / cache / legacy / bundled 五种出处；
+        if source not in ("remote", "system"):
+            # 面板只认识 remote / endpoint / cache / legacy / bundled；
             # available_models 的 "system" 就是内置快照，别原样漏给前端。
             source = "bundled"
         entries = [(m["id"], wb_trae.model_entry_meta(m)) for m in models]
@@ -11034,6 +11200,11 @@ def model_entry(mid, meta):
         item["credits_note"] = meta["credits_note"]
     if meta.get("off_peak_rate"):
         item["off_peak_rate"] = meta["off_peak_rate"]
+    if meta.get("available") is False:
+        # 上游明确没给这个账号开放（Qoder 国内版的 enable=False 就是这种）。
+        # 面板按「置灰 + 原因」展示，客户端也看得到为什么用不了。
+        item["available"] = False
+        item["unavailable_reason"] = meta.get("unavailable_reason") or "当前不可用"
     if meta.get("vendor"):
         item["vendor"] = meta["vendor"]
     if meta.get("temperature") is not None:
@@ -11387,7 +11558,7 @@ def _refresh_trae_catalog(realm):
         except Exception as exc:
             log("catalog refresh: trae %s failed (%s)" % (realm, exc))
             models, source = [], "bundled"
-        if source != "remote" or not models:
+        if source not in ("remote",) or not models:
             log("catalog refresh: trae %s kept the previous list (upstream gave none)"
                 % realm)
             return {"ok": False, "realm": realm, "source": None, "count": 0,
@@ -11395,13 +11566,18 @@ def _refresh_trae_catalog(realm):
         entries = [(m["id"], wb_trae.model_entry_meta(m)) for m in models]
         with _lock:
             _models_cache[key] = {"at": time.time(), "data": entries}
-            _catalog_meta[key] = {"source": "remote", "fetched_at": time.time(),
+            _catalog_meta[key] = {"source": source, "fetched_at": time.time(),
                                   "file_mtime": None}
-    log("catalog refresh: trae %s updated from the model list endpoint (%d models)"
+    if source == "remote":
+        note_remote_catalog(realm, provider="trae")
+        log("catalog refresh: trae %s updated from the model list endpoint (%d models)"
+            % (realm, len(entries)))
+        return {"ok": True, "realm": realm, "source": "remote", "count": len(entries),
+                "msg": "已从上游 API 更新 Trae 清单，共 %d 个模型" % len(entries)}
+    log("catalog refresh: trae %s updated from the built-in list (%d models)"
         % (realm, len(entries)))
-    note_remote_catalog(realm, provider="trae")
-    return {"ok": True, "realm": realm, "source": "remote", "count": len(entries),
-            "msg": "已从上游 API 更新 Trae 清单，共 %d 个模型" % len(entries)}
+    return {"ok": True, "realm": realm, "source": "bundled", "count": len(entries),
+            "msg": "上游取不到目录，已用内置快照更新，共 %d 个模型" % len(entries)}
 
 
 def refresh_catalog(realm, provider=None):

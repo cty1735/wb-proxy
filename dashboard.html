@@ -1022,8 +1022,17 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 .kpi-bd-tag{font-size:9.5px;font-weight:650;border-radius:5px;padding:1px 5px;line-height:14px;white-space:nowrap}
 .kpi-bd-tag.cn{color:#1f6b31;background:#dcf5e2;border:1px solid #b7e6c3}
 .kpi-bd-tag.intl{color:#17527e;background:#d9e9f7;border:1px solid #b3d0e8}
+/* 计费类型：限时免费（与「模型清单」的免费徽章同色）与目录倍率。两态都用
+   文字 / 数字说话，不靠颜色单独承载信息。 */
+.kpi-bd-tag.free{color:#0b6b57;background:var(--accent2-soft);border:1px solid rgba(11,107,87,.28)}
+.kpi-bd-tag.rate{color:var(--dim);background:var(--panel2);border:1px solid var(--line);font-weight:600}
 [data-theme="dark"] .kpi-bd-tag.cn{color:#9fe8ae;background:rgba(44,176,68,.28);border-color:rgba(44,176,68,.5)}
 [data-theme="dark"] .kpi-bd-tag.intl{color:#b5d6f5;background:rgba(106,155,204,.32);border-color:rgba(106,155,204,.5)}
+[data-theme="dark"] .kpi-bd-tag.free{color:#7fd8c2;background:rgba(11,107,87,.24);border-color:rgba(127,216,194,.4)}
+[data-theme="dark"] .kpi-bd-tag.rate{color:var(--dim-light)}
+/* 明细页脚 / 花费卡副行里「已排除限时免费模型」的口径说明。 */
+.kpi-bd-note{color:var(--accent2)}
+.kpi-bd-note::before{content:'· ';color:var(--dim-light)}
 .kpi-bd-ok{color:var(--accent2)} .kpi-bd-gold{color:var(--warn)} .kpi-bd-bad{color:var(--bad)}
 .kpi-bd-empty{color:var(--dim-light);font-size:11.5px;padding:18px 0;text-align:center}
 .kpi-bd-foot{font-size:10.5px;color:var(--dim-light);line-height:1.65;margin-top:16px;padding-top:10px;border-top:1px solid var(--line)}
@@ -2282,6 +2291,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '长期有效': 'No expiry',
     '限': 'cap',
     '限时免费 0.00x': 'Free for a limited time 0.00x',
+    '限时免费': 'Free for a limited time',
+    '限时免费模型：不消耗积分，也不计入「积分消耗」与「API 等价花费」': 'Limited-time free model: it consumes no credits and is excluded from Credits and API-equivalent cost',
+    '限时免费模型（目录倍率 0）不耗积分，已从积分与金额里排除，只计入 Token 与请求数。': 'Limited-time free models (catalog rate 0) consume no credits, so they are excluded from the credit and cost figures and still count toward tokens and requests.',
+    '已排除限时免费模型：': 'Limited-time free models excluded: ',
+    '（不耗积分）': ' (no credits consumed)',
+    '免费': 'Free',
+    '目录消耗倍率': 'Catalog consumption rate',
     '随时可出发旅行': 'Ready to travel any time',
     '随机生成': 'Random',
     '需要先回收密钥': 'recover the key first',
@@ -6572,7 +6588,6 @@ async function loadModels(){
 const CATALOG_SOURCE_ORIGIN = {
   remote:   '上游 API · /v3/config',
   endpoint: '上游 API · /v1/models 端点',
-  client:   '本机 Trae 客户端 · 模型清单缓存',
   cache:    '本地配置文件（桌面客户端缓存）',
   legacy:   '本地配置文件（桌面客户端缓存）',
   bundled:  '内置快照'
@@ -6587,7 +6602,6 @@ function catalogSourceLabel(source){
     if(p === 'qoder') return '上游 API · Qoder 模型清单';
     if(p === 'trae') return '上游 API · Trae get_detail_param';
   }
-  if(source === 'client') return '本机 Trae 客户端 · model_list_map';
   return CATALOG_SOURCE_ORIGIN[source] || source;
 }
 
@@ -6608,7 +6622,7 @@ function renderModelsSourceLine(meta){
     ? '清单构建顺序：先请求上游 API（Qoder 模型清单接口，用当前视图版本的账号）→ 失败则用内置快照。'
       + '清单在 5 分钟缓存期内复用，过期自动重取；网关后台每天也会兜底获取一次；点「刷新模型清单」可立即从上游更新。'
     : (currentProvider() === 'trae')
-    ? '清单构建顺序：先请求上游 API（Trae get_detail_param，用当前视图版本的账号），并叠加本机 Trae 客户端的模型清单（state.vscdb，客户端选择器同源）→ 都没有才用内置快照。'
+    ? '清单构建顺序：先请求上游 API（Trae get_detail_param，用当前视图版本的账号，目录与倍率均取自上游响应）→ 失败则用内置快照。'
       + '清单在 5 分钟缓存期内复用，过期自动重取；点「刷新模型清单」可立即更新。倍率是客户端同款消耗倍率（含低谷折扣）。'
     : '清单构建顺序：先请求上游 API（/v3/config，用当前视图版本的账号）→ 失败则读取本机桌面客户端缓存文件 → 都拿不到才用内置快照。'
       + '清单在 5 分钟缓存期内复用，过期自动重取；网关后台每天也会兜底获取一次；点「刷新模型清单」可立即从上游更新。';
@@ -6619,15 +6633,12 @@ function renderModelsSourceLine(meta){
     return;
   }
   const isApi = (meta.source === 'remote' || meta.source === 'endpoint');
-  const isClient = (meta.source === 'client');
   const at = fmtCatalogStamp(meta.fetched_at);
   el.title = tip;
-  if(isApi || isClient){
+  if(isApi){
     el.style.cssText = CATALOG_BANNER_BASE
       + 'background:var(--accent2-soft);border:1px solid rgba(94,140,79,.28);color:var(--accent2)';
-    el.innerHTML = (isClient
-        ? '<b>✓ 当前为本机 Trae 客户端的模型清单（与客户端选择器一致）</b>'
-        : '<b>✓ 当前为通过 API 获取的最新数据</b>')
+    el.innerHTML = '<b>✓ 当前为通过 API 获取的最新数据</b>'
       + '<span style="color:var(--dim)">刷新时间 ' + esc(at || '—')
       + ' · 来源 ' + esc(catalogSourceLabel(meta.source)) + '</span>';
     return;
@@ -6772,11 +6783,22 @@ function renderAvailableModels(){
     // 6. 名称（默认模型带星标；描述挂在名称的悬浮提示上）
     const nm = String(m.name || '').trim();
     const nmDesc = String(m.description || '').trim();
-    const nameCell = '<td style="text-align:left" data-label="名称">'
+    // 上游 enable=false 的模型（未对该账号开放 / 客户端版本未达标）置灰展示，
+    // 让人知道「有这个模型但现在用不了」，而不是从清单里凭空消失。
+    const unavail = (m.available === false);
+    const unavailReason = String(m.unavailable_reason || '当前不可用').trim();
+    const unavailBadge = unavail
+      ? ' <span class="badge" style="font-size:11px;background:var(--warn-soft);color:var(--warn);border-color:rgba(183,121,31,.35)"'
+        + ' title="' + esc(unavailReason) + '">' + esc(unavailReason) + '</span>'
+      : '';
+    const rowStyle = unavail ? ' style="opacity:.55"' : '';
+    const nameCell = '<td style="text-align:left" data-label="名称"'
+      + (unavail ? ' title="' + esc(unavailReason) + '"' : '') + '>'
       + (m.is_default ? '<span title="默认模型" style="color:var(--accent)">★</span> ' : '')
       + (nm
           ? '<span' + (nmDesc ? ' title="' + esc(nmDesc) + '"' : '') + '>' + esc(nm) + '</span>'
           : '<span style="color:var(--dim)">—</span>')
+      + unavailBadge
       + '</td>';
 
     // 7. 默认采样参数（上游对缺省请求生效的采样值；有的模型只给部分字段）
@@ -6789,7 +6811,7 @@ function renderAvailableModels(){
           : '<span style="color:var(--dim)">—</span>')
       + '</td>';
 
-    return '<tr>'
+    return '<tr' + rowStyle + '>'
       + '<td style="text-align:left" class="mono" data-label="模型 ID"><b>' + esc(m.id) + '</b></td>'
       + nameCell
       + '<td style="text-align:center" data-label="消费倍率">' + credBadge + '</td>'
@@ -10346,9 +10368,12 @@ async function refreshInner(gen){
         // 但没有任何可解释的价格，省掉整张表的明细构建与 hover 开销。
         const costKey = PRICING_ON ? costRowKey(r, i) : '';
         if(costKey) COST_TIP_ROWS.set(costKey, r);
+        // 限时免费模型：这一行不产积分也不产金额（后端 row_free_model 的判定），
+        // 所以「积分」与「估算价格」两列都显示「免费」，与看板的积分/花费口径一致。
+        const free = !!r.free;
         return '<tr>'
         + '<td class="mono" data-label="时间">' + esc((r.iso||'').replace('T',' ').slice(5)) + '</td>'
-        + '<td class="mono" data-label="模型">' + esc(r.model) + '</td>'
+        + '<td class="mono" data-label="模型">' + esc(r.model) + (free ? ' <span class="badge ok" style="background:var(--accent2-soft);color:var(--accent2);font-size:10px" title="限时免费模型：不消耗积分，也不计入「积分消耗」与「API 等价花费」">限时免费</span>' : '') + '</td>'
         + '<td data-label="推理强度">' + (r.reasoning_effort ? ('<span class="badge-effort">' + esc(r.reasoning_effort) + '</span>') : '<span style="color:var(--dim)">—</span>') + '</td>'
         + '<td class="mono" style="font-size:11px;color:var(--dim)" data-label="账号" title="' + esc(r.account||'') + '">' + esc(acctName(r.account)) + '</td>'
         + '<td data-label="模式"><span class="badge ' + (r.stream?'s':'') + '">' + (r.stream?'流式':'非流式') + '</span></td>'
@@ -10361,11 +10386,11 @@ async function refreshInner(gen){
         + '<td style="color:var(--think)" data-label="思考">' + fmt(r.reasoning_tokens) + '</td>'
         + '<td data-label="缓存">' + (r.cache_hit_pct!=null ? r.cache_hit_pct+'%' : '—') + '</td>'
         + '<td data-label="总 token"><b>' + fmt(r.total_tokens) + '</b></td>'
-        + '<td data-label="积分" style="color:var(--accent2)">' + (r.credit != null ? Number(r.credit).toFixed(2) : '—') + '</td>'
+        + '<td data-label="积分" style="color:var(--accent2)">' + (free ? '<span style="color:var(--accent2)">免费</span>' : (r.credit != null ? Number(r.credit).toFixed(2) : '—')) + '</td>'
         + '<td data-label="OpenRouter 价估算" class="cost-cell pricing-col" style="color:var(--warn)"'
         +   (costKey ? ' data-cost-key="' + esc(costKey) + '"' : '') + '>'
-        +   fmtCost(r.cost_cny)
-        +   (r.cost_backfilled ? '<span style="color:var(--dim)">*</span>' : '')
+        +   (free ? '<span style="color:var(--accent2)">免费</span>' : (fmtCost(r.cost_cny)
+        +   (r.cost_backfilled ? '<span style="color:var(--dim)">*</span>' : '')))
         + '</td>'
       + '</tr>';
       }).join('') + '</tbody></table>'
@@ -15328,7 +15353,12 @@ function renderKpis(){
   // ⑥ 花费
   const usd = a.usd_cny ? w.cost_cny / a.usd_cny : null;
   $('kCost').innerHTML = `<span style="color:var(--red)" ${w.cost_cny != null ? `data-tip="${fullNum(w.cost_cny, 4)} 元"` : ''}>${fmtCostCny(w.cost_cny)}</span>`;
-  $('kCostSub').innerHTML = usd != null ? `<span style="color:var(--green)">${usd.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})}</span> · 积分消耗 ${numSpan(w.credit, 1)}` : '—';
+  // 副行把「免费模型已排除」说清楚：口径改了之后，卡面数字与明细里的积分
+  // 消耗都不含限时免费模型（见 KPI_SPECS.cost.note 与 kpiFreeNote）。
+  const freeNote = kpiFreeNote();
+  $('kCostSub').innerHTML = (usd != null
+    ? `<span style="color:var(--green)">${usd.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})}</span> · 积分消耗 ${numSpan(w.credit, 1)}`
+    : '—') + (freeNote ? `<br>${freeNote}` : '');
 
   $('pageSub').textContent = `区间 ${fmtCompact(w.total_tokens)} tokens · ${fmtCompact(w.requests)} 次请求 · 更新于 ${new Date().toLocaleTimeString('zh-CN', {hour12:false})}`;
 
@@ -15385,6 +15415,35 @@ const KPI_PART_FMT = {
   cost:   v => fmtCostCny(v),
 };
 
+/* ---- 计费类型徽章（免费 / 限时免费 / 倍率） ----
+   目录倍率来自 /usage/analytics 的 model_rates（后端 _payload_model_rates：
+   内置快照 + 本机桌面缓存文件，与「积分消耗 / API 等价花费」排除免费模型用的
+   是同一份判定）。后端已经把倍率归一成小写字符串（"x0.00" / "x0.29" /
+   "0.79"），这里只负责排版。 */
+function kpiRateText(rate){
+  const raw = String(rate == null ? '' : rate).trim();
+  if (!raw) return '';
+  return raw.replace(/^x/i, '') + 'x';
+}
+/* 一个模型的计费徽章：倍率 0 的标「限时免费」，其余标真实倍率，目录没给的
+   模型不给徽章（别把「不知道」画成免费）。 */
+function kpiModelTag(rate){
+  const raw = String(rate == null ? '' : rate).trim().toLowerCase();
+  if (!raw) return '';
+  if (raw.replace(/x/g, '') === '0.00' || raw.replace(/x/g, '') === '0'){
+    return '<span class="kpi-bd-tag free" title="限时免费模型：不消耗积分，也不计入「积分消耗」与「API 等价花费」">限时免费</span>';
+  }
+  return `<span class="kpi-bd-tag rate" title="目录消耗倍率">${esc(kpiRateText(raw))}</span>`;
+}
+/* 「积分 / 费用已排除免费模型」的说明行：只在看花费卡（以及任意卡片窗口里
+   出现过免费模型）时出现，说清口径而不是让数字凭空少一截。 */
+function kpiFreeNote(){
+  const rates = ((state.analytics || {}).model_rates) || {};
+  const freeNames = Object.keys(rates).filter(k => rates[k] && rates[k].free);
+  if (!freeNames.length) return '';
+  return `<span class="kpi-bd-note">已排除限时免费模型：${freeNames.map(esc).join('、')}（不耗积分）</span>`;
+}
+
 const KPI_SPECS = {
   tokens: {
     title: 'TOKEN 消耗明细',
@@ -15432,7 +15491,7 @@ const KPI_SPECS = {
     num: s => `<span style="color:var(--bad)">${fmtCostCny(s.cost_cny)}</span>`,
     share: true, part: 'cost',
     cols: s => [['积分', numSpan(s.credit, 1)], ['Token', numSpan(s.total_tokens)], ['请求', numSpan(s.requests)]],
-    note: '按 OpenRouter 同名模型的价格把每条请求的 Token 折算成人民币；未定价的模型仍计入 Token 与请求数，但不产生金额。',
+    note: '按 OpenRouter 同名模型的价格把每条请求的 Token 折算成人民币；未定价的模型仍计入 Token 与请求数，但不产生金额。限时免费模型（目录倍率 0）不耗积分，已从积分与金额里排除，只计入 Token 与请求数。',
   },
   success: {
     title: '请求成功率明细',
@@ -15446,27 +15505,35 @@ const KPI_SPECS = {
 
 function kpiPartsLine(parts, kind, noun){
   const w = KPI_PART_WEIGHT[kind], f = KPI_PART_FMT[kind];
+  const rates = ((state.analytics || {}).model_rates) || {};
   const list = (parts || []).filter(p => w(p) > 0).sort((a, b) => w(b) - w(a));
   if (!list.length) return '';
   const head = list.slice(0, 3), rest = list.slice(3);
-  let txt = head.map(p => `${esc(p.name)} ${f(w(p))}`).join(' · ');
+  // 账号行的「主要模型」逐条标计费类型：这个账号花掉的积分里哪些来自免费模型，
+  // 一眼能看出来（免费模型本来就不产积分，标出来是解释「为什么没有它」）。
+  const tagOf = p => (noun === '主要模型') ? (kpiModelTag(rates[p.name] && rates[p.name].rate)) : '';
+  let txt = head.map(p => `${esc(p.name)}${tagOf(p)} ${f(w(p))}`).join(' · ');
   if (rest.length) txt += ` · 其他 ${rest.length} 项 ${f(rest.reduce((s, p) => s + w(p), 0))}`;
   return `<div class="sub">${noun}：${txt}</div>`;
 }
 
 function kpiRowsHTML(rows, spec, total, max){
+  const rates = ((state.analytics || {}).model_rates) || {};
   return rows.map(r => {
     const s = r.stat || {};
     const v = spec.weight(s);
     const pct = total > 0 ? v / total * 100 : 0;
     const tag = r.realm ? `<span class="kpi-bd-tag ${r.realm === 'intl' ? 'intl' : 'cn'}">${r.realm === 'intl' ? '国际版' : '国内版'}</span>` : '';
+    // 模型行带计费类型：限时免费 / 真实倍率。账号行没有单一倍率，交给下面的
+    // 「主要模型」清单逐条标。
+    const modelTag = r.isAcct ? '' : kpiModelTag(rates[r.name] && rates[r.name].rate);
     const cols = (spec.cols ? spec.cols(s) : [])
       .filter(c => c && c[1] != null && c[1] !== '' && c[1] !== '—')
       .map(c => `${c[0]} <b>${c[1]}</b>`).join(' · ');
     const parts = spec.part ? kpiPartsLine(r.parts, spec.part, r.isAcct ? '主要模型' : '主要账号') : '';
     return `<div class="kpi-bd-row">
       <div class="hd">
-        <span class="nm"${r.tip ? ` data-tip="${esc(r.tip)}"` : ''}>${esc(r.name)}</span>${tag}
+        <span class="nm"${r.tip ? ` data-tip="${esc(r.tip)}"` : ''}>${esc(r.name)}</span>${tag}${modelTag}
         <span class="vv">${spec.num(s)}${spec.rowUnit || ''}${spec.share ? `<i>${pct.toFixed(1)}%</i>` : ''}</span>
       </div>
       <div class="bar"><i style="width:${Math.max(1.5, v / max * 100).toFixed(1)}%"></i></div>
@@ -15549,7 +15616,7 @@ function kpiDetailHTML(kind){
   }
   return kpiTilesHTML(spec, w)
     + `<div class="kpi-bd-grid">${kpiSideHTML('按账号', aRows, spec)}${kpiSideHTML('按模型', mRows, spec)}</div>`
-    + `<div class="kpi-bd-foot">${spec.note}</div>`;
+    + `<div class="kpi-bd-foot">${spec.note}${kpiFreeNote()}</div>`;
 }
 
 function kpiScopeText(){

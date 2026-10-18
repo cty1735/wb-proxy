@@ -468,6 +468,49 @@ def _user_region(auth):
     return str(region or "").strip().upper()
 
 
+def _denied_api_hosts():
+    """「不是聊天 / 模型端点」的域名：OAuth、积分、站点域。
+
+    登录态里 ``host`` 写的是 OAuth 域（国内版是 ``https://api.trae.cn``），
+    老代码把它当 apiHost 用，于是模型 / 聊天请求全打到认证域上 404。
+    """
+    hosts = set()
+    for config in REALM_CONFIGS.values():
+        for field in ("auth_host", "oauth_host", "oauth_exchange_host",
+                      "checkin_host", "site_url", "api_host"):
+            value = str(config.get(field) or "")
+            netloc = urllib.parse.urlsplit(value).netloc.lower()
+            if netloc:
+                hosts.add(netloc)
+    for value in EXCHANGE_HOST_ALLOWLIST:
+        hosts.add(value.lower())
+    for value in (INTL_CREDITS_HOST, INTL_CREDITS_HOST_US,
+                  "api.trae.cn", "api.trae.ai", "api.trae.com",
+                  "api.trae.com.cn", "www.trae.cn", "www.trae.ai"):
+        netloc = urllib.parse.urlsplit(value).netloc.lower()
+        if netloc:
+            hosts.add(netloc)
+    # 认证 / 积分域还可以再挡一层：ug-normal*.trae.ai、api*.trae.cn。
+    hosts.update(("ug-normal.trae.ai", "ug-normal.us.trae.ai"))
+    return hosts
+
+
+def api_host_is_credible(host, realm):
+    """这个「apiHost」能不能当聊天 / 模型端点用。"""
+    text = str(host or "").strip()
+    if not text:
+        return False
+    netloc = urllib.parse.urlsplit(text).netloc.lower()
+    if not netloc:
+        return False
+    if netloc in _denied_api_hosts():
+        return False
+    # 国内版：只认 trae 自己的 API 域（mchost.guru / trae.com.cn 网关）。
+    if realm_key(realm) == "cn":
+        return netloc.endswith(".mchost.guru") or netloc.endswith(".trae.com.cn")
+    return True
+
+
 def api_host_for(realm, auth=None, override=""):
     """该账号实际要打的聊天 / 模型端点。"""
     override = str(override or "").strip().rstrip("/")
@@ -475,7 +518,8 @@ def api_host_for(realm, auth=None, override=""):
         return override
     auth = auth or {}
     host = str(auth.get("apiHost") or auth.get("host") or "").strip().rstrip("/")
-    if host.startswith("http://") or host.startswith("https://"):
+    if (host.startswith("http://") or host.startswith("https://")) \
+            and api_host_is_credible(host, realm):
         return host
     if realm_key(realm) == "cn":
         return realm_config("cn")["api_host"]
@@ -1863,14 +1907,30 @@ _CREDITS_NOTE_SNAPSHOT = "内置快照参考值；实际倍率以账号模型目
 
 
 def _entry_contact(entry):
-    """display_contact_config 是 JSON 字符串，解析成 dict；失败给空。"""
+    """display_contact_config 是 JSON 字符串，解析成 dict；失败给空。
+
+    少数上游条目（自定义模型等）把同样的字段直接摊在 ``features`` 下
+    （consumption_rate / discount / activity_discount…），这里一并认。
+    """
     contact = entry.get("display_contact_config")
     if isinstance(contact, str) and contact.strip():
         try:
             contact = json.loads(contact)
         except ValueError:
-            return {}
-    return contact if isinstance(contact, dict) else {}
+            contact = None
+    if isinstance(contact, dict):
+        return contact
+    features = entry.get("features")
+    return features if isinstance(features, dict) else {}
+
+
+def entry_config_name(entry):
+    """条目里的上游 config_name（兼容服务端 / 本地快照的字段名）。"""
+    if not isinstance(entry, dict):
+        return ""
+    return str(entry.get("config_name") or entry.get("configName")
+               or entry.get("model") or entry.get("id")
+               or entry.get("name") or "").strip()
 
 
 def _entry_context(entry):
@@ -1937,10 +1997,11 @@ def _off_peak_window_text(windows):
 
 
 def _consumption_info(entry):
-    """从 display_contact_config 读消耗倍率与活动折扣。
+    """从 display_contact_config / features 读消耗倍率与活动折扣。
 
     返回 (credits, note, off_peak)：当前倍率、说明文案、低谷倍率。
-    字段与 Trae 客户端选择器同源（consumption_rate / activity_discount）。
+    字段与 Trae 客户端选择器同源（consumption_rate / activity_discount /
+    discount），本机客户端清单的 features 形状也一并认。
     """
     contact = _entry_contact(entry)
     section = contact.get("consumption_rate")
@@ -1974,27 +2035,56 @@ def _consumption_info(entry):
                 if member_rate and member_rate != now:
                     extra = "，会员 %sx" % member_rate
                 note = "限时补贴：原价 %sx → %sx%s" % (before, now, extra)
+    if not note:
+        note = _member_discount_note(contact, credits)
     if not note and credits:
         note = _CREDITS_NOTE_REMOTE
     return credits, note, off_peak
 
 
+def _member_discount_note(contact, credits):
+    """会员价说明（discount/member_discount）：free 账号看到的是原价。
+
+    例：GLM-5.3 原价 0.78x，会员 0.39x（member_discount 50），面板按
+    「0.78x（会员 0.39x）」展示，与客户端选择器的会员价提示一致。
+    """
+    discount = contact.get("discount")
+    if not (isinstance(discount, dict) and discount.get("enable") is not False):
+        return ""
+    data = discount.get("data") if isinstance(discount.get("data"), dict) else {}
+    sub_key = str(discount.get("subKey") or discount.get("sub_key") or "")
+    if sub_key and "member" not in sub_key:
+        return ""
+    member_rate = format_consumption_rate(data.get("consumption_rate")
+                                          or data.get("after_consumption_rate"))
+    original = format_consumption_rate(data.get("original_consumption_rate")) or credits
+    if not member_rate or not original or member_rate == original:
+        return ""
+    percent = data.get("member_discount")
+    text = "会员折扣"
+    try:
+        value = float(percent)
+    except (TypeError, ValueError):
+        value = 0
+    if value > 0:
+        text += " %g%%" % value
+    return "%s：会员 %sx（原价 %sx）" % (text, member_rate, original)
+
+
 def normalise_model_entry(entry):
     """把 get_detail_param 的一条记录塑造成网关的模型元数据。
 
-    目录的展示字段在 display_config、倍率在 display_contact_config；
-    内部条目（advisor / auto / 自定义占位 / 辅助功能 / 对用户隐藏）直接
-    丢弃，context_window_tokens / reasoning_effort_config 一并翻译成网关
-    认识的名字。
+    目录的展示字段在 display_config、倍率在 display_contact_config（少数
+    上游条目把 features 摊在顶层，这里一并认）。内部条目（advisor / auto /
+    自定义占位 / 辅助功能 / 对用户隐藏）直接丢弃，context_window_tokens /
+    reasoning_effort_config 翻译成网关认识的名字。
     """
     if not isinstance(entry, dict):
         return None
     display = entry.get("display_config")
     if not isinstance(display, dict):
         display = {}
-    config = (entry.get("config_name") or entry.get("configName")
-              or entry.get("model") or entry.get("id") or "")
-    config = str(config).strip()
+    config = entry_config_name(entry)
     if not config:
         return None
     if entry.get("enable") is False or entry.get("enabled") is False:
@@ -2023,7 +2113,9 @@ def normalise_model_entry(entry):
         contact.get("reasoning"), dict) else {}
     multimodal_section = contact.get("multimodal") if isinstance(
         contact.get("multimodal"), dict) else {}
-    reasoning = bool(str(display.get("model_capability") or "") == "reasoning_model"
+    capability = str(display.get("model_capability")
+                     or entry.get("model_type") or "")
+    reasoning = bool(capability == "reasoning_model"
                      or reasoning_section.get("enable")
                      or entry.get("is_reasoning") or entry.get("reasoning")
                      or entry.get("supports_reasoning")
@@ -2036,8 +2128,10 @@ def normalise_model_entry(entry):
     tools = entry.get("supports_tool_call")
     if tools is None:
         tools = entry.get("toolcall_compatible")
-    if tools is None:
-        extra = entry.get("extra_config")
+    for key in ("extra_config", "custom_config"):
+        if tools is not None:
+            break
+        extra = entry.get(key)
         if isinstance(extra, str) and extra.strip():
             try:
                 extra = json.loads(extra)
@@ -2120,8 +2214,7 @@ def _merge_entry(merged, order, entry):
     同一模型在不同 function 里字段可能不同（倍率 / 展示名 / 可见性），
     合并时取字段更全的一份；可见性按「任一清单可见即可见」处理。
     """
-    config = str(entry.get("config_name") or entry.get("configName")
-                 or entry.get("model") or entry.get("id") or "").strip()
+    config = entry_config_name(entry)
     if not config:
         return
     current = merged.get(config)
@@ -2137,15 +2230,70 @@ def _merge_entry(merged, order, entry):
         current["is_invisible_to_user"] = entry.get("is_invisible_to_user")
 
 
+def _normalise_entries(entries):
+    """一批目录条目 -> 规范化的模型元数据（按入参顺序去重）。"""
+    models = []
+    seen_ids = set()
+    seen_names = set()
+    for entry in entries:
+        model = normalise_model_entry(entry)
+        if not model:
+            continue
+        if model["id"].lower() in seen_ids:
+            continue
+        name_key = model["name"].strip().lower()
+        if name_key and name_key in seen_names:
+            # 同一展示名的多个 config（Official / 别名）只留第一份。
+            continue
+        seen_ids.add(model["id"].lower())
+        if name_key:
+            seen_names.add(name_key)
+        models.append(model)
+    # 目录里混着个别没有倍率的条目（自定义模型占位）；只要有一批带倍率
+    # 的模型，就以带倍率的那批为准。
+    rated = [m for m in models if m.get("credits")]
+    return rated or models
+
+
+def catalog_version_code():
+    """模型目录请求用的客户端构建号（yyyymmdd）。
+
+    上游按 ``x-ide-version-code`` 下发不同代际的模型目录：旧构建号只给旧
+    一代（glm-5.2 / kimi-k2.6），20261001 及以后才给当前一代（glm-5.3 /
+    kimi-k3 / qwen3.8-max / Seed-2.1…）。默认用「今天」的日期，上游对未来
+    的号也只返回它当前最新的配置，这样目录会一直跟着上游走；要复现历史
+    目录时用 ``TRAE_CATALOG_VERSION_CODE``（或 ``TRAE_IDE_VERSION_CODE``）
+    覆盖。
+    """
+    for name in ("TRAE_CATALOG_VERSION_CODE", "TRAE_IDE_VERSION_CODE"):
+        value = str(os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return time.strftime("%Y%m%d")
+
+
+def build_catalog_headers(access_token, auth, realm):
+    """模型目录请求头：与聊天同款，但带上「最新构建号」拿当前一代目录。"""
+    headers = build_common_headers(access_token, auth, realm)
+    code = catalog_version_code()
+    if code:
+        headers["x-ide-version-code"] = code
+        headers["x-app-version-code"] = code
+    return headers
+
+
 def fetch_model_list(access_token, auth, realm, proxy="", timeout=25):
     """拉一次上游模型目录（多个 function 合并后规范化）。
 
     客户端选择器按 function 拉各自的清单；网关把主要 function 合并、
-    按可见性过滤后就是用户实际能选的模型（含真实消耗倍率）。
+    按可见性过滤后就是用户实际能选的模型，倍率取自同一条目的
+    ``display_contact_config.consumption_rate``（客户端选择器同款字段）。
+    不读本机客户端的任何缓存，目录与倍率都以这次上游响应为准。
     """
     host = api_host_for(realm, auth)
     url = host + "/api/ide/v1/get_detail_param"
-    headers = build_common_headers(access_token, auth, realm)
+    headers = build_catalog_headers(access_token, auth, realm)
+    fallback = build_common_headers(access_token, auth, realm)
     merged = {}
     order = []
     errors = []
@@ -2167,6 +2315,15 @@ def fetch_model_list(access_token, auth, realm, proxy="", timeout=25):
             errors.append("%s: %s" % (func, exc))
             continue
         if status < 200 or status >= 300:
+            # 构建号被拒时退回网关默认构建号，行为与旧版一致。
+            try:
+                status, raw = _request(url, method="POST", body=body,
+                                       timeout=timeout, proxy=proxy,
+                                       headers=fallback)
+            except Exception as exc:
+                errors.append("%s: %s" % (func, exc))
+                continue
+        if status < 200 or status >= 300:
             errors.append("%s: HTTP %d" % (func, status))
             continue
         try:
@@ -2177,54 +2334,49 @@ def fetch_model_list(access_token, auth, realm, proxy="", timeout=25):
         ok = True
         for entry in _extract_entries(data):
             _merge_entry(merged, order, entry)
+
     if not ok:
         raise TraeError("Trae 模型目录失败: %s"
                         % (" | ".join(errors) or "没有可用的 function"))
-    models = []
-    seen_ids = set()
-    seen_names = set()
-    for config in order:
-        model = normalise_model_entry(merged[config])
-        if not model:
-            continue
-        if model["id"].lower() in seen_ids:
-            continue
-        name_key = model["name"].strip().lower()
-        if name_key and name_key in seen_names:
-            # 同一展示名的多个 config（Official / 别名）只留第一份。
-            continue
-        seen_ids.add(model["id"].lower())
-        if name_key:
-            seen_names.add(name_key)
-        models.append(model)
-    # 目录里混着个别没有倍率的条目（自定义模型占位）；只要有一批带倍率
-    # 的模型，就以带倍率的那批为准。
-    rated = [m for m in models if m.get("credits")]
-    return rated or models
+    return _normalise_entries([merged[config] for config in order])
 
 
-#: 静态兜底清单：只用于「还没有 Trae 账号」时的面板展示。国内版的行是
-#: 2026-10-18 从真实账号目录抄下的可见模型——
-#: (config_name, 显示名, 推理, 视觉, 上下文, 消耗倍率, 低谷倍率)，
-#: 倍率与客户端选择器的 consumption_rate 同源；真正以账号目录为准。
+#: 静态兜底清单：只用于「还没有 Trae 账号」时的面板展示（有账号时一律用
+#: 账号的上游目录）。行格式：(config_name, 显示名, 推理, 视觉, 上下文,
+#: 消耗倍率, 低谷倍率)，数值是 2026-10-18 从上游 get_detail_param 的
+#: consumption_rate 抄下的参考值。
 _STATIC_MODELS = {
     "cn": [
+        ("Doubao-Seed-2.1-Turbo", "Seed-2.1-Turbo", True, True, 256000, 0.2, None),
+        ("Doubao-Seed-2.1-Pro", "Seed-2.1-Pro-0915", True, True, 256000, 0.8, None),
+        ("Doubao-Seed-Evolving", "Seed-Evolving", True, True, 256000, 0.8, None),
         ("Doubao-Seed-Code", "Seed-Code", True, True, 256000, 0.06, None),
-        ("glm-5.1", "GLM-5.1", True, False, 116000, 0.83, None),
-        ("glm-5", "GLM-5", True, False, 116000, 0.7, None),
-        ("glm-5.2", "GLM-5.2", True, False, 116000, 0.78, None),
-        ("DeepSeek-V4-Flash", "DeepSeek-V4-Flash", True, False, 116000, 0.2, 0.1),
-        ("DeepSeek-V4-Pro-Official", "DeepSeek-V4-Pro 正式版", True, False, 116000, 0.72, 0.36),
-        ("DeepSeek-V4-Pro", "DeepSeek-V4-Pro", True, False, 116000, 0.72, 0.36),
-        ("minimax-m3", "MiniMax-M3", True, True, 116000, 0.26, None),
+        ("glm-5.3-flash", "GLM-5.3-Flash", True, True, 200000, 0.06, None),
+        ("glm-5.3-flashx", "GLM-5.3-FlashX", True, True, 200000, 0.31, None),
+        ("glm-5.3", "GLM-5.3", True, False, 200000, 0.78, None),
+        ("glm-5.2", "GLM-5.2", True, False, 200000, 0.78, None),
+        ("deepseek-v4.1-flash", "DeepSeek-V4.1-Flash", True, True, 200000, 0.06, 0.06),
+        ("DeepSeek-V4-Flash-Official", "DeepSeek-V4-Flash", True, False, 200000, 0.2, 0.1),
+        ("DeepSeek-V4-Pro-Official", "DeepSeek-V4-Pro", True, False, 200000, 0.72, 0.36),
+        ("kimi-k3", "Kimi-K3", True, True, 200000, 1.83, None),
+        ("kimi-k2.8-preview", "Kimi-K2.8-Preview", True, True, 200000, 0.98, None),
+        ("mimo-v2.6-flash", "MiMo-V2.6-Flash", True, True, 200000, 0.06, None),
+        ("mimo-v2.6-pro", "MiMo-V2.6-Pro", True, True, 200000, 0.15, None),
+        ("minimax-m3", "MiniMax-M3", True, True, 200000, 0.26, None),
+        ("step-5-preview", "Step-5-Preview", True, True, 200000, 0.48, None),
+        ("qwen3.8-flash", "Qwen3.8-Flash", True, True, 200000, 0.08, None),
+        ("qwen3.8-max", "Qwen3.8-Max", True, True, 200000, 1.5, None),
         ("qwen-3.7-plus", "Qwen3.7-Plus", True, True, 200000, 0.25, None),
-        ("qwen-3.5", "Qwen3.5-Plus", True, True, 116000, 0.26, None),
-        ("Doubao-Seed-2.0-Code", "Doubao-Seed-2.0-Code", True, True, 184000, 0.39, None),
-        ("glm-5v-turbo", "GLM-5V-Turbo", True, True, 200000, 0.51, None),
+        ("kimi-k2.7-code", "Kimi-K2.7-Code", True, True, 200000, 0.83, None),
         ("kimi-k2.6", "Kimi-K2.6", True, True, 200000, 0.75, None),
+        ("minimax-m2.7", "MiniMax-M2.7", True, False, 116000, 0.27, None),
+        ("qwen-3.6-plus", "Qwen3.6-Plus", True, True, 116000, 0.26, None),
+        ("Doubao-Seed-2.0-Code", "Doubao-Seed-2.0-Code", True, True, 184000, 0.39, None),
+        ("glm-5.1", "GLM-5.1", True, False, 200000, 0.83, None),
+        ("glm-5v-turbo", "GLM-5V-Turbo", True, True, 200000, 0.51, None),
+        ("glm-5", "GLM-5", True, False, 200000, 0.7, None),
         ("kimi-k2.5", "Kimi-K2.5", True, True, 200000, 0.48, None),
-        ("minimax-m2.7", "MiniMax-M2.7", True, False, 200000, 0.27, None),
-        ("qwen-3.6-plus", "Qwen3.6-Plus", True, True, 200000, 0.26, None),
+        ("qwen-3.5", "Qwen3.5-Plus", True, True, 200000, 0.26, None),
     ],
     "intl": [
         ("claude-opus-4-7", "Claude Opus 4.7", True, True, 200000),
@@ -2244,33 +2396,46 @@ _STATIC_MODELS = {
 
 #: 国内版客户端的模型别名 -> 上游 config_name（参考公开客户端的映射表）。
 _CN_ALIASES = {
-    "claude-opus-4-7": "glm-5.2",
-    "claude-opus-4-6": "glm-5.2",
-    "claude-opus-4-5": "glm-5.2",
-    "claude-opus-4-5-20251101": "glm-5.2",
-    "claude-sonnet-4-6": "glm-5.2",
-    "claude-sonnet-4-5": "glm-5.2",
-    "claude-sonnet-4-5-20250929": "glm-5.2",
-    "claude-haiku-4-5": "glm-5.1",
-    "claude-haiku-4-5-20251001": "glm-5.1",
+    "claude-opus-4-7": "glm-5.3",
+    "claude-opus-4-6": "glm-5.3",
+    "claude-opus-4-5": "glm-5.3",
+    "claude-opus-4-5-20251101": "glm-5.3",
+    "claude-sonnet-4-6": "glm-5.3",
+    "claude-sonnet-4-5": "glm-5.3",
+    "claude-sonnet-4-5-20250929": "glm-5.3",
+    "claude-haiku-4-5": "glm-5.3-flash",
+    "claude-haiku-4-5-20251001": "glm-5.3-flash",
     "gpt-4o": "custom_model_gpt-5",
     "gpt-4o-mini": "custom_model_gpt-5",
     "gpt-5": "custom_model_gpt-5",
     "gemini-2.0-flash": "custom_model_gemini",
     "gemini-2.5-pro": "custom_model_vercel_gemini",
-    "deepseek-v3": "DeepSeek-V4-Pro",
-    "deepseek-v4-pro": "DeepSeek-V4-Pro",
-    "deepseek-v4-flash": "DeepSeek-V4-Flash",
+    "deepseek-v3": "DeepSeek-V4-Pro-Official",
+    "deepseek-v4-pro": "DeepSeek-V4-Pro-Official",
+    "deepseek-v4-flash": "DeepSeek-V4-Flash-Official",
+    "deepseek-v4-1-flash": "deepseek-v4.1-flash",
     "deepseek-v3-1": "deepseek-V3.1",
+    "kimi-k3": "kimi-k3",
+    "kimi-k2-8-preview": "kimi-k2.8-preview",
     "kimi-k2-7-code": "kimi-k2.7-code",
     "kimi-k2-6": "kimi-k2.6",
     "kimi-k2-5": "kimi-k2.5",
+    "glm-5-3": "glm-5.3",
+    "glm-5-3-flash": "glm-5.3-flash",
+    "glm-5-3-flashx": "glm-5.3-flashx",
     "qwen3.7-plus": "qwen-3.7-plus",
     "qwen3.6-plus": "qwen-3.6-plus",
     "qwen-3-5": "qwen-3.5",
+    "step-5": "step-5-preview",
     "doubao-seed-2-1-pro": "Doubao-Seed-2.1-Pro",
     "doubao-seed-2-1-turbo": "Doubao-Seed-2.1-Turbo",
-    "doubao-seed-code": "Doubao_1_6",
+    "seed-2-1-pro": "Doubao-Seed-2.1-Pro",
+    "seed-2-1-turbo": "Doubao-Seed-2.1-Turbo",
+    "seed-2.1-pro": "Doubao-Seed-2.1-Pro",
+    "seed-2.1-turbo": "Doubao-Seed-2.1-Turbo",
+    "seed-code": "Doubao-Seed-Code",
+    "seed-evolving": "Doubao-Seed-Evolving",
+    "doubao-seed-code": "Doubao-Seed-Code",
     "doubao-1-6": "Doubao_1_6",
     "doubao-1.8": "doubao_1_8",
 }
@@ -2329,21 +2494,27 @@ def static_models(realm):
 
 
 def available_models(realm, access_token=None, auth=None, proxy="", force=False):
-    """账号可用就拉远端目录，否则回内置清单；返回 (models, source)。"""
+    """账号可用就拉上游目录，否则回内置快照；返回 (models, source)。
+
+    source：``remote`` = 上游接口（动态目录 + 真实倍率）、``system`` = 没有
+    账号或上游取不到时的内置快照。本机客户端的数据不参与。
+    """
     key = realm_key(realm)
     now = time.time()
     if not force:
         with _MODEL_CACHE_LOCK:
             cached = _MODEL_CACHE.get(key)
             if cached and now - cached[0] < MODEL_CACHE_TTL:
+                # 缓存里存的就是 (models, source)：直接还回去。
                 return cached[1]
     if access_token:
         try:
             models = fetch_model_list(access_token, auth or {}, key, proxy=proxy)
             if models:
+                result = (models, "remote")
                 with _MODEL_CACHE_LOCK:
-                    _MODEL_CACHE[key] = (time.time(), models)
-                return models, "remote"
+                    _MODEL_CACHE[key] = (time.time(), result)
+                return result
         except Exception:
             pass
     models = static_models(key)
@@ -2354,7 +2525,9 @@ def cached_models(realm):
     """只读缓存（不发上游）；给「按模型归属猜 provider」用。"""
     with _MODEL_CACHE_LOCK:
         cached = _MODEL_CACHE.get(realm_key(realm))
-    return list(cached[1]) if cached else []
+    if not cached:
+        return []
+    return list(cached[1][0]) if cached[1] else []
 
 
 def model_entry_meta(model):
