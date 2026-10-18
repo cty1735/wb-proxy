@@ -19430,25 +19430,39 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_trae_callback_page(
                 200, True, "Trae 授权成功",
                 "%s 已加入账号池，可以关闭此页回到网关看板。" % nick)
+        detail = str(result.get("error") or "")
         return self._send_trae_callback_page(
             400, False, "Trae 授权失败",
-            result.get("error") or "AuthCode 交换失败，请回到看板重试。")
+            "授权码交换失败。请确认本机 Trae 客户端已登录同一账号；"
+            "如果浏览器没有自动跳回，可回到看板用「粘贴回调 URL」重试。",
+            detail=detail)
 
-    def _send_trae_callback_page(self, status, ok, title, message):
+    def _send_trae_callback_page(self, status, ok, title, message, detail=""):
         color = "#2cb044" if ok else "#d9534f"
         label = "登录成功" if ok else "登录失败"
+        width = "760px" if detail else "520px"
+        detail_html = ""
+        if detail:
+            formatted = str(detail).replace(" | ", "\n")
+            detail_html = """
+<details style="text-align:left;margin:0 0 22px;border:1px solid #2a3d30;border-radius:10px;background:#101812">
+<summary style="cursor:pointer;padding:10px 14px;font-size:12px;color:#9fb3a4">查看详细错误（上游各交换变体）</summary>
+<pre style="margin:0;padding:0 14px 14px;font-size:11px;line-height:1.55;color:#c8d6cc;white-space:pre-wrap;word-break:break-all;max-height:320px;overflow:auto">%s</pre>
+</details>""" % html.escape(formatted)
         body = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>%s</title></head>
 <body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f1511;color:#e7efe9;display:flex;min-height:100vh;align-items:center;justify-content:center">
-<div style="max-width:520px;padding:40px 36px;border:1px solid #24352a;border-radius:16px;background:#141d17;text-align:center">
+<div style="max-width:%s;width:calc(100%% - 32px);box-sizing:border-box;padding:40px 36px;border:1px solid #24352a;border-radius:16px;background:#141d17;text-align:center">
 <div style="font-size:44px;line-height:1;margin-bottom:18px">%s</div>
 <h1 style="font-size:22px;margin:0 0 10px;color:%s">%s</h1>
 <p style="font-size:14px;line-height:1.7;color:#a9b8ad;margin:0 0 22px">%s</p>
+%s
 <p style="font-size:12px;color:#6f8174;margin:0">Trae 网关 · %s</p>
 </div></body></html>""" % (
-            html.escape(title), "✓" if ok else "×", color, html.escape(label),
-            html.escape(str(message)), html.escape(title))
+            html.escape(title), width, "✓" if ok else "×", color,
+            html.escape(label), html.escape(str(message)), detail_html,
+            html.escape(title))
         data = body.encode("utf-8")
         self.send_response(int(status))
         self.send_header("Content-Type", "text/html; charset=utf-8")

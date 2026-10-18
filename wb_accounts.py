@@ -2363,13 +2363,7 @@ class Account(object):
         return {"ok": True, "credits": self.credits}
 
     def _fetch_credits_trae(self):
-        """Trae 积分余额：国内版查 pay/ide_user_ent_usage（官方积分）。
-
-        国际版接口尚未证实，先只做国内版；拿不到就如实返回错误，不编 0。
-        """
-        if self.realm != "cn":
-            return {"ok": False,
-                    "error": "Trae 国际版暂未证实积分查询接口，按账号额度计费"}
+        """Trae 积分余额：CN 走 v2，国际版走 ug-normal 的 v1 接口。"""
         res = self._trae_refresh_credits()
         if res.get("ok"):
             return {"ok": True, "credits": self.credits}
@@ -2721,9 +2715,6 @@ class CreditsRefresher(threading.Thread):
         chosen_age = None
         for account in accounts:
             if not account.enabled or not account.access_token:
-                continue
-            # Trae 国际版没有可用的积分接口；国内版现在能查积分，参与刷新。
-            if account.provider == "trae" and account.realm != "cn":
                 continue
             if self._parked.get(account.uid, 0) > now:
                 continue
@@ -3621,6 +3612,7 @@ class AccountPool(object):
                 "deviceId": started.get("deviceId") or "",
                 "machineId": started.get("machineId") or "",
                 "publicKeyPEM": started.get("publicKeyPEM") or "",
+                "privateKeyPEM": started.get("privateKeyPEM") or "",
                 "appVersion": started.get("appVersion") or "",
                 "callbackUrl": callback_url,
                 "traceId": state,
@@ -3686,8 +3678,27 @@ class AccountPool(object):
             "deviceId": (info or {}).get("deviceId") or "",
             "machineId": (info or {}).get("machineId") or "",
             "publicKeyPEM": (info or {}).get("publicKeyPEM") or "",
+            "privateKeyPEM": (info or {}).get("privateKeyPEM") or "",
             "appVersion": (info or {}).get("appVersion") or "",
         }
+        # 网关重启后「粘贴回调 URL」没有在途会话，但本机 icube 设备凭证
+        # 还在：补上同一台设备的私钥，DeviceProof 才能签。设备号不一致时
+        # 不混用（签名公钥必须与 DeviceID 同源），让上游如实报错。
+        if not device["privateKeyPEM"]:
+            try:
+                local = wb_trae.oauth_device(realm)
+                if local.get("privateKeyPEM") and (
+                        not device["deviceId"]
+                        or local.get("deviceId") == device["deviceId"]):
+                    device["deviceId"] = device["deviceId"] or local.get("deviceId") or ""
+                    device["machineId"] = device["machineId"] or local.get("machineId") or ""
+                    device["publicKeyPEM"] = (device["publicKeyPEM"]
+                                              or local.get("publicKeyPEM") or "")
+                    device["privateKeyPEM"] = local.get("privateKeyPEM") or ""
+                    device["appVersion"] = (device["appVersion"]
+                                            or local.get("appVersion") or "")
+            except Exception:
+                pass
         token = str(cb.get("accessToken") or "")
         refresh = str(cb.get("refreshToken") or "")
         try:

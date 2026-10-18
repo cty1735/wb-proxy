@@ -928,10 +928,23 @@ def credits_from_quota(raw):
     ]
     expires_at = raw.get("expiresAt")
     end_epoch = _parse_time(expires_at)
-    if end_epoch is not None and end_epoch > 8.64e12:
-        end_epoch = None  # 上游偶发给不可表示的毫秒时间戳，直接舍弃
-    end_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(end_epoch)) if end_epoch else ""
-    days_left = round((end_epoch - time.time()) / 86400.0, 1) if end_epoch else None
+    end_text = ""
+    days_left = None
+    if end_epoch:
+        # Windows 的 localtime 对 3000 年以后/异常大的 epoch 会抛 OSError 22。
+        # Qoder 对「不过期」的套餐会回 253402214400000（9999-12-31 毫秒），
+        # 这里不能让它把整个额度刷新打成失败：超出可表示范围按不过期处理。
+        if end_epoch > 253402300799:
+            end_epoch = None
+        else:
+            try:
+                end_text = time.strftime("%Y-%m-%d %H:%M:%S",
+                                         time.localtime(end_epoch))
+                days_left = round((end_epoch - time.time()) / 86400.0, 1)
+            except (OSError, OverflowError, ValueError):
+                end_epoch = None
+                end_text = ""
+                days_left = None
 
     packages = []
     for bucket_id, label, bucket in buckets:

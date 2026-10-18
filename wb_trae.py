@@ -25,6 +25,7 @@ Trae 没有 Qoder 那种 ``price_factor``：模型清单里不写倍率，看板
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -76,6 +77,10 @@ REALM_CONFIGS = {
 
 #: 国际版 US 出口；账号 userRegion=US 时改用它。
 US_API_HOST = "https://coreva-normal.trae.ai"
+
+#: 国际版积分 / 权益查询域（网页端 v1 接口；CN 用 api.trae.cn 的 v2）。
+INTL_CREDITS_HOST = "https://ug-normal.trae.ai"
+INTL_CREDITS_HOST_US = "https://ug-normal.us.trae.ai"
 
 #: 桌面端 OAuth client id（公开的客户端标识，不是用户密钥）。
 OAUTH_CLIENT_ID = "ono9krqynydwx5"
@@ -478,6 +483,15 @@ def api_host_for(realm, auth=None, override=""):
     return realm_config("intl")["api_host"]
 
 
+def credits_host_for(realm, auth=None):
+    """积分 / 权益查询域：CN 走 api.trae.cn，国际版走 ug-normal。"""
+    if realm_key(realm) == "cn":
+        return str(realm_config("cn").get("checkin_host")
+                   or "https://api.trae.cn").rstrip("/")
+    return (INTL_CREDITS_HOST_US if _user_region(auth) == "US"
+            else INTL_CREDITS_HOST)
+
+
 def auth_from_storage(realm, storage=None):
     """从桌面端登录态里取 auth dict；没有就返回 None。"""
     storage = storage if isinstance(storage, dict) else read_storage(realm)
@@ -740,6 +754,8 @@ def oauth_login_url(realm, callback_url, device=None):
         "deviceId": device.get("deviceId") or "",
         "machineId": device.get("machineId") or "",
         "publicKeyPEM": device.get("publicKeyPEM") or "",
+        # DeviceProof 需要私钥；只在网关进程内保存，不写登录日志/不返回前端。
+        "privateKeyPEM": device.get("privateKeyPEM") or "",
         "realm": realm,
         "redirectUri": str(callback_url or ""),
         "appVersion": device.get("appVersion") or OAUTH_PAGE_APP_VERSION,
@@ -840,6 +856,219 @@ def _validated_exchange_host(host, realm):
                or realm_config(realm)["auth_host"]).rstrip("/")
 
 
+# ---------------------------------------------------------------------------
+# DeviceProof：P-256 ECDSA（纯 Python，避免给网关加 cryptography 依赖）
+#
+# Trae 的 /cloudide/api/v3/trae/oauth/ExchangeToken 在部分账号上要求
+# DeviceProof（实测 20405 "Device proof required"）。签名原文与客户端一致：
+#   POST\n<path>\n<ClientID>\n<AuthCode>\n<Timestamp>\n<Nonce>
+# 签名用本机 icube 设备凭证里的 P-256 私钥，输出 P1363（r||s 64B）或 DER。
+# ---------------------------------------------------------------------------
+
+_P256_P = 0xFFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF
+_P256_A = _P256_P - 3
+_P256_N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+_P256_GX = 0x6B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C296
+_P256_GY = 0x4FE342E2FE1A7F9B8EE7EB4A7C0F9E162BCE33576B315ECECBB6406837BF51F5
+
+
+def _der_tlv(data, offset):
+    """读一个 DER TLV，返回 (tag, value, next_offset)。"""
+    if offset >= len(data):
+        raise TraeError("DER 提前结束")
+    tag = data[offset]
+    offset += 1
+    if offset >= len(data):
+        raise TraeError("DER 长度缺失")
+    length = data[offset]
+    offset += 1
+    if length & 0x80:
+        count = length & 0x7F
+        if count <= 0 or offset + count > len(data):
+            raise TraeError("DER 长度非法")
+        length = int.from_bytes(data[offset:offset + count], "big")
+        offset += count
+    if offset + length > len(data):
+        raise TraeError("DER 内容越界")
+    return tag, data[offset:offset + length], offset + length
+
+
+def _pem_der(pem):
+    text = str(pem or "").strip()
+    if "-----BEGIN" not in text:
+        raise TraeError("设备私钥不是 PEM")
+    payload = "".join(line.strip() for line in text.splitlines()
+                      if line.strip() and not line.strip().startswith("-----"))
+    try:
+        return base64.b64decode(payload)
+    except Exception as exc:
+        raise TraeError("设备私钥 base64 解码失败: %s" % exc)
+
+
+def _der_children(sequence):
+    out = []
+    offset = 0
+    while offset < len(sequence):
+        tag, value, offset = _der_tlv(sequence, offset)
+        out.append((tag, value))
+    return out
+
+
+def parse_p256_private_key(pem):
+    """从 PKCS#8 / SEC1 PEM 里取出 P-256 私钥整数。"""
+    der = _pem_der(pem)
+    tag, sequence, _ = _der_tlv(der, 0)
+    if tag != 0x30:
+        raise TraeError("设备私钥不是 ASN.1 SEQUENCE")
+    children = _der_children(sequence)
+    # PKCS#8: INTEGER version + SEQUENCE algorithm + OCTET STRING ECPrivateKey
+    if (len(children) >= 3 and children[0][0] == 0x02
+            and children[1][0] == 0x30 and children[2][0] == 0x04):
+        inner_tag, inner, _ = _der_tlv(children[2][1], 0)
+        if inner_tag == 0x30:
+            for child_tag, child_value in _der_children(inner):
+                if child_tag == 0x04 and 0 < len(child_value) <= 32:
+                    return int.from_bytes(child_value, "big")
+    # SEC1: 直接是 ECPrivateKey
+    for child_tag, child_value in children:
+        if child_tag == 0x04 and 0 < len(child_value) <= 32:
+            return int.from_bytes(child_value, "big")
+    raise TraeError("无法从 PEM 里解析 P-256 私钥")
+
+
+def parse_p256_public_key(pem):
+    """从 SubjectPublicKeyInfo PEM 里取出 P-256 公钥点 (x, y)。"""
+    der = _pem_der(pem)
+    tag, sequence, _ = _der_tlv(der, 0)
+    if tag != 0x30:
+        raise TraeError("设备公钥不是 ASN.1 SEQUENCE")
+    for child_tag, child_value in _der_children(sequence):
+        if child_tag == 0x03 and child_value and child_value[0] == 0:
+            point = child_value[1:]
+            if len(point) == 65 and point[0] == 0x04:
+                return (int.from_bytes(point[1:33], "big"),
+                        int.from_bytes(point[33:65], "big"))
+    raise TraeError("无法从 PEM 里解析 P-256 公钥")
+
+
+def _p256_add(p1, p2):
+    """椭圆曲线点加（仿射坐标，None 表示无穷远点）。"""
+    if p1 is None:
+        return p2
+    if p2 is None:
+        return p1
+    x1, y1 = p1
+    x2, y2 = p2
+    if x1 == x2 and (y1 + y2) % _P256_P == 0:
+        return None
+    if p1 == p2:
+        if y1 == 0:
+            return None
+        slope = (3 * x1 * x1 + _P256_A) * pow(2 * y1, _P256_P - 2, _P256_P)
+    else:
+        slope = (y2 - y1) * pow(x2 - x1, _P256_P - 2, _P256_P)
+    slope %= _P256_P
+    x3 = (slope * slope - x1 - x2) % _P256_P
+    y3 = (slope * (x1 - x3) - y1) % _P256_P
+    return (x3, y3)
+
+
+def _p256_mul(k, point=None):
+    point = point or (_P256_GX, _P256_GY)
+    result = None
+    addend = point
+    while k:
+        if k & 1:
+            result = _p256_add(result, addend)
+        addend = _p256_add(addend, addend)
+        k >>= 1
+    return result
+
+
+def _p256_rfc6979_k(private, digest):
+    """RFC 6979 的确定性 k（与 p256 crate 的默认签名一致）。"""
+    # bits2octets(H(m))：P-256 的 n 与 SHA-256 同为 256 bit，先按 n 约减。
+    z = int.from_bytes(digest, "big")
+    if z >= _P256_N:
+        z -= _P256_N
+    h = z.to_bytes(32, "big")
+    x = private.to_bytes(32, "big")
+    v = b"\x01" * 32
+    k = b"\x00" * 32
+    k = hmac.new(k, v + b"\x00" + x + h, hashlib.sha256).digest()
+    v = hmac.new(k, v, hashlib.sha256).digest()
+    k = hmac.new(k, v + b"\x01" + x + h, hashlib.sha256).digest()
+    v = hmac.new(k, v, hashlib.sha256).digest()
+    while True:
+        v = hmac.new(k, v, hashlib.sha256).digest()
+        candidate = int.from_bytes(v, "big")
+        if 1 <= candidate < _P256_N:
+            return candidate
+        k = hmac.new(k, v + b"\x00", hashlib.sha256).digest()
+        v = hmac.new(k, v, hashlib.sha256).digest()
+
+
+def p256_sign(message, private, low_s=True):
+    """用 P-256 私钥签 SHA-256 消息，返回 (r, s)。"""
+    digest = hashlib.sha256(message).digest()
+    e = int.from_bytes(digest, "big")
+    k = _p256_rfc6979_k(private, digest)
+    point = _p256_mul(k)
+    if point is None:
+        raise TraeError("P-256 签名得到无穷远点")
+    r = point[0] % _P256_N
+    if r == 0:
+        raise TraeError("P-256 签名 r=0")
+    s = (pow(k, _P256_N - 2, _P256_N) * (e + r * private)) % _P256_N
+    if s == 0:
+        raise TraeError("P-256 签名 s=0")
+    if low_s and s > _P256_N // 2:
+        s = _P256_N - s
+    return r, s
+
+
+def p256_verify(message, signature, public):
+    """验签（只用于自检，不参与线上请求）。"""
+    r, s = signature
+    if not (1 <= r < _P256_N and 1 <= s < _P256_N):
+        return False
+    e = int.from_bytes(hashlib.sha256(message).digest(), "big")
+    w = pow(s, _P256_N - 2, _P256_N)
+    point = _p256_add(_p256_mul((e * w) % _P256_N),
+                      _p256_mul((r * w) % _P256_N, public))
+    return point is not None and point[0] % _P256_N == r
+
+
+def _p256_signature_bytes(r, s, fmt):
+    if fmt == "der":
+        def integer(value):
+            raw = value.to_bytes((value.bit_length() + 7) // 8 or 1, "big")
+            if raw[0] & 0x80:
+                raw = b"\x00" + raw
+            return b"\x02" + bytes([len(raw)]) + raw
+        body = integer(r) + integer(s)
+        return b"\x30" + bytes([len(body)]) + body
+    return r.to_bytes(32, "big") + s.to_bytes(32, "big")
+
+
+def device_proof(private_key_pem, method, path, client_id, auth_code,
+                 timestamp=None, nonce=None, low_s=True, fmt="p1363"):
+    """生成 DeviceProof（默认 P1363；返回 (proof, raw_signature)）。"""
+    private = parse_p256_private_key(private_key_pem)
+    ts = int(timestamp if timestamp is not None else time.time())
+    nonce = str(nonce or secrets.token_hex(32))
+    msg = ("%s\n%s\n%s\n%s\n%s\n%s"
+           % (method, path, client_id, auth_code, ts, nonce)).encode("utf-8")
+    r, s = p256_sign(msg, private, low_s=low_s)
+    proof = {
+        "Signature": base64.b64encode(
+            _p256_signature_bytes(r, s, fmt)).decode("ascii"),
+        "Timestamp": ts,
+        "Nonce": nonce,
+    }
+    return proof, {"r": r, "s": s, "message": msg}
+
+
 def _exchange_tokens(status, raw):
     """从 ExchangeToken 响应里取 AccessToken / RefreshToken。"""
     detail = raw[:300].decode("utf-8", "replace")
@@ -884,8 +1113,10 @@ def exchange_auth_code(code, verifier, host, device, realm="cn", proxy=""):
     """用授权页回传的 AuthCode 换 token。
 
     主形态对齐真实客户端：``{host}/trae/api/v3/oauth/ExchangeToken`` +
-    DeviceInfo（DeviceID + DevicePublicKey），不发 DeviceProof。旧形态
-    （/cloudide/... + AuthCode/Code）作为兜底，全部失败才抛错。
+    DeviceInfo（DeviceID + DevicePublicKey）。部分账号的 ``/cloudide/...``
+    会要求 DeviceProof（20405），因此本机有 icube 私钥时优先补上
+    DeviceProof 变体（P1363 / DER）；旧形态（AuthCode/Code）作最后兜底。
+    全部失败才抛错，错误里保留每个变体的 URL / 状态 / 响应体。
     """
     code = str(code or "").strip()
     if not code:
@@ -932,6 +1163,7 @@ def exchange_auth_code(code, verifier, host, device, realm="cn", proxy=""):
                 "IDEVersion": app_version,
             },
         ))
+    auth_host = str(realm_config(realm).get("auth_host") or "").rstrip("/")
     legacy = {
         "ClientID": OAUTH_CLIENT_ID,
         "AuthCode": code,
@@ -939,10 +1171,39 @@ def exchange_auth_code(code, verifier, host, device, realm="cn", proxy=""):
         "DeviceID": device_id,
         "PlatformCode": OAUTH_PAGE_PLATFORM_CODE,
     }
-    variants.append(("AuthCode", host + "/trae/api/v3/oauth/ExchangeToken",
-                      dict(legacy)))
-    variants.append(("Code", host + "/trae/api/v3/oauth/ExchangeToken",
-                      dict(legacy, Code=code)))
+
+    # DeviceProof 变体：部分账号的 /cloudide/... 会直接 20405
+    # "Device proof required"，必须用本机 icube 私钥签
+    # POST\n<path>\n<ClientID>\n<AuthCode>\n<Timestamp>\n<Nonce>。
+    # P1363 是真实客户端（WebCrypto）的首选，DER 保留作兼容探测。
+    private_key = str(device.get("privateKeyPEM") or "")
+    if private_key:
+        proof_targets = [
+            ("Proof", host + "/cloudide/api/v3/trae/oauth/ExchangeToken"),
+        ]
+        if auth_host and auth_host != host:
+            proof_targets.append(
+                ("Proof-auth",
+                 auth_host + "/cloudide/api/v3/trae/oauth/ExchangeToken"))
+        for base_tag, url in proof_targets:
+            sign_path = urllib.parse.urlsplit(url).path
+            for fmt in ("p1363", "der"):
+                try:
+                    proof, _raw = device_proof(
+                        private_key, "POST", sign_path, OAUTH_CLIENT_ID,
+                        code, fmt=fmt)
+                except Exception as exc:
+                    errors.append("%s/%s 生成失败: %s" % (base_tag, fmt, exc))
+                    continue
+                variants.append((base_tag + "-" + fmt, url, {
+                    "ClientID": OAUTH_CLIENT_ID,
+                    "AuthCode": code,
+                    "CodeVerifier": str(verifier or ""),
+                    "DeviceID": device_id,
+                    "PlatformCode": OAUTH_PAGE_PLATFORM_CODE,
+                    "DeviceProof": proof,
+                }))
+
     variants.append(("AuthCode-cloudide",
                       host + "/cloudide/api/v3/trae/oauth/ExchangeToken",
                       dict(legacy)))
@@ -950,7 +1211,6 @@ def exchange_auth_code(code, verifier, host, device, realm="cn", proxy=""):
                       host + "/cloudide/api/v3/trae/oauth/ExchangeToken",
                       dict(legacy, Code=code)))
     # 官方刷新域也试一次：部分环境下回调 host 与真实交换域不同。
-    auth_host = str(realm_config(realm).get("auth_host") or "").rstrip("/")
     if auth_host and auth_host != host:
         variants.append(("AuthCode-auth-host",
                           auth_host + "/cloudide/api/v3/trae/oauth/ExchangeToken",
@@ -961,9 +1221,9 @@ def exchange_auth_code(code, verifier, host, device, realm="cn", proxy=""):
 
     for tag, url, body in variants:
         req_headers = dict(headers)
-        if tag == "DeviceInfo":
-            # 真实客户端 m("") 头形态：DeviceInfo 变体必须存在但为空串
-            #（缺失会 20403）；旧形态不带这个头。
+        if tag == "DeviceInfo" or tag.startswith("Proof"):
+            # 真实客户端 m("") 头形态：DeviceInfo / DeviceProof 变体必须
+            # 存在但为空串（缺失会 20403）；旧形态不带这个头。
             req_headers["x-cloudide-token"] = ""
         try:
             status, raw = _request(url, method="POST", headers=req_headers,
@@ -1137,6 +1397,10 @@ def _usage_points(data):
                 limit = base.get("credits_limit")
                 if limit is None:
                     limit = base.get("creditsLimit")
+                if limit is None:
+                    # 免费套餐/功能包没有 credits_limit（只有 enable_solo_*），
+                    # 不能当成 0 积分；跳过它，继续累加真正按积分计的包。
+                    continue
                 usage = pack.get("usage") or {}
                 used = usage.get("credits_amount")
                 if used is None:
@@ -1177,36 +1441,57 @@ def _usage_points(data):
 
 
 def fetch_credits(access_token, auth, realm, proxy="", timeout=30):
-    """查询 Trae 积分余额；拿不到返回 ok=False，不编 0。"""
+    """查询 Trae 积分余额；拿不到返回 ok=False，不编 0。
+
+    CN 走 api.trae.cn 的 v2 路径；国际版走 ug-normal 的 v1 路径（网页端
+    GetIdeUserEntUsage / GetUserCurrentEntitlementList 的接口契约）。
+    """
     realm = realm_key(realm)
-    host = str(realm_config(realm).get("checkin_host")
-               or realm_config(realm)["site_url"]).rstrip("/")
     headers = _checkin_headers(access_token, auth, realm)
+    if realm == "cn":
+        host = credits_host_for(realm, auth)
+        candidates = [
+            (host + "/trae/api/v2/pay/ide_user_ent_usage", {}),
+            (host + "/trae/api/v2/pay/user_current_entitlement_list",
+             {"require_usage": True}),
+        ]
+    else:
+        host = credits_host_for(realm, auth)
+        hosts = [host]
+        other = (INTL_CREDITS_HOST if host == INTL_CREDITS_HOST_US
+                 else INTL_CREDITS_HOST_US)
+        if other and other not in hosts:
+            hosts.append(other)
+        candidates = []
+        for item in hosts:
+            candidates.extend([
+                (item + "/trae/api/v1/pay/ide_user_ent_usage",
+                 {"require_usage": True, "req_source": 1}),
+                (item + "/trae/api/v1/pay/user_current_entitlement_list",
+                 {"require_usage": True, "req_source": 1}),
+            ])
     errors = []
-    for url, body in (
-        (host + "/trae/api/v2/pay/ide_user_ent_usage", {}),
-        (host + "/trae/api/v2/pay/user_current_entitlement_list",
-         {"require_usage": True}),
-    ):
+    for url, body in candidates:
         try:
             status, raw = _request(url, method="POST", headers=headers,
                                    body=body, timeout=timeout, proxy=proxy)
             detail = raw[:200].decode("utf-8", "replace")
             if status < 200 or status >= 300:
-                errors.append("HTTP %s: %s" % (status, detail))
+                errors.append("%s HTTP %s: %s" % (url, status, detail))
                 continue
             data = json.loads(raw.decode("utf-8", "replace"))
             err = ((data.get("ResponseMetadata") or {}).get("Error") or {})
             if err and str(err.get("Code") or "0") not in ("0", ""):
-                errors.append("%s: %s" % (err.get("Code"),
-                                          err.get("Message") or ""))
+                errors.append("%s: %s: %s" % (url, err.get("Code"),
+                                              err.get("Message") or ""))
                 continue
             points = _usage_points(data)
             if points is not None:
-                return {"ok": True, "points": points, "raw": data}
-            errors.append("响应里没有积分字段: %s" % detail)
+                return {"ok": True, "points": points, "raw": data,
+                        "host": str(url).split("/trae/", 1)[0]}
+            errors.append("%s 响应里没有积分字段: %s" % (url, detail))
         except Exception as exc:
-            errors.append(str(exc))
+            errors.append("%s: %s" % (url, exc))
     return {"ok": False, "error": " | ".join(errors) or "没有可用的积分接口"}
 
 

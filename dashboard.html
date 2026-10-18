@@ -5574,10 +5574,11 @@ function fmtTraeExpiry(acc){
 }
 
 function renderTraeOverview(){
-  const accounts = (window.ACCOUNTS || []).filter(a => (a.provider || 'trae') === 'trae');
+  const realm = window.VIEW_REALM === 'cn' ? 'cn' : 'intl';
+  const accounts = (window.ACCOUNTS || []).filter(
+    a => a.provider === 'trae' && (a.realm || 'cn') === realm);
   const elCount = document.getElementById('traeAccountCount');
   if(elCount) elCount.textContent = String(accounts.length);
-  const realm = window.VIEW_REALM === 'cn' ? 'cn' : 'intl';
   const elRealm = document.getElementById('traeRealmLabel');
   if(elRealm) elRealm.textContent = realm === 'cn' ? '国内版' : '国际版';
   // 签到目前只有国内版接口已证实；国际版不显示主按钮，避免误以为能签。
@@ -5602,12 +5603,13 @@ function renderTraeOverview(){
     }
   }
 
-  let totalCredits = 0, knownCredits = false, checkedCount = 0;
+  let totalCredits = 0, knownCredits = false, checkedCount = 0, unknownCredits = 0;
   accounts.forEach(a => {
     const value = (a.traeCredits !== null && a.traeCredits !== undefined)
       ? Number(a.traeCredits)
       : (a.credits && a.credits.unit === 'points' ? Number(a.credits.remain) : null);
     if(value !== null && !isNaN(value)){ totalCredits += value; knownCredits = true; }
+    else unknownCredits += 1;
     if(a.traeCheckedInToday) checkedCount += 1;
   });
   const elTotal = document.getElementById('traeTotalCredits');
@@ -5670,7 +5672,11 @@ function renderTraeOverview(){
              : '<span style="color:var(--dim)">—</span>') + '</td>'
           + '</tr>';
       }).join('')
-    + '</tbody></table>';
+    + '</tbody></table>'
+    + (unknownCredits
+       ? '<div style="font-size:12px;color:var(--dim);margin-top:10px">'
+         + unknownCredits + ' 个账号还没有积分快照，点右上角「刷新积分」从 Trae 查询。</div>'
+       : '');
 }
 
 async function saveTraeAutoCheckin(enabled){
@@ -5721,7 +5727,7 @@ async function triggerTraeCheckin(btn, uid){
   }
 }
 
-async function refreshTraeCredits(btn, uid){
+async function refreshTraeCredits(btn, uid, silent){
   const oldText = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = '查询中...'; }
   try{
@@ -5729,7 +5735,7 @@ async function refreshTraeCredits(btn, uid){
       uid ? {uid: uid} : {realm: (window.VIEW_REALM === 'cn' ? 'cn' : 'intl')});
     const results = (r && r.results) || [];
     const ok = results.filter(x => x.ok);
-    if(ok.length){
+    if(ok.length && !silent){
       const msg = ok.map(x => {
         const who = x.nickname || (x.uid || '').slice(0, 8);
         const points = (x.credits && x.credits.remain !== undefined)
@@ -5738,17 +5744,31 @@ async function refreshTraeCredits(btn, uid){
       }).join('；');
       toast(msg, 'ok');
     }
-    if(results.length && !ok.length){
+    if(results.length && !ok.length && !silent){
       toast(results.map(x => (x.nickname || (x.uid || '').slice(0, 8))
         + '：' + (x.error || '查询失败')).join('；'), 'warn');
     }
     await loadAccounts();
     renderTraeOverview();
   }catch(e){
-    toast('Trae 积分查询失败：' + e.message, 'bad');
+    if(!silent) toast('Trae 积分查询失败：' + e.message, 'bad');
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = oldText || '刷新积分'; }
   }
+}
+
+function autoRefreshTraeCreditsIfNeeded(){
+  const realm = window.VIEW_REALM === 'cn' ? 'cn' : 'intl';
+  const accounts = (window.ACCOUNTS || []).filter(
+    a => a.provider === 'trae' && a.realm === realm);
+  if(!accounts.length) return;
+  const missing = accounts.some(
+    a => a.traeCredits === null || a.traeCredits === undefined);
+  if(!missing) return;
+  if(Date.now() - (window.TRAE_AUTO_CREDITS_AT || 0) < 60000) return;
+  window.TRAE_AUTO_CREDITS_AT = Date.now();
+  // 静默查询：成功只更新表格，失败也不弹窗打扰；用户仍可点「刷新积分」看错误。
+  refreshTraeCredits(null, null, true);
 }
 
 async function loadTraeOverview(force, btn){
@@ -5948,7 +5968,10 @@ async function switchProvider(p){
       loadAnalyticsMatrix();
     }
     if(currentMainTab === 'tasks' && currentProvider() === 'qoder'){ loadQoderQuota(); }
-    if(currentMainTab === 'tasks' && currentProvider() === 'trae'){ renderTraeOverview(); }
+    if(currentMainTab === 'tasks' && currentProvider() === 'trae'){
+      renderTraeOverview();
+      autoRefreshTraeCreditsIfNeeded();
+    }
     // 已配置过的客户端：内嵌的模型表也换到当前提供商（OpenCode 等把模型
     // 写死在配置文件里，不重应用就会一直留着上一家的模型）。
     await loadAgents();
@@ -6628,7 +6651,7 @@ async function loadGrowthTasks(){
  * 由 wb_qoder.credits_from_quota 从配额接口塑形），「刷新额度」走
  * POST /accounts/credits（provider=qoder）从 Qoder 配额接口重拉一次。
  * 快照为空时引导先刷新，而不是画一堆 0。 */
-async function loadQoderQuota(force, btn){
+async function loadQoderQuota(force, btn, silent){
   if(btn){ btn.disabled = true; btn.textContent = '刷新中...'; }
   try{
     if(force){
@@ -6636,10 +6659,21 @@ async function loadQoderQuota(force, btn){
       await postJSON('/accounts/credits', {provider: 'qoder'});
     }
     const data = await getJSON('/accounts?realm=all&provider=qoder');
-    renderQoderQuota(data.accounts || []);
-    if(force) toast('已刷新 Qoder 账号额度', 'ok');
+    const accounts = data.accounts || [];
+    renderQoderQuota(accounts);
+    if(force){
+      if(!silent) toast('已刷新 Qoder 账号额度', 'ok');
+      return;
+    }
+    // 切到 Qoder 页时如果还没有额度快照，自动拉一次；失败不阻塞页面，
+    // 60 秒内不重复自动拉，避免接口异常时每次切页都等一轮。
+    const missing = accounts.some(a => !a.credits);
+    if(missing && !silent && Date.now() - (window.QODER_AUTO_CREDITS_AT || 0) > 60000){
+      window.QODER_AUTO_CREDITS_AT = Date.now();
+      loadQoderQuota(true, null, true);
+    }
   }catch(e){
-    if(!isAuthError(e)) toast('Qoder 额度加载失败: ' + e.message, 'bad');
+    if(!isAuthError(e) && !silent) toast('Qoder 额度加载失败: ' + e.message, 'bad');
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = '刷新额度'; }
   }
@@ -12393,7 +12427,7 @@ function switchMainTab(tab){
   });
   if(tab === 'tasks'){
     if(currentProvider() === 'qoder'){ loadQoderQuota(); }
-    else if(currentProvider() === 'trae'){ renderTraeOverview(); }
+    else if(currentProvider() === 'trae'){ renderTraeOverview(); autoRefreshTraeCreditsIfNeeded(); }
     else { loadGrowthTasks(); }
   }
   if(tab === 'accounts' || (!_accountsSeparateTab && tab === 'gateway')){ loadActivityBoard(); }
