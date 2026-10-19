@@ -1280,7 +1280,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
   };
 
   // 3. Tab 初始化（与下方主脚本的 MAIN_TABS 保持一致）
-  var TABS = ['gateway','accounts','tasks','analytics','agents','tokensaver','channels','settings','logs'];
+  var TABS = ['gateway','accounts','tasks','analytics','agents','tokensaver','settings','logs'];
   var pick = null;
   try {
     var q = new URLSearchParams(location.search).get('tab');
@@ -3625,9 +3625,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       <button class="main-nav-btn" id="btnNavTokensaver" onclick="switchMainTab('tokensaver')">
         省 Token
       </button>
-      <button class="main-nav-btn" id="btnNavChannels" onclick="switchMainTab('channels')">
-        聚合渠道
-      </button>
       <button class="main-nav-btn" id="btnNavSettings" onclick="switchMainTab('settings')">
         设置
       </button>
@@ -5118,47 +5115,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
         <thead><tr><th>模型</th><th>压缩次数</th><th>节省字节</th></tr></thead>
         <tbody id="tsStatsModels"><tr><td colspan="3" style="color:var(--dim)">暂无数据</td></tr></tbody>
       </table>
-    </section>
-  </div>
-
-  <div id="pageChannels" class="main-page">
-    <div style="margin-bottom:16px">
-      <h2 style="margin:0;font-size:17px;color:var(--fg);font-family:var(--serif);font-weight:600;letter-spacing:.02em">聚合渠道</h2>
-      <div style="font-size:12px;color:var(--dim);margin-top:4px">
-        渠道与账号是两回事：渠道没有账号、不占并发槽、不进额度护栏，只有一把 Key 和一个 Base URL。
-        启用后模型以 <span class="mono">渠道/模型</span> 的形式出现在 /v1/models（例如
-        <span class="mono">openrouter/anthropic/claude-sonnet-4</span>），也可以
-        <span class="mono">?provider=渠道</span> 配裸模型名。用量记在
-        <span class="mono">provider=channel</span> 这一档，不会混进官方流量的账。
-        Key 只落在本机 accounts/settings.json，接口永不回显明文。
-      </div>
-    </div>
-
-    <section>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-        <div>
-          <h2 style="margin:0">概览 <em id="chState"></em></h2>
-          <div style="font-size:12px;color:var(--dim);margin-top:4px">
-            清单来自 data/providers.json。「可驱动」= 线协议与认证方式都已实现（目前是 OpenAI 兼容的 chat）；
-            oauth / adc 之类的渠道照常列出，但网关不会假装能驱动它们。
-          </div>
-        </div>
-        <button class="sec mini" onclick="loadChannels()" title="重新读取渠道清单">刷新</button>
-      </div>
-      <div id="chOverview" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px"></div>
-    </section>
-
-    <section>
-      <div style="margin-bottom:14px">
-        <h2 style="margin:0">渠道清单</h2>
-        <div style="font-size:12px;color:var(--dim);margin-top:4px">
-          每行只提交你改过的那一格：Key 留空 = 保留已存的那把（「清除 Key」才真的删），Base URL 留空 = 用注册表默认值。
-          勾上「启用」并保存时，如果这个渠道还没有模型清单，会顺手探测一次上游的 /models。
-          「测试」会向上游发一次极小的真实请求（<span class="mono">ping</span> / <span class="mono">max_tokens=8</span>）来验证
-          Base URL、Key、模型名与线协议，所以只在你点击时才跑。
-        </div>
-      </div>
-      <div id="chList"></div>
     </section>
   </div>
 
@@ -10676,7 +10632,7 @@ function generatePageList(current, total){
 
 // Tab ids in nav order. One list so the restore path and the nav cannot
 // drift apart.
-const MAIN_TABS = ['gateway', 'accounts', 'tasks', 'analytics', 'agents', 'tokensaver', 'channels', 'settings', 'logs'];
+const MAIN_TABS = ['gateway', 'accounts', 'tasks', 'analytics', 'agents', 'tokensaver', 'settings', 'logs'];
 const MAIN_TAB_STORE = 'wb-proxy-main-tab';
 let currentMainTab = 'gateway';
 let analyticsRange = 'today';
@@ -13292,7 +13248,6 @@ function switchMainTab(tab){
   const btnSettings = document.getElementById('btnNavSettings');
   const btnAgents = document.getElementById('btnNavAgents');
   const btnTokensaver = document.getElementById('btnNavTokensaver');
-  const btnChannels = document.getElementById('btnNavChannels');
   const pageGateway = document.getElementById('pageGateway');
   const pageTasks = document.getElementById('pageTasks');
   const pageAccounts = document.getElementById('pageAccounts');
@@ -13301,7 +13256,6 @@ function switchMainTab(tab){
   const pageSettings = document.getElementById('pageSettings');
   const pageAgents = document.getElementById('pageAgents');
   const pageTokensaver = document.getElementById('pageTokensaver');
-  const pageChannels = document.getElementById('pageChannels');
   const tabs = [
     ['gateway', btnGateway, pageGateway],
     ['accounts', btnAccounts, pageAccounts],
@@ -13310,8 +13264,7 @@ function switchMainTab(tab){
     ['logs', btnLogs, pageLogs],
     ['settings', btnSettings, pageSettings],
     ['agents', btnAgents, pageAgents],
-    ['tokensaver', btnTokensaver, pageTokensaver],
-    ['channels', btnChannels, pageChannels]
+    ['tokensaver', btnTokensaver, pageTokensaver]
   ];
   tabs.forEach(([name, btn, page]) => {
     if(!btn || !page) return;
@@ -13331,7 +13284,6 @@ function switchMainTab(tab){
   if(tab === 'settings'){ loadSettings(); loadProxySlots(); }
   if(tab === 'agents'){ loadAgents(); }
   if(tab === 'tokensaver'){ loadTokensaver(); }
-  if(tab === 'channels'){ loadChannels(); }
   if(tab === 'logs'){
     startLogPolling();
     fetchNewLogs(true);
@@ -13532,209 +13484,6 @@ async function saveTokensaver(btn){
     toast('省 Token 设置已保存', 'ok');
   } catch(e){
     toast('保存失败: ' + e.message, 'bad');
-  } finally {
-    if(btn) btn.disabled = false;
-  }
-}
-
-/* ---- 聚合渠道（wb_channels）面板 ----
- * GET /channels 一次读回「注册表 + 本机设置 + 已启用模型 + 渠道用量」，
- * 保存走 POST /channels/config，探测走 POST /channels/discover。
- * Key 永不回显：hasKey / keyHint 是唯一看得见的指纹。 */
-let CHANNELS = [];
-let CHANNEL_VIEW = {};
-const CH_INPUT_STYLE = 'display:block;margin-top:4px;background:var(--panel2);border:1px solid var(--line);'
-  + 'border-radius:8px;padding:8px 10px;color:var(--fg);font:inherit;min-width:240px';
-
-function chEsc(s){
-  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
-    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
-  });
-}
-
-function chBadge(text, color){
-  return '<span style="font-size:11px;padding:1px 7px;border-radius:999px;'
-    + 'border:1px solid var(--line);color:' + (color || 'var(--dim)') + '">'
-    + chEsc(text) + '</span>';
-}
-
-function chStatusBadge(c){
-  if(c.canDrive !== true) return chBadge('不可驱动', 'var(--warn,#c88000)');
-  if(c.enabled !== true) return chBadge('未启用', 'var(--dim)');
-  if(c.needsKey && !c.hasKey) return chBadge('缺 Key', 'var(--bad,#cc3333)');
-  return chBadge('已启用', 'var(--accent2)');
-}
-
-function renderChannelOverview(data){
-  const box = document.getElementById('chOverview');
-  if(box){
-    const usage = data.usage || {};
-    const cards = [
-      ['注册渠道', (data.channels || []).length],
-      ['可驱动', data.drivable || 0],
-      ['已启用', data.enabled || 0],
-      ['已暴露模型', (data.models || []).length],
-      ['渠道请求数', usage.requests || 0],
-      ['渠道失败数', usage.errors || 0],
-      ['渠道 Token', usage.total_tokens || 0]
-    ];
-    box.textContent = '';
-    cards.forEach(function(pair){
-      const cell = document.createElement('div');
-      cell.style.cssText = 'background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px';
-      const label = document.createElement('div');
-      label.style.cssText = 'font-size:12px;color:var(--dim)';
-      label.textContent = pair[0];
-      const value = document.createElement('div');
-      value.style.cssText = 'font-size:20px;font-weight:600;margin-top:4px;font-family:var(--mono,monospace)';
-      value.textContent = String(pair[1]);
-      cell.appendChild(label);
-      cell.appendChild(value);
-      box.appendChild(cell);
-    });
-  }
-  const state = document.getElementById('chState');
-  if(state){
-    const on = Number(data.enabled) || 0;
-    state.textContent = on ? '(' + on + ' 个启用中)' : '(全部未启用)';
-    state.style.color = on ? 'var(--accent2)' : 'var(--dim)';
-  }
-}
-
-function renderChannels(){
-  const list = document.getElementById('chList');
-  if(!list) return;
-  if(!CHANNELS.length){
-    list.innerHTML = '<div style="color:var(--dim)">注册表为空：读不到 data/providers.json。</div>';
-    return;
-  }
-  list.innerHTML = CHANNELS.map(function(c){
-    const id = chEsc(c.id);
-    const models = c.models || [];
-    const shown = models.slice(0, 6).map(chEsc).join('、')
-      + (models.length > 6 ? ' …' : '');
-    const modelsLine = models.length
-      ? (models.length + ' 个：' + shown)
-      : '尚未探测到模型（点「探测模型」，或在需要时手动配置）';
-    const keyPlaceholder = c.hasKey
-      ? ('已配置 ' + (c.keyHint || '') + '（留空保留）')
-      : (c.needsKey ? '粘贴 API Key' : '本机服务，无需 Key');
-    const badges = [
-      chBadge(c.id),
-      chBadge(c.category),
-      chBadge('wire: ' + c.wire),
-      chStatusBadge(c)
-    ];
-    if(c.keySource === 'env') badges.push(chBadge('Key 来自环境变量 ' + (c.keyEnv || '')));
-    if(c.baseUrlOverride) badges.push(chBadge('Base URL 已覆盖', 'var(--accent2)'));
-    if(c.modelsSource === 'registry') badges.push(chBadge('模型来自注册表'));
-    return ''
-      + '<div style="border:1px solid var(--line);border-radius:12px;padding:12px;'
-      +      'margin-bottom:10px;background:var(--panel)">'
-      +   '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-      +     '<strong style="color:var(--fg)">' + chEsc(c.name || c.id) + '</strong>'
-      +     badges.join('')
-      +     (c.docs ? '<a href="' + chEsc(c.docs) + '" target="_blank" rel="noopener noreferrer"'
-      +               ' style="font-size:12px">申请 / 管理 Key</a>' : '')
-      +   '</div>'
-      +   '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">'
-      +     '<label style="font-size:12px;color:var(--dim)">API Key'
-      +       '<input id="chKey_' + id + '" type="password" autocomplete="off"'
-      +       ' placeholder="' + chEsc(keyPlaceholder) + '" style="' + CH_INPUT_STYLE + '">'
-      +     '</label>'
-      +     (c.hasKey ? '<button class="danger mini" onclick="saveChannel(\'' + id
-      +                 '\', this, {clearKey:true})">清除 Key</button>' : '')
-      +     '<label style="font-size:12px;color:var(--dim)">Base URL（留空 = 默认）'
-      +       '<input id="chBase_' + id + '" value="' + chEsc(c.baseUrlOverride || '') + '"'
-      +       ' placeholder="' + chEsc(c.baseUrlDefault) + '" style="' + CH_INPUT_STYLE + '">'
-      +     '</label>'
-      +     '<label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px">'
-      +       '<input id="chEn_' + id + '" type="checkbox"' + (c.enabled ? ' checked' : '')
-      +       (c.canDrive === true ? '' : ' disabled') + '> 启用</label>'
-      +     '<button onclick="saveChannel(\'' + id + '\', this)">保存</button>'
-      +     '<button class="sec mini" onclick="discoverChannel(\'' + id
-      +       '\', this)">探测模型</button>'
-      +     '<button class="sec mini" onclick="testChannel(\'' + id
-      +       '\', this)">测试</button>'
-      +   '</div>'
-      +   '<div style="font-size:12px;color:var(--dim);margin-top:8px">模型：' + chEsc(modelsLine) + '</div>'
-      + '</div>';
-  }).join('');
-}
-
-async function loadChannels(){
-  let data;
-  try {
-    data = await getJSON('/channels');
-  } catch(e){
-    toast('读取聚合渠道失败: ' + e.message, 'bad');
-    return;
-  }
-  CHANNELS = data.channels || [];
-  CHANNEL_VIEW = {};
-  CHANNELS.forEach(function(c){ CHANNEL_VIEW[c.id] = c; });
-  renderChannelOverview(data);
-  renderChannels();
-}
-
-async function saveChannel(id, btn, opts){
-  opts = opts || {};
-  const keyEl = document.getElementById('chKey_' + id);
-  const baseEl = document.getElementById('chBase_' + id);
-  const enEl = document.getElementById('chEn_' + id);
-  const payload = {id: id};
-  if(opts.clearKey){
-    payload.key = '';
-  } else if(keyEl && keyEl.value.trim()){
-    payload.key = keyEl.value.trim();
-  }
-  // Base URL 输入框里始终是「当前生效的覆盖值」，所以空 = 清除覆盖（不是保留）。
-  if(baseEl) payload.base_url = baseEl.value.trim();
-  if(enEl) payload.enabled = !!enEl.checked;
-  // 启用时如果还没有模型清单，顺手探测一次：一次点击就把渠道配到能用。
-  // 已有模型的不重探测（保存 Key 时不该白跑一趟上游），要刷新就点「探测模型」。
-  const cur = CHANNEL_VIEW[id] || {};
-  if(enEl && enEl.checked && !(cur.models || []).length) payload.discover = true;
-  if(btn) btn.disabled = true;
-  try {
-    const res = await postJSON('/channels/config', payload);
-    if(res.discover_error){
-      toast('渠道已保存，但模型探测失败: ' + res.discover_error, 'bad');
-    } else {
-      toast('渠道已保存', 'ok');
-    }
-    await loadChannels();
-  } catch(e){
-    toast('保存失败: ' + e.message, 'bad');
-  } finally {
-    if(btn) btn.disabled = false;
-  }
-}
-
-async function discoverChannel(id, btn){
-  if(btn) btn.disabled = true;
-  try {
-    const res = await postJSON('/channels/discover', {id: id});
-    toast('探测到 ' + ((res.models || []).length) + ' 个模型', 'ok');
-    await loadChannels();
-  } catch(e){
-    toast('探测失败: ' + e.message, 'bad');
-  } finally {
-    if(btn) btn.disabled = false;
-  }
-}
-
-// 「测试」会向上游发一次极小的真实请求（ping，max_tokens=8），
-// 所以只由点击触发，绝不自动跑；提示里把这一点说清楚。
-async function testChannel(id, btn){
-  if(btn) btn.disabled = true;
-  try {
-    const res = await postJSON('/channels/test', {id: id});
-    const text = String(res.text || '').replace(/\s+/g, ' ').slice(0, 60);
-    toast('测试通过：' + (res.model || '') + ' ' + (res.latency_ms || 0) + 'ms'
-          + (text ? ' · "' + text + '"' : ''), 'ok');
-  } catch(e){
-    toast('测试失败: ' + e.message, 'bad');
   } finally {
     if(btn) btn.disabled = false;
   }

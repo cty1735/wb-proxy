@@ -279,18 +279,20 @@ class ChannelAdapter:            # 与 QoderUpstreamAdapter 同职责
 
 ---
 
-## 12. 实施记录（第 0 步 + P0 已完成）
+## 12. 实施记录（P0 · 省 Token 已完成）
 
 > 本节记录实际落地的代码与对前面设计的三处偏差；**设计正文保持原样**，以本节为准。
 
-### 12.1 第 0 步 · 地基（provider 维度）
+### 12.1 第 0 步 · 地基（provider 维度）——已撤销
 
-- `wb_accounts.py` 新增常量 `CHANNEL_PROVIDER = "channel"` 与 `provider_or_none(value)`：
-  已知厂商名或 `channel` 返回规范化值，**未知返回 `None`**——刻意区别于
-  `normalize_provider()` 的「未知一律兜底成 workbuddy」。这是 P1 分辨「渠道 id vs
-  厂商名」的地基，避免渠道用量被静默记到 WorkBuddy 账上。
-- **现有 `normalize_provider` / `provider_filter` / `row_provider` 语义一字未改**，
-  所以本步对现网行为零影响。
+- 曾新增常量 `CHANNEL_PROVIDER = "channel"` 与 `provider_or_none(value)`（已知厂商名
+  返回规范化值、**未知返回 `None`**，刻意区别于 `normalize_provider()` 的「未知一律兜底成
+  workbuddy」），作为 P1 渠道维度的地基。
+- **该地基已随 P1 一并撤除**：`wb_channels*` 与 `data/providers.json` 回滚后，这两个符号
+  没有任何调用方，留着只是死代码，因此一并删除；`wb_accounts` 恢复为「只有
+  workbuddy / qoder / trae 三家」的原样。
+- 现存 `normalize_provider` / `provider_filter` / `row_provider` 语义与其之前逐字一致，
+  对现网行为零影响。
 
 ### 12.2 P0 · 省 Token（`wb_tokensaver*`）
 
@@ -349,114 +351,9 @@ class ChannelAdapter:            # 与 QoderUpstreamAdapter 同职责
 - 面板接线：`GET /` 含新区块、面板登录、`POST /tokensaver/config` 生效并落盘、非法档位归一、无 token 401。
 - `dashboard.html` 全部内联脚本过 `node --check`。
 
-### 12.4 仍未做（P1 已收口前两条，见 §13）
+### 12.4 仍未做（待在 P1 收口）
 
-- ~~`provider_or_none()` 尚无调用方~~ → P1 已在 `row_provider` / `row_matches_provider` /
-  `record_error` 里用上，渠道行不再被兜底成 WorkBuddy。
 - 提示词瘦身对 `/v1/responses` 不生效（该协议用 `instructions` 而非 `messages`，见 §4.6）。
 - 本地应答不覆盖 Responses 协议（Codex 不发这类探测请求）。
-- ~~渠道（`wb_channels*`）~~ → P1 已落地（见 §13）；combo、feed、升级自重启仍为设计态。
-
----
-
-## 13. 实施记录（P1 · 聚合渠道已完成）
-
-> 与 §12 同规矩：**设计正文保持原样**，以本节为准；下面记实际落地的东西、与设计正文的偏差、
-> 以及明确留给 P2/P3 的缺口。
-
-### 13.1 落地文件
-
-| 文件 | 状态 | 职责 |
-|---|---|---|
-| `data/providers.json` | 新增（随发布走的**数据**） | 14 家 OpenAI 兼容上游的注册表：id / 名称 / 分类 / wire / auth / base_url / list_models / key_env / docs / models_override |
-| `wb_channels_wire.py` | 新增 | chat 线协议的翻译层：请求体白名单化（`chat_body`）、SSE 与整份 JSON 两种正文归一成同一串 chunk（`iter_chunks`）、`stream_options` 被拒的识别、`UpstreamStreamError` |
-| `wb_channels.py` | 新增 | 注册表加载与缓存、设置合并、`resolve()` 路由、对外脱敏视图 `view()`、模型清单探测 `discover_models()`、最小真实请求 `test_channel()`、上游适配器 `ChannelUpstream`、账号替身 `account_stub()` |
-| `wb_settings.py` | 追加 | `providers` 段访问器：`provider_entries` / `provider_entry` / `set_provider_entry` / `remove_provider_entry`，以及 `channel_id()` 形状校验与 `key_fingerprint()` |
-| `wb_proxy.py` | 改动 | 归属（`_account_like` + `row_realm`/`row_provider`/`row_matches_provider`）、分发（`_channel_for_request` / `_dispatch_channel_chat_post` / `_open_channel` / `_channel_failure`）、三条上游打开点的渠道分支、`/v1/models` 合并、4 个端点、`_is_panel_route` |
-| `dashboard.html` | 追加 | 顶部页签「聚合渠道」与 `#pageChannels`（概览 / 渠道清单两区），`loadChannels` / `saveChannel` / `discoverChannel` / `testChannel` |
-
-### 13.2 与设计正文的偏差（都在代码里生效）
-
-1. **渠道条目是普通 dict，不是类**（§4.2 的原型用的是类）：注册表要 JSON 化、要能由面板整条
-   回读，dict 更直接；语义（哪个字段缺省是什么意思）全部集中在 `wb_channels` + `wb_settings`
-   两处函数里，不靠方法。
-2. **不改 `_chat_provider()`，另加 `_channel_for_request()`**（§4.6 原设计是让
-   `_chat_provider` 认渠道前缀）：`provider_filter()` 会把未知 provider 值兜底成 workbuddy，
-   所以渠道解析必须排在它**之前**才有意义——与其在 `_chat_provider` 里插一段前置逻辑再改它的
-   返回值契约，不如新增一个只回答「这是渠道吗」的函数，把两个维度的解析彻底分开。
-3. **`non_wb` 判定把渠道也算进去**：`_handle_messages` / `_handle_responses` 里的跨区 / 封禁
-   守卫和「网关侧网路工具回路」都只对官方目录有意义（§4.6 已如此要求，这里记明落点）。
-4. **`wire: "responses"` / `"messages"` 一律列而不可驱动**：网关入口（`/v1/messages`、
-   `/v1/responses`）本来就归一到 chat 形状，所以一条 chat 渠道免费服务三种协议；反过来，
-   真去直连上游的 responses/messages 形态是另一套翻译，P1 不做也不假装做——`canDrive` /
-   `wireSupported` 两个字段把这件事说清楚（本次注册表 14 家全是 chat，没有这类条目）。
-5. **Key 可来自环境变量**（`key_env`，如 `OPENROUTER_API_KEY`）：设置里的 Key 优先、环境变量
-   兜底，视图用 `keySource` 区分。指纹规则：≥8 位回「末 4 位」，**短于 8 位一律只回 `…`**
-   ——连「它很短」都不说出去。
-6. **写入门禁与真实流量共用一条路**（`open_channel_upstream` 检查 enabled / canDrive / Key），
-   只有面板的「测试」用 `allow_disabled=True` 绕开 enabled 那一格：验证一把还没启用的 Key 是
-   正当顺序，而那扇门挡的是**真实流量**。
-7. **上游一律 `stream:true` + `stream_options:{include_usage:true}`**：下游的非流式请求也走这
-   条路（聚合成一份 `chat.completion`），因为 token 账本在流式末块里；遇到点名
-   `stream_options` 的 400 去掉重试一次（`is_stream_options_rejection`）。
-8. **错误映射**：配置类错误（`ChannelError.local`）→ 400 且**不记账**（网关没配好不是上游失败，
-   记进去会把成功率的含义搞浑）；上游 401/403 → 对外 **502** 并提示去看渠道的 Key（原样回 401
-   会把客户端指向「换网关 Key」这个错误方向）+ 记账；429 透传；≥500 → 502。
-9. **`/v1/models` 只在「未按 provider 过滤」的视图里合并渠道模型**；显式
-   `?provider=<渠道 id>` 返回该渠道的单独视图。渠道模型条目**不走 `model_entry()`**：那个
-   函数的能力位与上下文长度来自官方目录（会拿 WorkBuddy / models.dev 的目录去猜第三方模型），
-   这里只给规范字段加 `channel` / `upstream_model`，不假装知道能力。
-10. **`ChannelUpstream` 额外实现 `__iter__`**：Responses 的流式事件生成器是直接
-    `for raw in upstream` 迭代的（`responses_stream_events`），只实现 `read1()` 会在那里
-    `TypeError`。这也是 Qoder / Trae 两个适配器的**既有**缺口（`wire` 只有 HTTPResponse 走得
-    通），本次只在渠道侧补上，没有动那两个类（见 §13.4）。
-11. **新增 `POST /channels/test`**（§4.6 的面板「测试」）：向渠道发一次 `ping` /
-    `max_tokens=8` 的真实请求，只读前 8 个 chunk 就收工，返回模型名、耗时与前若干个字；它比模型
-    清单探测更有说服力（清单端点可能免鉴权）。因为要花钱，只在点击时触发。
-12. **按 key 的模型白名单对渠道同样生效**（有意）：`_key_model_error()` 对渠道请求照跑，
-    所以给 API key 限过模型的部署要把 `渠道/模型` 复合 id 列进去；没列模型的 key 不受限，
-    即默认可用。
-13. **§4.5 的「401 刷新/换号、5xx 换渠道」在渠道上不适用**：渠道就是**一把** Key，没有池，
-    也没有第二个 Key 可换。因此 401/403 直接对外 502 并提示去面板核对 Key（**不刷新、不重试**，
-    因为重试同一把被拒的 Key 只会把一次失败变成两次），429 原样透传，5xx 记一行账后报 502。
-    这是「渠道 ≠ 账号」在错误路径上的直接推论，不是漏做。
-
-### 13.3 验证
-
-- 纯模块：`wb_channels` / `wb_channels_wire` / `wb_settings` providers 段 / 归属替身 / 线
-  协议共 **130** 项断言（注册表与 id 形状、`resolve` 两条来源与全部否定分支、设置合并三段语义
-  （缺省保留 / 空串清除 / 覆盖）、Key 指纹与不泄露、环境变量 Key、`can_drive` / `needs_key`、
-  用量行 `provider=channel` / `realm=channel`、SSE 透传改写与丢 `[DONE]`、整份 JSON 拍平成
-  chunk、流内 `error` 抛 `UpstreamStreamError`、坏 JSON 跳过、`ChannelUpstream` 分帧与
-  `read()` 到尽、三种模型清单形状、四种「配不齐」的 local 错误、`allow_disabled` 只放测试过门）。
-- 进程内端到端（假上游 + 真网关，共 **110** 项断言）：面板登录、`GET/POST /channels*` 的
-  401/404/400 全档位、配置三段语义（含 `discover:true` 顺手探测）、`/channels/test`（含
-  「先用第一个模型」「显式点名」「缺模型 400」「不可驱动 400」「未启用也能测」）、
-  `/v1/models`（显式渠道视图 / 未配置渠道为空 / 缺省视图并入渠道模型且不含未启用渠道）、
-  非流式与流式 `/v1/chat/completions`（模型回显、上游鉴权头、`thinking`/`reasoning`/`product`
-  被剥掉、`reasoning_effort` 透传）、上游回 JSON 也能拍平、`stream_options` 重试（两次上游
-  调用、第二次不带该字段）、`?provider=` 提示、`/v1/messages` 与 `/v1/responses`（非流式与
-  流式）、未启用 / 不可驱动渠道 400、用量行归属、面板页存在。
-- 归属回归（**29** 项断言）：改了 `row_provider` / `row_realm` / `_account_like` 之后，POOL
-  账号（qoder / trae / workbuddy）与「没有 provider 字段的老行」逐字不变的行为；未知 provider
-  值仍兜底 WorkBuddy；`provider_filter("channel")` 仍是 workbuddy（刻意不改，见 §13.2 第 2 条）。
-- 真进程冒烟（**27** 项断言）：起真的 `wb_proxy.py`，`/health` → 面板登录 → `GET /channels`
-  → 写入 groq 的 Key 并核对落盘与回显脱敏 → `GET /v1/models?provider=groq` 为空（不猜）→
-  缺省视图正常 → `/channels/test` 到达上游或报上游故障（**不是** 400 配置错误）→ 未知渠道 404。
-- 回归：P0 的 4 个测试文件全部仍过；所有改动的 `.py` 过 `py_compile`，`dashboard.html` 的 4 段
-  内联脚本全部过 `node --check`。
-
-### 13.4 仍未做（留给 P2 / P3）
-
-- **看板的渠道档位**：`row_matches_provider` / `provider_scope` 已认 `channel`（`?provider=channel`
-  的统计与明细都是对的），但数据看板顶部的 provider 下拉仍是三档（全部 / WorkBuddy / Qoder），
-  没有加第四档——P1 的交付判据不含这一条。
-- **每渠道的 token 拆分**：`GET /channels` 给的是渠道**合计**（`usage_snapshot(provider="channel")`），
-  行里 `account="channel:<id>"` 已经足以按渠道分桶，但面板侧还没渲染。
-- **`wire: responses|messages` 的直连翻译**：仍是「列出但不可驱动」。
-- **Qoder / Trae 适配器缺 `__iter__`**：`/v1/responses?provider=qoder` 会在
-  `for raw in upstream` 处 500（既有缺口，本次未动那两个类）。
-- **免费车道（§5.1）、combo 降级链（§5.2）、feed 与升级自重启（§6）。**
-- **渠道模型的计价衔接（§4.7）**：P1 **没有**做「渠道 id → 价格目录」的映射，渠道行的
-  `model` 是复合 id（`openrouter/anthropic/…`），因此这些行按现状拿不到价格、显示「未定价」
-  （`—`，不猜比猜错好）。要做的话是一次「剥掉渠道前缀后按上游模型 id 匹配价格」的映射，属 P3。
+- 渠道（`wb_channels*`）、combo、feed、升级自重启仍为设计态（渠道的 P1 实现曾落地，
+  随后整套回滚，见 `feat(channels)` 的 revert 提交）。

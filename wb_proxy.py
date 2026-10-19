@@ -81,7 +81,6 @@ import wb_trae_chat
 import wb_probes
 import wb_updates
 import wb_tokensaver
-import wb_channels
 IS_WINDOWS = os.name == "nt"
 
 # ---- 一键配置客户端（wb_agents）的可用性判定（issue #246）----
@@ -530,16 +529,10 @@ def row_realm(row):
     if r:
         return r
     acct_uid = row.get("account")
-    if acct_uid:
-        if POOL:
-            acc = POOL.get(acct_uid)
-            if acc:
-                return acc.realm
-        # 渠道行（手改 / 旧版留下的没有 realm 字段的那种）：渠道不属于任何出口，
-        # 别让它掉进按模型名猜出来的 intl/cn 里。
-        stub = wb_channels.account_stub(acct_uid)
-        if stub is not None:
-            return stub.realm
+    if acct_uid and POOL:
+        acc = POOL.get(acct_uid)
+        if acc:
+            return acc.realm
     model = row.get("model")
     if model:
         return detect_model_realm(model)
@@ -562,34 +555,22 @@ def row_provider(row):
     old log format). Older rows are attributed by their account, exactly like
     row_provider's realm sibling; anything that cannot be resolved is
     WorkBuddy, which is the only provider that has ever written to the log.
-
-    聚合渠道（P1）的行带 provider="channel"：它是一个**已知**的 provider 维度
-    取值，因此不能被兜底成 WorkBuddy——那会把第三方上游的流量记到官方账上。
-    认得出处的 uid 也补一条：手改或旧版留下的 channel:<id> 行没有 provider 字段。
     """
     p = row.get("provider")
     if p:
-        return wb_accounts.provider_or_none(p) or wb_accounts.DEFAULT_PROVIDER
+        return wb_accounts.normalize_provider(p)
     acct_uid = row.get("account")
-    if acct_uid:
-        if POOL:
-            acc = POOL.get(acct_uid)
-            if acc:
-                return acc.provider
-        stub = wb_channels.account_stub(acct_uid)
-        if stub is not None:
-            return stub.provider
+    if acct_uid and POOL:
+        acc = POOL.get(acct_uid)
+        if acc:
+            return acc.provider
     return wb_accounts.DEFAULT_PROVIDER
 
 
 def row_matches_provider(row, provider):
     # None means every provider, same contract as row_matches_realm.
     if not provider or provider == "all": return True
-    target = wb_accounts.provider_or_none(provider)
-    if target is None:
-        # 未知取值按老规矩归一（历史行为：非法值读作 WorkBuddy）。
-        target = wb_accounts.normalize_provider(provider)
-    return row_provider(row) == target
+    return row_provider(row) == wb_accounts.normalize_provider(provider)
 
 
 def row_free_model(row):
@@ -767,22 +748,6 @@ def _best_cached_tokens(usage):
     return 0
 
 
-def _account_like(account):
-    """账号 uid → 账号对象；渠道行给一个只带归属字段的替身。
-
-    渠道不在 POOL 里（它们没有账号，见 wb_channels 的模块说明），但用量/错误行
-    仍然要按「渠道」归属。POOL 查不到时回落到 wb_channels.account_stub()：只有
-    `channel:<id>` 形状的 uid 会拿到替身，其余 uid 的行为与从前逐字一致。
-    """
-    if not account:
-        return None
-    if POOL:
-        acc = POOL.get(account)
-        if acc is not None:
-            return acc
-    return wb_channels.account_stub(account)
-
-
 def record_usage(model, usage, stream=None, elapsed_ms=None, ttft_ms=None, gen_ms=None, fp=None,
                 account=None, outcome="completed", key=None, effort=None):
     """Record one finished request as exactly one JSONL row.
@@ -825,7 +790,7 @@ def record_usage(model, usage, stream=None, elapsed_ms=None, ttft_ms=None, gen_m
         row.update(fp)
     if account:
         row["account"] = account
-    acc = _account_like(account)
+    acc = POOL.get(account) if (account and POOL) else None
     row["realm"] = acc.realm if acc else CURRENT_REALM
     # Provider: only non-WorkBuddy rows write the field, so a WorkBuddy log
     # stays byte-identical to the format that predates the dimension (a
@@ -930,21 +895,16 @@ def record_error(model, status, message, elapsed_ms=None, account=None,
         row.update(fp)
     if account:
         row["account"] = account
-        acc = _account_like(account)
+        acc = POOL.get(account) if POOL else None
         row["realm"] = acc.realm if acc else CURRENT_REALM
         if acc is not None and acc.provider != wb_accounts.DEFAULT_PROVIDER:
             row["provider"] = acc.provider
     elif provider:
         # 显式点名的非 workbuddy 提供商（如空池 / 未知模型的 Qoder 失败）：没有
         # 账号可查时按调用方给的值归属；workbuddy 不缺省写字段（旧格式逐字不变）。
-        # provider_or_none 在前，渠道才不会又被兜底成 WorkBuddy。
-        prov = (wb_accounts.provider_or_none(provider)
-                or wb_accounts.normalize_provider(provider))
+        prov = wb_accounts.normalize_provider(provider)
         if prov != wb_accounts.DEFAULT_PROVIDER:
             row["provider"] = prov
-            if prov == wb_accounts.CHANNEL_PROVIDER:
-                # 没有账号可查的渠道行也要说清 realm，否则它会按模型名猜出口。
-                row["realm"] = wb_channels.CHANNEL_REALM
     row["key"] = key or ""
     _persist_usage(row, "error persist failed")
     dur = f" {elapsed_ms:.0f}ms" if elapsed_ms is not None else ""
@@ -17642,9 +17602,6 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if path.startswith("/agents"):
             return True
-        # 聚合渠道：整页都是管理状态（含 Key 指纹），与 /accounts 同档。
-        if path.startswith("/channels"):
-            return True
         return False
     def do_OPTIONS(self):
         self.send_response(204)
@@ -17721,8 +17678,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._get_updates()
         if path == "/tokensaver":
             return self._get_tokensaver()
-        if path == "/channels":
-            return self._get_channels()
         if path == "/proxy/slots":
             if not self._panel_ok():
                 return self._error(
@@ -17799,62 +17754,9 @@ class Handler(BaseHTTPRequestHandler):
             "realms": dict(PROVIDER_REALMS),
         })
 
-    def _channel_entries(self, channel, models=None):
-        """一个聚合渠道在 /v1/models 里的条目（复合 id ``渠道/模型``）。
-
-        刻意不走 model_entry()：那个函数的能力位来自官方目录，对第三方渠道的
-        模型只会猜错（而且会把 WorkBuddy 的目录当成渠道模型的目录查）。这里只
-        给规范要求的字段 + 两个自描述的字段，不假装知道能力。
-        """
-        cid = channel.get("id")
-        if models is None:
-            models = wb_channels.effective_models(ACCOUNTS_DIR, channel)
-        name = channel.get("name") or cid
-        out = []
-        for upstream in models:
-            out.append({
-                "id": wb_channels.composite_id(cid, upstream),
-                "object": "model",
-                "created": int(time.time()),
-                "owned_by": cid,
-                "channel": cid,
-                "upstream_model": upstream,
-                "name": "%s · %s" % (name, upstream),
-            })
-        return out
-
-    def _enabled_channel_entries(self):
-        """全部启用中渠道的模型条目。没有渠道（或读盘失败）就是空表。"""
-        out = []
-        try:
-            for channel, entry in wb_channels.enabled_channels(ACCOUNTS_DIR):
-                out.extend(self._channel_entries(
-                    channel, wb_channels.effective_models(ACCOUNTS_DIR, channel, entry)))
-        except Exception:
-            return []
-        return out
-
     def _get_v1_models(self, query=None):
         if not self._authorized():
             return
-        # 聚合渠道优先：?provider=<渠道 id> 是「只看这个渠道」的过滤视图。
-        # 这一步必须在 provider_filter() 之前——对后者而言渠道 id 是未知值，
-        # 会被兜底成 workbuddy，于是请求去看官方目录。
-        explicit_channel, _unused = wb_channels.resolve(
-            self._request_provider(query), "")
-        if explicit_channel is not None:
-            cid = explicit_channel.get("id")
-            if not wb_channels.can_drive(explicit_channel):
-                return self._error(
-                    400, "channel '%s' cannot be driven by this gateway yet" % cid,
-                    "invalid_request_error")
-            return self._json(200, {
-                "object": "list",
-                "data": self._channel_entries(explicit_channel),
-                "realm": self._request_realm() or CURRENT_REALM,
-                "provider": cid,
-                "channel": wb_channels.view(ACCOUNTS_DIR, explicit_channel),
-            })
         # 模型清单跟着提供商走：?provider=qoder（或 X-Provider）取 Qoder 目录，
         # 没有提示时保持旧口径（WorkBuddy）——外部客户端的模型发现不该被看板
         # 的切换状态影响。provider="all" 也没有可合并的清单，同样按缺省处理。
@@ -17873,11 +17775,6 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
         data = [model_entry(mid, meta) for mid, meta in entries]
-        # 聚合渠道并入缺省视图（渠道不是「某个提供商」，所以只有不过滤 provider
-        # 的那个视图才合并；?provider=qoder 是过滤视图，塞进渠道会自相矛盾）。
-        # 没有启用中的渠道时，这里一个字都不加，缺省视图与本改造前逐字相同。
-        if req_provider == wb_accounts.DEFAULT_PROVIDER:
-            data.extend(self._enabled_channel_entries())
         payload = {"object": "list", "data": data,
                    "realm": req_realm or CURRENT_REALM,
                    "provider": req_provider}
@@ -18220,148 +18117,6 @@ class Handler(BaseHTTPRequestHandler):
         summary = wb_tokensaver.stats_summary(USAGE_DIR)
         summary["settings"] = tokensaver_settings_view()
         return self._json(200, summary)
-
-    def _get_channels(self):
-        """聚合渠道清单（面板用）。读注册表 + 本机设置，不发任何上游请求。
-
-        Key 永不回显——只给 hasKey 与末 4 位指纹（见 wb_channels.view）。
-        """
-        try:
-            channels = wb_channels.channels_view(ACCOUNTS_DIR)
-        except Exception as exc:
-            return self._error(500, "channel registry failed: %s" % exc)
-        models = []
-        for channel, entry in wb_channels.enabled_channels(ACCOUNTS_DIR):
-            for composite, upstream in wb_channels.channel_models(
-                    ACCOUNTS_DIR, channel, entry):
-                models.append({"id": composite, "channel": channel.get("id"),
-                               "upstream_model": upstream})
-        usage = None
-        try:
-            usage = usage_snapshot(provider=wb_accounts.CHANNEL_PROVIDER,
-                                   range="all")
-        except Exception:
-            usage = None
-        return self._json(200, {
-            "object": "list",
-            "channels": channels,
-            "enabled": sum(1 for c in channels if c.get("enabled")),
-            "drivable": sum(1 for c in channels if c.get("canDrive")),
-            "models": models,
-            "usage": usage,
-        })
-
-    def _route_channels_config(self, payload):
-        """聚合渠道配置写入。Key 永不回显（返回的是 view()）。
-
-        写入语义与设计 §4.4 一致：字段**缺省 = 保留**；空串 / null = 清除；其余
-        覆盖。``discover: true`` 时顺手拉一次模型清单落盘——面板的「启用」按钮走
-        这条路，这样启用完就能在 /v1/models 里看到模型。
-        """
-        payload = payload if isinstance(payload, dict) else {}
-        cid = wb_settings.channel_id(payload.get("id"))
-        if not cid:
-            return self._error(400, "a valid channel id is required",
-                               "invalid_request_error")
-        channel = wb_channels.registry_channel(cid)
-        if channel is None:
-            return self._error(404, "unknown channel '%s'" % cid,
-                               "invalid_request_error")
-        patch = {}
-        if "enabled" in payload:
-            patch["enabled"] = payload.get("enabled") is True
-        if "key" in payload:
-            value = payload.get("key")
-            patch["key"] = value.strip() if isinstance(value, str) else ""
-        if "base_url" in payload:
-            value = payload.get("base_url")
-            patch["base_url"] = value.strip() if isinstance(value, str) else ""
-        if "models" in payload:
-            patch["models"] = wb_settings.clean_channel_models(payload.get("models"))
-        entry = (wb_settings.set_provider_entry(ACCOUNTS_DIR, cid, patch)
-                 if patch else wb_settings.provider_entry(ACCOUNTS_DIR, cid))
-        result = {"ok": True, "channel": wb_channels.view(ACCOUNTS_DIR, channel, entry)}
-        if payload.get("discover") is True and wb_channels.can_drive(channel):
-            try:
-                models = wb_channels.discover_models(ACCOUNTS_DIR, channel)
-                entry = wb_settings.set_provider_entry(ACCOUNTS_DIR, cid,
-                                                       {"models": models})
-                result["channel"] = wb_channels.view(ACCOUNTS_DIR, channel, entry)
-                result["discovered"] = len(models)
-            except wb_channels.ChannelError as exc:
-                # 探测失败不该让配置写入失败：Key 已经存下了，把原因原样告诉面板。
-                result["discover_error"] = str(exc)
-            except Exception as exc:
-                result["discover_error"] = str(exc)
-        return self._json(200, result)
-
-    def _route_channels_discover(self, payload):
-        """拉一次某个渠道的模型清单并落盘（面板「探测模型」按钮）。"""
-        payload = payload if isinstance(payload, dict) else {}
-        cid = wb_settings.channel_id(payload.get("id"))
-        channel = wb_channels.registry_channel(cid) if cid else None
-        if channel is None:
-            return self._error(404, "unknown channel '%s'" % (cid or ""),
-                               "invalid_request_error")
-        try:
-            models = wb_channels.discover_models(ACCOUNTS_DIR, channel)
-        except wb_channels.ChannelError as exc:
-            if exc.local:
-                return self._error(400, str(exc), "invalid_request_error")
-            # 上游的 4xx 是**上游对着这个 Key**说的，不是客户端说错了：只有
-            # 429 值得原样透传（客户端可以退避重试），其余按上游故障报。
-            code = 429 if exc.status == 429 else 502
-            return self._error(code, str(exc))
-        except Exception as exc:
-            return self._error(502, "channel '%s' model list failed: %s" % (cid, exc))
-        entry = wb_settings.set_provider_entry(ACCOUNTS_DIR, cid, {"models": models})
-        return self._json(200, {
-            "ok": True,
-            "models": models,
-            "channel": wb_channels.view(ACCOUNTS_DIR, channel, entry),
-        })
-
-    def _route_channels_test(self, payload):
-        """给一个渠道发一次最小 chat 请求（面板「测试」按钮）。
-
-        模型取调用方点名的那个；没点名就用该渠道生效模型表里的第一个。一个模型
-        都没有时**不猜**：让使用者先探测/指定，否则这里会朝上游发一个不存在的
-        模型名，把「Key 是好的、模型名写错了」混成一条测试失败。
-        """
-        payload = payload if isinstance(payload, dict) else {}
-        cid = wb_settings.channel_id(payload.get("id"))
-        channel = wb_channels.registry_channel(cid) if cid else None
-        if channel is None:
-            return self._error(404, "unknown channel '%s'" % (cid or ""),
-                               "invalid_request_error")
-        if not wb_channels.can_drive(channel):
-            # 先说这件更根本的事：连驱动都做不到时，先问「测哪个模型」是废话。
-            return self._error(
-                400, "channel '%s' cannot be driven by this gateway yet "
-                     "(wire=%s auth=%s)" % (cid, channel.get("wire"),
-                                            channel.get("auth")),
-                "invalid_request_error")
-        model = str(payload.get("model") or "").strip()
-        if not model:
-            available = wb_channels.effective_models(ACCOUNTS_DIR, channel)
-            if not available:
-                return self._error(
-                    400, "channel '%s' has no known model to test; run "
-                         "discovery first or pass a model explicitly" % cid,
-                    "invalid_request_error")
-            model = available[0]
-        try:
-            result = wb_channels.test_channel(ACCOUNTS_DIR, channel, model)
-        except wb_channels.ChannelError as exc:
-            if exc.local:
-                return self._error(400, str(exc), "invalid_request_error")
-            code = 429 if exc.status == 429 else 502
-            return self._error(code, str(exc))
-        except Exception as exc:
-            return self._error(502, "channel '%s' test failed: %s" % (cid, exc))
-        result["ok"] = True
-        result["channel"] = cid
-        return self._json(200, result)
 
     def _get_updates(self):
         """What the running build is, and whether a newer stable release exists.
@@ -20728,15 +20483,12 @@ class Handler(BaseHTTPRequestHandler):
             "accounts": account_views(provider=view_provider),
         })
 
-    def _handle_responses(self, payload, provider=None, channel=None,
-                          upstream_model=None):
+    def _handle_responses(self, payload, provider=None):
         """Serve /v1/responses by translating to chat completions upstream."""
         provider = wb_accounts.provider_filter(provider) \
             or wb_accounts.DEFAULT_PROVIDER
         qoder = provider == "qoder"
-        # 渠道也算「非 WorkBuddy」：跨区/封禁守卫、网关侧网路工具回路都只对
-        # 官方目录有意义（见下面 web_tools 的说明）。
-        non_wb = provider != wb_accounts.DEFAULT_PROVIDER or channel is not None
+        non_wb = provider != wb_accounts.DEFAULT_PROVIDER
         # The gateway is stateless: it keeps no store of previous responses,
         # so it cannot replay a prior turn. Silently ignoring the field would
         # answer a follow-up as if it were a fresh conversation - the client
@@ -20795,10 +20547,7 @@ class Handler(BaseHTTPRequestHandler):
             key_blocked = self._key_model_error(chat_req.get("model"))
             if key_blocked:
                 return self._error(400, key_blocked, "invalid_request_error")
-            if channel is not None:
-                upstream, account, effort = self._open_channel(
-                    channel, upstream_model, chat_req)
-            elif qoder:
+            if qoder:
                 upstream, account, effort = open_qoder_upstream(
                     chat_req, session_key=session_key, target_realm=req_realm)
             elif provider == "trae":
@@ -20807,9 +20556,6 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 upstream, account, effort = open_upstream(
                     chat_req, session_key=session_key, target_realm=req_realm)
-        except wb_channels.ChannelError as exc:
-            code, message = self._channel_failure(exc, model, t_start, channel)
-            return self._error(code, message)
         except ContentRejected as exc:
             record_error(model, 403, exc.detail[:200],
                          elapsed_ms=int((time.time() - t_start) * 1000),
@@ -20995,8 +20741,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._anthropic_error(400, str(exc), "invalid_request_error")
         return self._json(200, {"input_tokens": _anthropic_estimate_chat_tokens(chat)})
 
-    def _handle_messages(self, payload, provider=None, channel=None,
-                         upstream_model=None):
+    def _handle_messages(self, payload, provider=None):
         """Serve an Anthropic Messages request through the chat pipeline."""
         # 省 Token（Anthropic 形状）：同 _dispatch_chat_post，压缩工具结果 +
         # 本地应答；命中就地按 Anthropic 信封作答。
@@ -21006,8 +20751,7 @@ class Handler(BaseHTTPRequestHandler):
         provider = wb_accounts.provider_filter(provider) \
             or wb_accounts.DEFAULT_PROVIDER
         qoder = provider == "qoder"
-        # 渠道也算「非 WorkBuddy」（见 _handle_responses 的同款说明）。
-        non_wb = provider != wb_accounts.DEFAULT_PROVIDER or channel is not None
+        non_wb = provider != wb_accounts.DEFAULT_PROVIDER
         try:
             chat_req = messages_to_chat(payload)
         except ValueError as exc:
@@ -21037,10 +20781,7 @@ class Handler(BaseHTTPRequestHandler):
             key_blocked = self._key_model_error(chat_req.get("model"))
             if key_blocked:
                 return self._anthropic_error(400, key_blocked, "invalid_request_error")
-            if channel is not None:
-                upstream, account, effort = self._open_channel(
-                    channel, upstream_model, chat_req)
-            elif qoder:
+            if qoder:
                 upstream, account, effort = open_qoder_upstream(
                     chat_req, session_key=session_key, target_realm=req_realm)
             elif provider == "trae":
@@ -21049,9 +20790,6 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 upstream, account, effort = open_upstream(
                     chat_req, session_key=session_key, target_realm=req_realm)
-        except wb_channels.ChannelError as exc:
-            code, message = self._channel_failure(exc, model, t_start, channel)
-            return self._anthropic_error(code, message)
         except ContentRejected as exc:
             record_error(model, 403, exc.detail[:200],
                          elapsed_ms=int((time.time() - t_start) * 1000),
@@ -21187,31 +20925,6 @@ class Handler(BaseHTTPRequestHandler):
             if payload is None:
                 return
             return self._route_tokensaver_config(payload)
-        if path == "/channels/config":
-            # Panel-only management write（渠道的 Key 落 settings.json）。
-            if not self._panel_ok():
-                return self._error(401, "panel password required", "invalid_request_error")
-            payload = self._payload_or_error()
-            if payload is None:
-                return
-            return self._route_channels_config(payload)
-        if path == "/channels/discover":
-            # Panel-only：会替使用者向上游发一次模型清单请求。
-            if not self._panel_ok():
-                return self._error(401, "panel password required", "invalid_request_error")
-            payload = self._payload_or_error()
-            if payload is None:
-                return
-            return self._route_channels_discover(payload)
-        if path == "/channels/test":
-            # Panel-only：会替使用者向上游发一次**极小**的 chat 请求（ping）。
-            # 有意不做任何缓存/自动触发——上游那边是要花钱的。
-            if not self._panel_ok():
-                return self._error(401, "panel password required", "invalid_request_error")
-            payload = self._payload_or_error()
-            if payload is None:
-                return
-            return self._route_channels_test(payload)
         if path == "/updates/check":
             # Panel-only management write, like the pricing ones. No body to
             # read: the action takes no parameters, so a button that posts
@@ -21311,10 +21024,8 @@ class Handler(BaseHTTPRequestHandler):
                              stream=payload.get("stream"), key=self._key_id())
                 return self._anthropic_error(503, message, "overloaded_error")
             try:
-                channel, channel_model = self._channel_for_request(payload)
                 return self._handle_messages(
-                    payload, provider=self._chat_provider(payload),
-                    channel=channel, upstream_model=channel_model)
+                    payload, provider=self._chat_provider(payload))
             finally:
                 _chat_slots.release()
         # Both OpenAI-shaped routes below can hold a thread for up to 600s.
@@ -21415,6 +21126,7 @@ class Handler(BaseHTTPRequestHandler):
         payload = self._ts_prepare(payload, protocol)
         if self._ts_local_reply(payload, protocol):
             return
+        provider = self._chat_provider(payload)
         # 先挡背景请求：Codex 自己发的（记忆整理／环境建议／自动复核）
         # 不算「使用者实际使用」，一律本地拒绝，不碰上游。
         if BLOCK_BACKGROUND_REQUESTS:
@@ -21427,18 +21139,6 @@ class Handler(BaseHTTPRequestHandler):
                     pass
                 return self._error(400, background_request_message(reason),
                                    "invalid_request_error")
-        # 聚合渠道：必须在 _chat_provider() 之前解析。provider_filter() 会把未知
-        # 的 provider 值兜底成 workbuddy，`?provider=openrouter` 在那里会被误路由
-        # 到官方上游；模型前缀同理（`openrouter/xxx` 对官方目录是个未知模型）。
-        # 位置放在背景请求守卫**之后**：渠道是付费的（至少是使用者自己的），没道理
-        # 比 Qoder / Trae 更宽松。
-        channel, channel_model = self._channel_for_request(payload)
-        if channel is not None:
-            if path in ("/v1/responses", "/responses"):
-                return self._handle_responses(payload, channel=channel,
-                                              upstream_model=channel_model)
-            return self._dispatch_channel_chat_post(payload, channel, channel_model)
-        provider = self._chat_provider(payload)
         if path in ("/v1/responses", "/responses"):
             return self._handle_responses(payload, provider=provider)
         if provider == "qoder":
@@ -21513,92 +21213,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(503, message +
                                    " - add or enable one at the dashboard (/)")
             return self._error(502, f"upstream unreachable: {exc}")
-        with upstream:
-            if want_stream:
-                return self._chat_stream_response(
-                    upstream, model, fp, account, t_start, effort=effort)
-            return self._chat_nonstream_response(
-                upstream, model, fp, account, t_start, effort=effort)
-
-    def _channel_for_request(self, payload):
-        """这个请求打的是聚合渠道吗？是就返回 ``(渠道, 上游模型 id)``。
-
-        与 :meth:`_chat_provider` 是**两套**解析：渠道是「模型前缀 / ?provider=
-        <渠道 id>」，三条内置上游是「模型归属 + 全局切换」。混在一起会让
-        provider_filter() 的未知值兜底把渠道请求吃成 workbuddy。
-        """
-        if not isinstance(payload, dict):
-            return None, ""
-        return wb_channels.resolve(self._request_provider(), payload.get("model"))
-
-    def _channel_failure(self, exc, model, t_start, channel):
-        """渠道失败 → ``(给客户端的状态码, 说明)``，并（按需）记一行错误账。
-
-        配置类错误（没 Key / 被停用 / wire 不支持）**不记账**：那是「网关没配
-        好」，不是上游失败，记进去会把成功率的含义搞浑——与本文件里 key 白名单
-        被拒不记账是同一个道理。
-        """
-        status = int(getattr(exc, "status", 502) or 502)
-        message = str(exc)
-        if getattr(exc, "local", False):
-            return 400, message
-        record_error(model, status, message[:200],
-                     elapsed_ms=int((time.time() - t_start) * 1000),
-                     account=wb_channels.account_uid(channel),
-                     key=self._key_id())
-        # 上游 401/403 是**渠道自己的 Key** 被拒，不是客户端对网关的鉴权失败：
-        # 原样回 401 会让客户端以为自己该换网关 Key，把问题指错方向。
-        if status in (401, 403):
-            return 502, (message + " - check that channel's API key at the "
-                                  "dashboard (聚合渠道)")
-        if status >= 500:
-            return 502, message
-        return status, message
-
-    def _open_channel(self, channel, upstream_model, chat_req):
-        """打开渠道上游，顺带把 socket 超时从「首字节」切成「每读一次」。"""
-        header_timeout, idle_timeout = upstream_timeouts()
-        return wb_channels.open_channel_upstream(
-            ACCOUNTS_DIR, channel, upstream_model, chat_req,
-            timeout=header_timeout,
-            on_open=lambda resp: _apply_stream_idle_timeout(resp, idle_timeout))
-
-    def _dispatch_channel_chat_post(self, payload, channel, upstream_model):
-        """聚合渠道版 /v1/chat/completions（含 /v1/completions 别名）。
-
-        与 Qoder / Trae 同构：下游响应管线完全共用，适配器把上游的 SSE / JSON
-        正文翻成 OpenAI chunk 序列。渠道没有跨区/封禁概念（跳过两道 WorkBuddy
-        守卫），也没有账号池：用量行按 provider="channel" 记（替身见
-        wb_channels.account_stub），因此不占并发槽、不碰额度护栏、不写指纹。
-        """
-        # qoder_chat_request 其实是个通用入口整理（只把旧版 completions 的 prompt
-        # 补成 messages，其余原样），渠道复用它是为了与三条内置上游同一入口口径。
-        chat_req = qoder_chat_request(payload)
-        fp = prompt_fingerprint(chat_req.get("messages"))
-        want_stream = bool(chat_req.get("stream"))
-        # 这里的 model 是**客户端请求的**那个串（复合 id 或裸 id），后面的用量行
-        # 与日志都按它记——和 /v1/models 报出去的 id 是同一个口径。
-        model = chat_req.get("model") or "unknown"
-        t_start = time.time()
-        log("chat: provider=channel channel=%s model=%s stream=%s msgs=%d"
-            % (channel.get("id"), upstream_model, want_stream,
-               len(chat_req.get("messages") or [])))
-        try:
-            key_blocked = self._key_model_error(model)
-            if key_blocked:
-                return self._error(400, key_blocked, "invalid_request_error")
-            upstream, account, effort = self._open_channel(
-                channel, upstream_model, chat_req)
-        except wb_channels.ChannelError as exc:
-            code, message = self._channel_failure(exc, model, t_start, channel)
-            return self._error(code, message)
-        except Exception as exc:
-            # 适配器构造之外的一切异常都在上游那侧，统一按不可达处理。
-            record_error(model, 502, str(exc)[:200],
-                         elapsed_ms=int((time.time() - t_start) * 1000),
-                         account=wb_channels.account_uid(channel),
-                         key=self._key_id())
-            return self._error(502, "upstream unreachable: %s" % exc)
         with upstream:
             if want_stream:
                 return self._chat_stream_response(
