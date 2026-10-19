@@ -226,6 +226,24 @@ def get_realm_config(realm):
 PROVIDERS = ("workbuddy", "qoder", "trae")
 DEFAULT_PROVIDER = "workbuddy"
 
+#: 无账号渠道的伪 provider 名（P1「聚合渠道」的地基）。自带 Key / 免密渠道没有
+#: 账号，用量行用一个独立字段登记渠道 id，provider 维度认出这个值即视为渠道行，
+#: 从而绕开「选号 → 指纹 → 护栏 → 计费」那一整套账号专属逻辑。
+CHANNEL_PROVIDER = "channel"
+
+
+def provider_or_none(value):
+    """已知 provider 的规范化值，未知返回 None。
+
+    与 :func:`normalize_provider` 的区别是**不把未知值兜底成 WorkBuddy**：渠道
+    维度改造（P1）靠它把「渠道 id」和「厂商名」分辨开，避免渠道用量被误记到
+    WorkBuddy 账上（见 docs/融合设计-dsh-our-free-model.md §第 0 步）。
+    """
+    text = str(value or "").strip().lower()
+    if text in PROVIDERS or text == CHANNEL_PROVIDER:
+        return text
+    return None
+
 
 def normalize_provider(value):
     text = str(value or "").strip().lower()
