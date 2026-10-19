@@ -1002,6 +1002,31 @@ def _client(client_id):
 # Public API
 # ---------------------------------------------------------------------------
 
+def _client_mentions_gateway(client, home):
+    """True when an existing config file of this client already points at us.
+
+    Configs written outside the panel/CLI have no integration-state record, so
+    syncAppliedAgents() used to skip them forever and their baked-in model
+    list stayed on the old provider after a switch. Every integration we write
+    stamps PROVIDER_ID into the file, so a substring check is enough to adopt
+    them for the next apply (which then records proper state/backups).
+    """
+    try:
+        paths = client["files"](home)
+    except Exception:
+        return False
+    for path in paths.values():
+        try:
+            if not os.path.exists(path):
+                continue
+            text = _read_bytes(path).decode("utf-8", "replace")
+        except Exception:
+            continue
+        if PROVIDER_ID in text:
+            return True
+    return False
+
+
 def overview(accounts_dir, home=None):
     """Per-client install/apply summary for the panel."""
     home = _resolve_home(home)
@@ -1045,6 +1070,9 @@ def overview(accounts_dir, home=None):
             # the client merely having a config file on disk - otherwise every
             # pre-existing config would advertise a restore that cannot run.
             "configured": isinstance(record, dict),
+            # 已有配置文件里提到本网关（但没被面板/CLI 记录过）：
+            # syncAppliedAgents 用它来把这些「孤儿配置」的模型表也一起刷新。
+            "linked": _client_mentions_gateway(client, home),
             "config_paths": list(paths.values()),
             "applied": applied,
         }

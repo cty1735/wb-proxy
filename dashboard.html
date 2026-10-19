@@ -13509,10 +13509,15 @@ async function applyAgent(id, btn){
 /* 切换提供商 / 网关版本后，把已经配置过的客户端里内嵌的模型表也换过去：
    OpenCode / Crush / ZCode / DSH 会把模型写进各自的配置文件，光切网关
    不会动它们，选择器里就会留着上一家的模型。
-   只重应用「配置记录还在、且应用后没被手改过」的客户端；默认模型沿用
-   原来的值（新目录里没有就退回「不指定」），Key 沿用当初那把。 */
+   重应用「配置记录还在、且应用后没被手改过」的客户端，以及配置文件里已经
+   指向本网关、但没有集成记录的「孤儿配置」；默认模型沿用原来的值（新目录里
+   没有就退回「不指定」），Key 沿用当初那把。 */
 async function syncAppliedAgents(){
-  const applied = agentClients().filter(c => c.applied && !c.applied.external_change);
+  // applied = 面板/CLI 写过并留有状态记录的客户端；linked = 配置文件里已经指向
+  // 本网关、但没有状态记录的「孤儿配置」（比如手写或旧版本生成的 opencode.json）。
+  // 后者也要跟着切提供商重写模型表，否则客户端选择器里一直是上一家的旧模型。
+  const applied = agentClients().filter(c =>
+    (c.applied && !c.applied.external_change) || (c.linked && !c.applied));
   if(!applied.length) return 0;
   const models = (AGENT_MODELS || [])
     .map(m => (typeof m === 'object' ? (m.id || '') : m))

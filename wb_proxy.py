@@ -17701,11 +17701,13 @@ class Handler(BaseHTTPRequestHandler):
     def _get_v1_models(self, query=None):
         if not self._authorized():
             return
-        # 模型清单跟着提供商走：?provider=qoder（或 X-Provider）取 Qoder 目录，
-        # 没有提示时保持旧口径（WorkBuddy）——外部客户端的模型发现不该被看板
-        # 的切换状态影响。provider="all" 也没有可合并的清单，同样按缺省处理。
+        # 模型清单跟着网关当前提供商走：显式 ?provider=（或 X-Provider）优先；
+        # 没有提示时用 CURRENT_PROVIDER —— 面板顶部切到 Qoder / Trae 后，外部
+        # 客户端重新拉 /v1/models 就应该看到那家的目录，而不是永远停在
+        # WorkBuddy（以前固定回落到 DEFAULT_PROVIDER，切换后客户端还是旧模型）。
+        # provider="all" 没有可合并的清单，仍按缺省处理。
         req_provider = (wb_accounts.provider_filter(self._request_provider(query))
-                        or wb_accounts.DEFAULT_PROVIDER)
+                        or CURRENT_PROVIDER)
         req_realm = self._request_realm() or CURRENT_REALM
         try:
             entries = fetch_models(realm=req_realm, provider=req_provider)
@@ -18974,8 +18976,8 @@ class Handler(BaseHTTPRequestHandler):
             "enabled": True,
             "clients": list(wb_agents.overview(ACCOUNTS_DIR).values()),
             "models": self._agents_models(
-                provider=wb_accounts.provider_filter(
-                    self._request_provider(query)),
+                provider=(wb_accounts.provider_filter(
+                    self._request_provider(query)) or CURRENT_PROVIDER),
                 realm=(query.get("realm", [None])[0] if query else None)),
             "keys": keys,
             "global_key_set": bool(API_KEY),
