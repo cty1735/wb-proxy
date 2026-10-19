@@ -6159,11 +6159,11 @@ def save_persisted_realm(realm, provider=None):
 def switch_provider(provider):
     """Switch the global provider dimension (panel header) and persist it.
 
-    The realm follows the provider's own memory: switching from WorkBuddy cn
-    to Qoder and back must not drag an exit the other side never chose.
+    The exit stays where it is: switching which provider the panel looks at no
+    longer drags the gateway's real upstream exit along (see _route_realm).
     """
     p = wb_accounts.normalize_provider(provider)
-    return save_persisted_realm(PROVIDER_REALMS.get(p, CURRENT_REALM), p)
+    return save_persisted_realm(CURRENT_REALM, p)
 API_KEY = None
 SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT
 def import_desktop_accounts(realm=None):
@@ -19547,8 +19547,12 @@ class Handler(BaseHTTPRequestHandler):
                                     "panel session, not an API key",
                                "invalid_request_error")
         # 一个端点管两把开关：{"realm": ...} 改出口（旧行为逐字保留），
-        # {"provider": ...} 改提供商（出口跟着该提供商记着的值走），两个都给
-        # 就一起改。非法值照旧静默忽略（旧端点对 realm 就是这样）。
+        # {"provider": ...} 改提供商，两个都给就一起改。非法值照旧静默忽略
+        # （旧端点对 realm 就是这样）。
+        #
+        # 只给 provider 时**不再**顺带把出口换成这家提供商上次记住的那版：出口是
+        # 网关真实的上游开关（影响所有未绑定版本的 Key），看板切「看哪家数据」不
+        # 该动它，改出口一律走面板顶部那个 ⇄ 控件（也就是显式带 realm 的请求）。
         new_provider = payload.get("provider")
         new_realm = payload.get("realm")
         provider = (wb_accounts.normalize_provider(new_provider)
@@ -19556,8 +19560,10 @@ class Handler(BaseHTTPRequestHandler):
         realm = new_realm if new_realm in ("intl", "cn") else None
         if provider is not None or realm is not None:
             if realm is None:
-                realm = PROVIDER_REALMS.get(provider or CURRENT_PROVIDER,
-                                            CURRENT_REALM)
+                # 回传当前出口：出口保持不动，但要让目标提供商的「记忆」与它一致，
+                # 否则重启时 load_persisted_realm() 会用那家供应商的老出口把出口
+                # 倒灌回去（它按 PROVIDER_REALMS[CURRENT_PROVIDER] 取真源）。
+                realm = CURRENT_REALM
             save_persisted_realm(realm, provider)
         return self._json(200, {
             "ok": True,

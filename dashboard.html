@@ -352,16 +352,29 @@ body.provider-trae #btnFetchCredits{display:none !important}
   border-color:var(--accent);background:var(--panel);
   box-shadow:0 0 0 1px var(--accent), var(--shadow-md);
 }
-.realm-card.gateway-ctrl{
-  background:var(--panel2);cursor:default;border-color:var(--line);
-}
-.realm-card.gateway-ctrl:hover{transform:none;border-color:var(--line);box-shadow:var(--shadow)}
-.toggle-realm-btn{
+/* 顶部「网关默认出口」：原本是网关页里的第三张卡片，现在搬到顶栏，只留标题、
+   生效 Key 数与 ⇄ 切换按钮（当前是国际版还是国内版显示在左上角品牌位，不在这里
+   重复）。它切的是网关**真实**的默认上游出口，与只改看板看哪家数据的提供商切换
+   是两件事。 */
+.gw-exit{display:flex;align-items:center;gap:9px;flex:0 0 auto;min-width:0;
+  padding:5px 11px;border-radius:11px;border:1px solid var(--line);background:var(--panel2);
+  transition:border-color .25s ease,background-color .25s ease}
+.gw-exit-cap{font-size:10.5px;font-weight:700;color:var(--dim);text-transform:uppercase;
+  letter-spacing:.5px;white-space:nowrap}
+/* 顶栏品牌位＝「当前网关真实状态」：提供商名 + 网关真实默认出口版本，随切提供商
+   与点 ⇄ 切出口同步变化（两者都是网关真实开关）。
+   h1 span 那条通用规则是给副标题准备的（13px、灰、左留 8px），这里显式覆盖回来，
+   并把分隔号与版本各归各的节点——版本节点整体就是一个词典条目，i18n 照常命中。 */
+#brandTitle{margin-left:0;color:var(--fg);font-size:15px;font-weight:700;letter-spacing:-.2px}
+.brand-sep{margin:0 5px;color:var(--line-hover);font-size:13px;font-weight:400}
+#brandRealm{margin-left:0;color:var(--accent);font-size:12.5px;font-weight:700;letter-spacing:0}
+.gw-exit-realm{font-size:11px;font-weight:700;color:var(--accent);white-space:nowrap}
+.gw-exit .badge{font-size:10px;padding:1px 6px;white-space:nowrap}
+.gw-exit-btn{appearance:none;padding:5px 11px;border-radius:8px;font:inherit;
+  font-size:11.5px;font-weight:600;line-height:1.3;white-space:nowrap;cursor:pointer;
   background:var(--panel);border:1px solid var(--accent);color:var(--accent);
-  padding:8px 18px;font-size:13px;font-weight:600;border-radius:8px;box-shadow:var(--shadow-sm);cursor:pointer;
-  transition:all .15s ease;
-}
-.toggle-realm-btn:hover{background:var(--panel2);box-shadow:var(--shadow-md)}
+  box-shadow:none;transition:all .15s ease}
+.gw-exit-btn:hover{background:var(--accent-soft)}
 .realm-endpoint-info{font-size:12px;color:var(--dim)}
 
 .main-nav{display:inline-flex;gap:4px;background:var(--panel2);padding:4px;border-radius:10px;border:1px solid var(--line)}
@@ -463,15 +476,16 @@ body.provider-trae #btnFetchCredits{display:none !important}
    才不会互相把对方放出来。作者样式本就压过 [hidden] 的 UA 样式，所以这里显式
    声明一次，免得以后给这两个选择器加 display 时又悄悄失效。 */
 .main-nav-btn[hidden],.main-page[hidden]{display:none!important}
-/* 页面级两栏：左侧区块导航由 initPageNav() 依据页面内的 section 现场生成，
+/* 页面级两栏：区块导航（「本页导航」）由 initPageNav() 依据页面内的 section
+   现场生成，挂在内容的**右侧**——左侧一整栏已经让给全局主导航（.app-sidebar）。
    这里的样式只描述外观，既不预设任何页面，也不预设任何区块。给页面加
    .page-nav-on 即可启用，区块不足两项的页面不加这个类，保持单栏。 */
-.main-page.page-nav-on.active{display:grid;grid-template-columns:196px minmax(0,1fr);gap:20px;align-items:start}
-.main-page.page-nav-on > *{grid-column:2;min-width:0}
+.main-page.page-nav-on.active{display:grid;grid-template-columns:minmax(0,1fr) 196px;gap:20px;align-items:start}
+.main-page.page-nav-on > *{grid-column:1;min-width:0}
 /* 内容包在 .page-nav-body 里，grid 就只有两项，1 / -1 才真的跨满整个内容区
    （否则它只跨第 1 行，首行被撑成侧栏高度）；区块间距也仍只由 section 自己
    的 margin 决定，不会被行间距再叠一次。 */
-.main-page.page-nav-on > .page-sidebar{grid-column:1;grid-row:1 / -1;position:sticky;
+.main-page.page-nav-on > .page-sidebar{grid-column:2;grid-row:1 / -1;position:sticky;
   top:var(--page-nav-top,84px);z-index:6;background:var(--panel);border:1px solid var(--line);
   border-radius:14px;padding:10px;box-shadow:var(--shadow);
   max-height:calc(100vh - var(--page-nav-top,84px) - 20px);overflow:auto}
@@ -498,7 +512,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 /* 收起侧栏：整列压成一条细轨，只留展开按钮，把宽度让给内容区。窄屏下导航
    本来就是一条横栏，没有可收的余地，所以这套样式只在宽屏生效。 */
 @media (min-width:861px){
-  .main-page.page-nav-on.page-nav-collapsed.active{grid-template-columns:44px minmax(0,1fr);gap:12px}
+  .main-page.page-nav-on.page-nav-collapsed.active{grid-template-columns:minmax(0,1fr) 44px;gap:12px}
   .main-page.page-nav-on.page-nav-collapsed > .page-sidebar{padding:6px 4px;overflow:hidden}
   .main-page.page-nav-on.page-nav-collapsed .page-sidebar-title,
   .main-page.page-nav-on.page-nav-collapsed .page-nav,
@@ -511,7 +525,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 @media (max-width:860px){
   .main-page.page-nav-on.active{grid-template-columns:minmax(0,1fr);gap:14px}
   .main-page.page-nav-on > *{grid-column:1}
-  .main-page.page-nav-on > .page-sidebar{grid-row:auto;max-height:none;overflow:visible;padding:8px;
+  .main-page.page-nav-on > .page-sidebar{grid-column:1;grid-row:auto;max-height:none;overflow:visible;padding:8px;
     border-radius:12px;background:var(--header-bg);backdrop-filter:blur(10px);
     display:flex;align-items:center;gap:8px}
   .page-sidebar-title{display:none}
@@ -1165,6 +1179,41 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
 /* ⑤ 图表键盘可达：时序图本体可 Tab 聚焦（spark 的读数游标画在 canvas 上，
    焦点态走 KPI 卡自己的 focus-visible）。 */
 #pageAnalytics canvas.series:focus-visible{outline:2px solid var(--accent2);outline-offset:2px;border-radius:10px}
+
+/* ===== 全局左侧主导航（原顶部导航搬入） =====
+   顶部导航里的页面页签与仓库入口整体搬到内容区左侧的竖栏，页面内容本身不动：
+   .app-body 用两列栅格摆好「侧栏 + main」，main 原来的 max-width 与内边距改挂到
+   .app-body 上（224 + 20 + 2000 = 2244，内容区宽度与搬动前一致）。提供商切换与
+   网关默认出口仍在顶部 header 里（见 .gw-exit）；区块内的「本页导航」则移到内容区
+   右侧，见上面的 .page-sidebar 规则。 */
+.app-body{display:grid;grid-template-columns:224px minmax(0,1fr);gap:20px;align-items:start;
+  max-width:2244px;margin:0 auto;padding:20px var(--page-pad) 60px}
+.app-body>main{padding:0;max-width:none;margin:0}
+.app-sidebar{display:flex;flex-direction:column;gap:10px;position:sticky;
+  top:var(--page-nav-top,84px);z-index:7;background:var(--panel);border:1px solid var(--line);
+  border-radius:14px;padding:11px;box-shadow:var(--shadow);
+  max-height:calc(100vh - var(--page-nav-top,84px) - 20px);overflow:auto}
+/* 侧栏里的控件一律整栏宽：页签竖排拉满，仓库入口铺一行——沿用原来的类名与
+   样式，只补布局，视觉语言不变。 */
+.app-sidebar .main-nav{display:flex;flex-direction:column;width:100%;gap:2px;
+  background:transparent;border:none;padding:0}
+.app-sidebar .main-nav-btn{width:100%;justify-content:flex-start;padding:8px 12px;border-radius:8px}
+.app-sidebar .gh-link{width:100%;height:34px}
+/* 窄屏放不下左侧竖栏：落回单列，导航折成横栏（与原顶部导航同一套做法）——
+   页签一行可横向滚动、放不下就滚，仓库入口缩成方块贴右端。 */
+@media (max-width:1080px){
+  .app-body{grid-template-columns:minmax(0,1fr);gap:14px;padding:14px var(--page-pad) 60px}
+  .app-sidebar{position:static;max-height:none;overflow:visible;flex-flow:row wrap;
+    align-items:center;gap:10px;padding:8px}
+  .app-sidebar .main-nav{order:1;width:auto;flex:1 1 200px;flex-direction:row;gap:4px;
+    min-width:0;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
+  .app-sidebar .main-nav-btn{flex:1 1 auto;width:auto;justify-content:center;
+    padding:7px 12px;white-space:nowrap}
+  .app-sidebar .gh-link{order:3;width:34px;height:34px;flex:0 0 auto;margin-left:auto}
+}
+@media (max-width:860px){
+  .app-body{padding:16px 12px 60px}
+}
 
 </style>
 <script>
@@ -3596,45 +3645,30 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
 </head>
 <body>
 <header>
-  <div class="header-left" style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
-    <h1><span class="dot" id="statusDot"></span><span id="brandTitle">WorkBuddy 网关</span></h1>
+  <div class="header-left" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+    <!-- 品牌位＝「当前网关真实状态」：提供商名 + 网关真实默认出口版本，比如
+         Qoder · 国内版 (China)。它跟着服务端持久化的 provider/realm 走：切上面的
+         WorkBuddy / Qoder / Trae 就是切网关真实上游，品牌位会一起变；点右边 ⇄
+         只切出口版本。 -->
+    <h1><span class="dot" id="statusDot"></span><span id="brandTitle" data-no-i18n>WorkBuddy</span><span class="brand-sep" data-no-i18n aria-hidden="true">·</span><span id="brandRealm" title="网关真实默认出口">国际版 (Global)</span></h1>
     <!-- 提供商切换：全站唯一入口，改的是服务端持久化的 provider（POST /realm）。
-         面板每个按提供商取数的请求都显式带 ?provider=，所以这个切换只影响看板
-         自己看到的账号/用量/模型，不会改变普通客户端流量的去向。 -->
+         切 WorkBuddy / Qoder / Trae 就是切网关真实上游：提供商和出口一起落到
+         服务端并持久化（出口取该提供商自己记住的那版），后续普通客户端流量、
+         模型清单也跟着走这一版；左上角品牌位同步显示「提供商 · 版本」。 -->
     <div class="provider-switch" id="providerSwitch" role="group" aria-label="提供商" data-no-i18n>
       <button type="button" id="providerBtnWorkbuddy" class="active" onclick="switchProvider('workbuddy')" aria-pressed="true">WorkBuddy</button>
       <button type="button" id="providerBtnQoder" onclick="switchProvider('qoder')" aria-pressed="false">Qoder</button>
       <button type="button" id="providerBtnTrae" onclick="switchProvider('trae')" aria-pressed="false">Trae</button>
     </div>
-    <nav class="main-nav">
-      <button class="main-nav-btn active" id="btnNavGateway" onclick="switchMainTab('gateway')">
-        <span id="navGatewayLabel">网关</span>
-      </button>
-      <button class="main-nav-btn" id="btnNavAccounts" onclick="switchMainTab('accounts')">
-        账号
-      </button>
-      <button class="main-nav-btn" id="btnNavTasks" onclick="switchMainTab('tasks')">
-        任务与福利
-      </button>
-      <button class="main-nav-btn" id="btnNavAnalytics" onclick="switchMainTab('analytics')">
-        数据看板
-      </button>
-      <button class="main-nav-btn" id="btnNavAgents" onclick="switchMainTab('agents')">
-        智能体配置
-      </button>
-      <button class="main-nav-btn" id="btnNavSettings" onclick="switchMainTab('settings')">
-        设置
-      </button>
-      <button class="main-nav-btn" id="btnNavLogs" onclick="switchMainTab('logs')">
-        运行日志
-      </button>
-    </nav>
-    <a class="gh-link" href="https://github.com/ardeyouxipianyi/workbuddy2api-hub" target="_blank" rel="noopener noreferrer"
-       title="查看 GitHub 项目仓库" aria-label="GitHub 项目仓库">
-      <svg viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
-      </svg>
-    </a>
+    <!-- 网关默认出口：只切网关真实默认出口的版本（影响所有未按版本绑定的 Key），
+         不改提供商；品牌位里的版本跟着它一起变。 -->
+    <div class="gw-exit" id="cardGatewayCtrl" style="cursor:default">
+      <span class="gw-exit-cap">网关默认出口</span>
+      <span id="activeGatewayName" class="gw-exit-realm" title="网关真实的默认上游出口">国际版</span>
+      <span id="activeGatewayKeyCount" class="badge ok mini" style="font-weight:600">0 个 Key 生效</span>
+      <button type="button" class="gw-exit-btn" id="btnToggleRealm" onclick="toggleActiveGatewayRealm()"
+              title="切换网关的默认上游出口（会影响所有未绑定版本的 Key）">⇄ 切换默认出口为【国内版】</button>
+    </div>
   </div>
   <div class="header-right">
     <button type="button" class="lang-btn" id="langToggleBtn" onclick="toggleLang(event)" data-no-i18n title="切换语言 (简体中文 / 正體中文 / English)" aria-label="切换语言">
@@ -3710,6 +3744,43 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     </div>
   </div>
 </div>
+<!-- 全局主导航：页面页签 + 仓库入口。结构与 id 全部保留，只是换了位置——页签
+     显隐（navPageRows）、i18n 与切换逻辑都按 id / 类名取，不依赖 DOM 层级。
+     提供商切换与网关默认出口都在顶部 header 里（见 .header-left）：
+     前者切网关真实上游（提供商 + 该家记住的出口），后者只切默认出口版本。
+     .app-body 用两列栅格把「侧栏 + main」摆好，页面内容本身一字未动。 -->
+<div class="app-body">
+<aside class="app-sidebar" aria-label="主导航">
+  <nav class="main-nav">
+    <button class="main-nav-btn active" id="btnNavGateway" onclick="switchMainTab('gateway')">
+      <span id="navGatewayLabel">网关</span>
+    </button>
+    <button class="main-nav-btn" id="btnNavAccounts" onclick="switchMainTab('accounts')">
+      账号
+    </button>
+    <button class="main-nav-btn" id="btnNavTasks" onclick="switchMainTab('tasks')">
+      任务与福利
+    </button>
+    <button class="main-nav-btn" id="btnNavAnalytics" onclick="switchMainTab('analytics')">
+      数据看板
+    </button>
+    <button class="main-nav-btn" id="btnNavAgents" onclick="switchMainTab('agents')">
+      智能体配置
+    </button>
+    <button class="main-nav-btn" id="btnNavSettings" onclick="switchMainTab('settings')">
+      设置
+    </button>
+    <button class="main-nav-btn" id="btnNavLogs" onclick="switchMainTab('logs')">
+      运行日志
+    </button>
+  </nav>
+  <a class="gh-link" href="https://github.com/ardeyouxipianyi/workbuddy2api-hub" target="_blank" rel="noopener noreferrer"
+     title="查看 GitHub 项目仓库" aria-label="GitHub 项目仓库">
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+    </svg>
+  </a>
+</aside>
 <main>
   <div id="pageGateway" class="main-page">
   <!-- 页面头部：标题 + 一行说明，与其它页面的头部结构保持一致 -->
@@ -3758,22 +3829,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       </div>
     </div>
 
-    <!-- 卡片 3: 网关出口控制 -->
-    <div id="cardGatewayCtrl" class="realm-card gateway-ctrl" style="cursor:default">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-        <span style="font-size:11px;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.5px">网关默认出口</span>
-        <span id="activeGatewayKeyCount" class="badge ok mini" style="font-weight:600">0 个 Key 生效</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;margin:2px 0 8px">
-        <span id="gatewayDot" class="dot" style="width:9px;height:9px"></span>
-        <span id="activeGatewayName" style="font-size:20px;font-weight:700;color:var(--accent);letter-spacing:-.4px">国际版 (Global)</span>
-      </div>
-      <div style="margin-top:auto">
-        <button class="toggle-realm-btn" id="btnToggleRealm" onclick="toggleActiveGatewayRealm()" style="cursor:pointer;width:100%;padding:7px 12px;font-size:12px">
-          ⇄ 切换默认出口为【国内版】
-        </button>
-      </div>
-    </div>
+    <!-- 卡片 3（网关出口控制）已搬到顶部 header 的 .gw-exit 里：它切的是网关真实的
+         默认上游出口，和这里两张「视图」卡片不是一回事，所以不留在这一排。 -->
 
   </div>
   <!-- 顶部统计条：三张统计卡（JS 每轮重画 #cards 内部）+ 调度器状态行，合成
@@ -5077,6 +5134,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
 
   <footer>每 5 秒自动刷新 · 数据来自本机反代 <span class="mono" id="logfile"></span></footer>
 </main>
+</div>
 
 <div class="modal-mask" id="loginModal">
   <div class="modal" role="dialog" aria-modal="true">
@@ -6163,10 +6221,9 @@ window.VIEW_REALM = "intl";
 window.REALM_FILTER = "all";
 window.MODELS_DATA = [];
 window.ACCOUNTS = [];
-// 当前看板提供商（workbuddy|qoder）。头部切换器改的是服务端持久化的值
-// （POST /realm），面板每个按提供商取数的请求都显式带 ?provider= —— 服务端只认
-// 显式提示（见 wb_proxy._request_provider），所以看板停在 Qoder 页时，普通
-// WorkBuddy 客户端流量一点不受影响。
+// 当前提供商（workbuddy|qoder|trae），也是网关真实上游：头部切换器改的是服务端
+// 持久化的 provider（POST /realm），提供商与它记住的出口一起落盘；面板每个按
+// 提供商取数的请求仍显式带 ?provider=，保证看板数字和网关真实状态一致。
 window.PROVIDER = "workbuddy";
 window.PROVIDER_REALMS = {workbuddy: "intl", qoder: "intl", trae: "cn"};
 
@@ -6219,8 +6276,8 @@ function syncProviderChrome(force){
   document.body.classList.toggle("provider-workbuddy", p === "workbuddy");
   document.body.classList.toggle("provider-qoder", p === "qoder");
   document.body.classList.toggle("provider-trae", p === "trae");
-  const brand = document.getElementById("brandTitle");
-  if(brand) brand.textContent = providerName(p) + " 网关";
+  // 品牌位由 updateUI() 写：提供商名（WorkBuddy / Qoder / Trae）+ 网关真实
+  // 默认出口版本，两者都跟着服务端持久化的真实状态走。
   const gt = document.getElementById("gatewayPageTitle");
   if(gt){
     gt.textContent = p === "qoder" ? GATEWAY_TITLE_QODER
@@ -6263,7 +6320,9 @@ function syncProviderChrome(force){
   if(hCn) hCn.textContent = hosts.cn;
 }
 
-// 切换提供商：服务端把 realm 切到该提供商记着的出口，视图跟随并重拉全部数据。
+// 切换提供商：切网关真实上游（POST /realm 只带 provider，服务端把它和该家
+// 记住的出口一起落盘）。左上角品牌位、模型清单、未绑定版本的 Key 都跟着换；
+// 只想换出口版本（不改提供商）就点顶部那颗 ⇄ 按钮。
 /* ---------- 切换提供商 / 国际国内版时的 loading ----------
    顶部小胶囊 + 至少停留 600ms：切换要重拉账号、模型清单、用量与统计，
    慢的时候一两秒，没有反馈会让人以为没点上；闪一下就消失又看不清。 */
@@ -6299,13 +6358,20 @@ async function endSwitch(minMs){
 
 async function switchProvider(p){
   if(p === currentProvider()){ syncProviderChrome(); return; }
-  beginSwitch('正在切换到 ' + providerName(p) + '…');
+  // 目标出口取该提供商自己记住的那版（服务端 /realm 只给 provider 时也是这么落）。
+  const targetRealm = (window.PROVIDER_REALMS && (window.PROVIDER_REALMS[p] === "intl" || window.PROVIDER_REALMS[p] === "cn"))
+                      ? window.PROVIDER_REALMS[p] : window.ACTIVE_GATEWAY_REALM;
+  beginSwitch('正在切换网关到 ' + providerName(p) + ' · '
+              + (targetRealm === "cn" ? "国内版" : "国际版") + '…');
   // 模型清单先清空：等待新目录返回的这段间隙里，不该还挂着上一个提供商的模型。
   renderModelsLoading();
   try{
     const res = await postJSON("/realm", {provider: p});
     window.PROVIDER = (res.provider === "qoder" || res.provider === "trae" || res.provider === "workbuddy") ? res.provider : p;
     if(res.realms && typeof res.realms === "object") window.PROVIDER_REALMS = res.realms;
+    // 切提供商就是切网关真实上游：服务端把提供商和该家记住的出口一起落盘，
+    // 这里同步网关出口和视图版本，品牌位（提供商 · 版本）与右边出口控件都显示
+    // 这个真实值；后续模型清单、未绑定版本的 Key 也跟着走这一版。
     if(res.current) window.ACTIVE_GATEWAY_REALM = res.current;
     window.VIEW_REALM = window.ACTIVE_GATEWAY_REALM;
     RECENT_PAGE = 1;
@@ -6343,7 +6409,8 @@ async function switchProvider(p){
     // 写死在配置文件里，不重应用就会一直留着上一家的模型）。
     await loadAgents();
     const synced = await syncAppliedAgents();
-    toast('已切换到 ' + providerName() + ' · ' + (window.VIEW_REALM === "cn" ? "国内版" : "国际版") + '出口'
+    toast('网关默认上游已切换并永久保存为: ' + providerName() + '（'
+          + (window.ACTIVE_GATEWAY_REALM === "cn" ? "国内版" : "国际版") + '）'
           + (synced ? '，已同步 ' + synced + ' 个客户端的模型' : ''), 'ok');
   }catch(e){
     alert('切换提供商失败: ' + e.message);
@@ -6404,11 +6471,14 @@ function updateUI(){
   const dbCn = document.getElementById("tabCnDefaultBadge");
   if(dbCn) dbCn.style.display = !isIntlGw ? "inline-block" : "none";
 
+  // 品牌位＝「当前网关真实状态」：提供商名 + 网关真实默认出口版本，如
+  // Qoder · 国内版 (China)。切提供商（真实上游）与点 ⇄ 切出口都会让它变。
+  const brandTitle = document.getElementById("brandTitle");
+  if(brandTitle) brandTitle.textContent = providerName();
+  const brandRealm = document.getElementById("brandRealm");
+  if(brandRealm) brandRealm.textContent = isIntlGw ? "国际版 (Global)" : "国内版 (China)";
   const gwName = document.getElementById("activeGatewayName");
-  if(gwName) {
-    gwName.textContent = isIntlGw ? "国际版 (Global)" : "国内版 (China)";
-    gwName.style.color = "var(--accent)";
-  }
+  if(gwName) gwName.textContent = isIntlGw ? "国际版" : "国内版";
   const ep = document.getElementById("activeEndpoint");
   if(ep) ep.textContent = isIntlGw ? "https://www.workbuddy.ai/v2" : "https://copilot.tencent.com/v2";
 
@@ -6531,7 +6601,8 @@ async function toggleActiveGatewayRealm(){
     // 网关默认出口真的换了版本：已配置客户端的模型表也要换过去。
     await loadAgents();
     const synced = await syncAppliedAgents();
-    toast("网关默认上游已切换并永久保存为: " + (window.ACTIVE_GATEWAY_REALM === "intl" ? "国际版" : "国内版")
+    toast("网关默认上游已切换并永久保存为: " + providerName() + "（"
+          + (window.ACTIVE_GATEWAY_REALM === "intl" ? "国际版" : "国内版") + "）"
           + (synced ? '，已同步 ' + synced + ' 个客户端的模型' : ''));
   }catch(e){
     alert("切换失败: " + e.message);
@@ -6557,18 +6628,18 @@ async function refreshActiveRealm(){
 }
 
 async function initRealm(){
-  // Boot only - the initial view follows the active exit unless the URL pins it.
-  // Account actions call refreshActiveRealm() instead: reading ?view= here was
-  // what moved the panel back to the other realm after 签到 / 活跃打卡, because
-  // the view buttons do not rewrite the URL.
+  // Boot only - 初始视图跟网关真实出口走（品牌位、出口控件、视图三处同一口径），
+  // 只有 ?view= 能钉住本次会话的视图。Account actions call refreshActiveRealm()
+  // instead: reading ?view= here was what moved the panel back to the other realm
+  // after 签到 / 活跃打卡, because the view buttons do not rewrite the URL.
   await refreshActiveRealm();
-  window.VIEW_REALM = window.ACTIVE_GATEWAY_REALM;
-  const viewFromUrl = new URLSearchParams(window.location.search).get('view');
-  if(viewFromUrl && ['intl', 'cn'].includes(viewFromUrl)) window.VIEW_REALM = viewFromUrl;
   // ?provider= 只在本次会话里钉住看板视图（书签/对比用），**不**改服务端状态；
   // 刷新后仍然跟服务端记着的值走。
   const provFromUrl = new URLSearchParams(window.location.search).get('provider');
   if(provFromUrl === 'qoder' || provFromUrl === 'trae' || provFromUrl === 'workbuddy') window.PROVIDER = provFromUrl;
+  window.VIEW_REALM = window.ACTIVE_GATEWAY_REALM;
+  const viewFromUrl = new URLSearchParams(window.location.search).get('view');
+  if(viewFromUrl && ['intl', 'cn'].includes(viewFromUrl)) window.VIEW_REALM = viewFromUrl;
   const limitFromUrl = new URLSearchParams(window.location.search).get('limit');
   if(limitFromUrl && [10, 20, 50, 100].includes(parseInt(limitFromUrl, 10))) RECENT_LIMIT = parseInt(limitFromUrl, 10);
   window.updateUI();
@@ -16002,6 +16073,8 @@ function seriesTipHTML(b, step){
 }
 function showSeriesTip(idx, cx, cy){
   if (!seriesLayout || !seriesTip) return;
+  const b = seriesLayout.series[idx];
+  if (!b) return;   // 空区间 / 越界：没有可读的点，别把 undefined 传进 seriesTipHTML
   seriesTip.style.opacity = 1;
   seriesTip.style.left = Math.min(window.innerWidth - 200, Math.max(8, cx)) + 'px';
   seriesTip.style.top = Math.max(8, cy) + 'px';
@@ -16033,6 +16106,25 @@ function drawSeries(){
   const maxV = Math.max(1, ...vals);
   const dim = seriesColor('--dim'), dim2 = seriesColor('--dim2'), line = seriesColor('--line');
   const barC = seriesColor('--chart-bar'), lineC = seriesColor('--chart-line');
+
+  // 空区间（常见于刚切到一家还没有请求的提供商）：直接画空态并拆掉 hover。
+  // 不能继续走下面的绘图——n=0 时 gap = iw/0 = Infinity，hover 反算出的 idx 会
+  // 变成 -0，series[-0] 是 undefined，seriesTipHTML 读 b.at 就抛 TypeError
+  // （控制台里那条 "Cannot read properties of undefined (reading 'at')"）。
+  if (!series.length){
+    ctx.fillStyle = dim2;
+    ctx.font = '12px ' + getComputedStyle(document.body).fontFamily;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('该区间暂无请求', W / 2, H / 2);
+    ctx.textAlign = 'left';
+    $('seriesLegend').innerHTML = '';
+    seriesLayout = {bars: [], series: [], step, metric, padL, padR, iw,
+                    gap: Math.max(1, iw), lineVals: null, lineMax: 1, barC, lineC};
+    cv.onmousemove = () => {};
+    cv.onmouseleave = () => { if (tip) tip.style.opacity = 0; };
+    cv.setAttribute('aria-label', '时序图：该区间暂无请求');
+    return;
+  }
 
   // y 网格
   const nGrid = 4;
@@ -16132,6 +16224,7 @@ seriesCanvas.addEventListener('keydown', ev => {
   const lay = seriesLayout;
   if (!lay) return;
   const n = lay.series.length;
+  if (!n) return;   // 空区间没有可读的点
   let idx = seriesKeyIdx;
   if (ev.key === 'ArrowLeft')       idx = idx < 0 ? n - 1 : Math.max(0, idx - 1);
   else if (ev.key === 'ArrowRight') idx = idx < 0 ? 0 : Math.min(n - 1, idx + 1);
