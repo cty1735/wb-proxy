@@ -1,0 +1,179 @@
+{
+  "version": 1,
+  "channels": [
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "category": "apikey",
+      "auth": "bearer",
+      "wire": "chat",
+      "base_url": "https://openrouter.ai/api/v1",
+      "list_models": "/models",
+      "key_env": "OPENROUTER_API_KEY",
+      "docs": "https://openrouter.ai/keys",
+      "models_override": []
+    },
+    {
+      "id": "groq",
+      "name": "Groq",
+      "category": "apikey",
+      "auth": "bearer",
+      "wire": "chat",
+      "base_url": "https://api.groq.com/openai/v1",
+      "list_models": "/models",
+      "key_env": "GROQ_API_KEY",
+      "docs": "https://console.groq.com/keys",
+      "models_override": []
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "category": "apikey",
+      "auth": "bearer",
+      "wire": "chat",
+      "base_url": "https://api.deepseek.com/v1",
+      "list_models": "/models",
+      "key_env": "DEEPSEEK_API_KEY",
+      "docs": "https://platform.deepseek.com/api_keys",
+      "models_override": []
+    },
+    {
+      "id": "mistral",
+      "name": "Mistral",
+      "category": "apikey",
+      "auth": "bearer",
+      "wire": "chat",
+      "base_url": "https://api.mistral.ai/v1",
+      "list_models": "/models",
+      "key_env": "MISTRAL_API_KEY",
+      "docs": "https://console.mistral.ai/api-keys",
+      "models_override": []
+    },
+    {
+      "id": "together",
+      "name": "Together AI",
+      "category": "apikey",
+      "auth": "bearer",
+      "wire": "chat",
+      "base_url": "https://api.together.xyz/v1",
+      "list_models": "/models",
+      "key_env": "TOGETHER_API_KEY",
+      "docs": "https://api.together.xyz/settings/api-keys",
+      "models_override": []
+    },
+    {
+      "id": "fireworks",
+      "name": "Fireworks AI",
+      "category": "apikey",
+      "auth": "bearer",
+      "wire": "chat",
+      "base_url": "https://api.fireworks.ai/inference/v1",
+      "list_models": "/models",
+      "key_env": "FIREWORKS_API_KEY",
+      "docs": "https://fireworks.ai/account/api-keys",
+      "models_override": []
+    },
+    {
+      "id": "nvidia",
+      "name": "NVIDIA NIM",
+      "category": "apikey",
+      "auth": "bearer",
+      "wire": "chat",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "list_models": "/models",
+      "key_env": "NVIDIA_API_KEY",
+      "docs": "https://build.nvidia.com/settings/api-keys",
+      "models_override": []
+    },
+    {
+      "id": "siliconflow",
+      "name": "硅基流动 SiliconFlow",
+      "category": "apikey",
+      "auth": "bearer",
+      "wire": "chat",
+      "base_url": "https://api.siliconflow.cn/v1",
+      "list_models": "/models",
+      "key_env": "SILICONFLOW_API_KEY",
+      "docs": "https://cloud.siliconflow.cn/account/ak",
+      "models_override": []
+    },
+    {
+      "id": "moonshot",
+      "name": "Moonshot (Kimi)",
+      "category": "apikey",
+      "auth": "bearer",
+      "wire": "chat",
+      "base_url": "https://api.moonshot.cn/v1",
+      "list_models": "/models",
+      "key_env": "MOONSHOT_API_KEY",
+      "docs": "https://platform.moonshot.cn/console/api-keys",
+      "models_override": []
+    },
+    {
+      "id": "zhipu",
+      "name": "智谱 BigModel",
+      "category": "apikey",
+      "auth": "bearer",
+      "wire": "chat",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "list_models": "/models",
+      "key_env": "ZHIPU_API_KEY",
+      "docs": "https://open.bigmodel.cn/usercenter/apikeys",
+      "models_override": []
+    },
+    {
+      "id": "xai",
+      "name": "xAI (Grok)",
+      "category": "apikey",
+      "auth": "bearer",
+      "wire": "chat",
+      "base_url": "https://api.x.ai/v1",
+      "list_models": "/models",
+      "key_env": "XAI_API_KEY",
+      "docs": "https://console.x.ai",
+      "models_override": []
+    },
+    {
+      "id": "perplexity",
+      "name": "Perplexity",
+      "category": "apikey",
+      "auth": "bearer",
+      "wire": "chat",
+      "base_url": "https://api.perplexity.ai",
+      "list_models": null,
+      "key_env": "PERPLEXITY_API_KEY",
+      "docs": "https://www.perplexity.ai/settings/api",
+      "models_override": [
+        "sonar",
+        "sonar-pro",
+        "sonar-reasoning",
+        "sonar-reasoning-pro",
+        "sonar-deep-research"
+      ]
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama (本机)",
+      "category": "local",
+      "auth": "none",
+      "wire": "chat",
+      "base_url": "http://127.0.0.1:11434/v1",
+      "list_models": "/models",
+      "key_env": "",
+      "docs": "https://ollama.com",
+      "models_override": []
+    },
+    {
+      "id": "lmstudio",
+      "name": "LM Studio (本机)",
+      "category": "local",
+      "auth": "none",
+      "wire": "chat",
+      "base_url": "http://127.0.0.1:1234/v1",
+      "list_models": "/models",
+      "key_env": "",
+      "docs": "https://lmstudio.ai",
+      "models_override": []
+    }
+  ]
+}
