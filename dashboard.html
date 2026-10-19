@@ -1280,7 +1280,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
   };
 
   // 3. Tab 初始化（与下方主脚本的 MAIN_TABS 保持一致）
-  var TABS = ['gateway','accounts','tasks','analytics','agents','tokensaver','settings','logs'];
+  var TABS = ['gateway','accounts','tasks','analytics','agents','settings','logs'];
   var pick = null;
   try {
     var q = new URLSearchParams(location.search).get('tab');
@@ -3622,9 +3622,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       <button class="main-nav-btn" id="btnNavAgents" onclick="switchMainTab('agents')">
         智能体配置
       </button>
-      <button class="main-nav-btn" id="btnNavTokensaver" onclick="switchMainTab('tokensaver')">
-        省 Token
-      </button>
       <button class="main-nav-btn" id="btnNavSettings" onclick="switchMainTab('settings')">
         设置
       </button>
@@ -5019,102 +5016,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
         </tbody>
       </table>
       <div style="font-size:12px;color:var(--dim);margin-top:10px">鉴权 Key 请前往「设置 → API Key 与出口绑定」页复制，填入客户端的 API Key / Token 字段。</div>
-    </section>
-  </div>
-
-  <div id="pageTokensaver" class="main-page">
-    <div style="margin-bottom:16px">
-      <h2 style="margin:0;font-size:17px;color:var(--fg);font-family:var(--serif);font-weight:600;letter-spacing:.02em">省 Token</h2>
-      <div style="font-size:12px;color:var(--dim);margin-top:4px">
-        在请求发出前把历史里的工具输出改短、按需注入精简指令，并对少数「不需要上游」的请求直接在网关内作答。
-        所有改动**只会让请求更短**：压缩结果永不大于原文，出错一律原样放行（失败开放），统计落在 usage/tokensaver.jsonl。
-      </div>
-    </div>
-
-    <section>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-        <div>
-          <h2 style="margin:0">总开关与工具输出压缩 <em id="tsEnabledState"></em></h2>
-          <div style="font-size:12px;color:var(--dim);margin-top:4px">
-            关闭「压缩工具输出」后只剩纯转发。压缩只作用在历史里的工具结果（tool_result / role:"tool" / function_call_output）：
-            裁掉 git diff 的多余上下文、折叠连续重复行与构建进度噪音、掐掉超长转储的中间段；**报错的工具结果（traceback / fatal / panic）永不触碰**。
-          </div>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px">
-            <input id="tsEnabled" type="checkbox" style="width:16px;height:16px"> 启用省 Token
-          </label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px">
-            <input id="tsRtk" type="checkbox" style="width:16px;height:16px"> 压缩工具输出
-          </label>
-          <button onclick="saveTokensaver(this)">保存</button>
-        </div>
-      </div>
-    </section>
-
-    <section>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-        <div>
-          <h2 style="margin:0">提示词瘦身 <em id="tsPromptState"></em></h2>
-          <div style="font-size:12px;color:var(--dim);margin-top:4px">
-            以一条 system 指令要求模型「少说废话」或「只给最小可用实现」。它改变的是回答风格，不是事实本身；默认关闭。
-            注入是幂等的，切回「关闭」即整体撤销。
-          </div>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-          <div>
-            <div style="font-size:12px;color:var(--dim);margin-bottom:4px">风格族</div>
-            <select id="tsFamily" onchange="renderTokensaverLevels(this.value)"
-                    style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;color:var(--fg);font:inherit;min-width:220px"></select>
-          </div>
-          <div>
-            <div style="font-size:12px;color:var(--dim);margin-bottom:4px">档位</div>
-            <select id="tsLevel"
-                    style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;color:var(--fg);font:inherit;min-width:160px"></select>
-          </div>
-          <button onclick="saveTokensaver(this)">保存</button>
-        </div>
-      </div>
-    </section>
-
-    <section>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-        <div>
-          <h2 style="margin:0">本地应答 <em id="tsLocalState"></em></h2>
-          <div style="font-size:12px;color:var(--dim);margin-top:4px">
-            这几类请求的内容是固定套路（额度探测、命令前缀、会话标题、补全建议、路径抽取），网关可以在进程内直接答掉，完全不占用上游额度、不占账号并发。
-            **默认全关**：判断依据是启发式规则，只对特定客户端（如 Claude Code）的探测有意义，对通用客户端的正常提问可能误答，所以按需打开。
-          </div>
-        </div>
-        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px"><input id="tsLocalQuota" type="checkbox" style="width:16px;height:16px"> 额度探测</label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px"><input id="tsLocalShell" type="checkbox" style="width:16px;height:16px"> 命令前缀</label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px"><input id="tsLocalTitle" type="checkbox" style="width:16px;height:16px"> 会话标题</label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px"><input id="tsLocalSuggest" type="checkbox" style="width:16px;height:16px"> 补全建议</label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px"><input id="tsLocalPaths" type="checkbox" style="width:16px;height:16px"> 路径抽取</label>
-          <button onclick="saveTokensaver(this)">保存</button>
-        </div>
-      </div>
-    </section>
-
-    <section>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-        <div>
-          <h2 style="margin:0">节省统计 <em id="tsStatsState"></em></h2>
-          <div style="font-size:12px;color:var(--dim);margin-top:4px">来自 usage/tokensaver.jsonl 的累计值（保留最近约 4MB）。</div>
-        </div>
-        <button class="sec mini" onclick="loadTokensaver()" title="重新读取统计">刷新</button>
-      </div>
-      <div id="tsStatsGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px"></div>
-      <table style="margin-top:14px">
-        <thead><tr><th>日期</th><th>压缩次数</th><th>节省字节</th><th>本地应答</th></tr></thead>
-        <tbody id="tsStatsDays"><tr><td colspan="4" style="color:var(--dim)">暂无数据</td></tr></tbody>
-      </table>
-      <div style="font-size:12px;color:var(--dim);margin-top:14px">按模型</div>
-      <table style="margin-top:6px">
-        <thead><tr><th>模型</th><th>压缩次数</th><th>节省字节</th></tr></thead>
-        <tbody id="tsStatsModels"><tr><td colspan="3" style="color:var(--dim)">暂无数据</td></tr></tbody>
-      </table>
     </section>
   </div>
 
@@ -10632,7 +10533,7 @@ function generatePageList(current, total){
 
 // Tab ids in nav order. One list so the restore path and the nav cannot
 // drift apart.
-const MAIN_TABS = ['gateway', 'accounts', 'tasks', 'analytics', 'agents', 'tokensaver', 'settings', 'logs'];
+const MAIN_TABS = ['gateway', 'accounts', 'tasks', 'analytics', 'agents', 'settings', 'logs'];
 const MAIN_TAB_STORE = 'wb-proxy-main-tab';
 let currentMainTab = 'gateway';
 let analyticsRange = 'today';
@@ -13247,7 +13148,6 @@ function switchMainTab(tab){
   const btnLogs = document.getElementById('btnNavLogs');
   const btnSettings = document.getElementById('btnNavSettings');
   const btnAgents = document.getElementById('btnNavAgents');
-  const btnTokensaver = document.getElementById('btnNavTokensaver');
   const pageGateway = document.getElementById('pageGateway');
   const pageTasks = document.getElementById('pageTasks');
   const pageAccounts = document.getElementById('pageAccounts');
@@ -13255,7 +13155,6 @@ function switchMainTab(tab){
   const pageLogs = document.getElementById('pageLogs');
   const pageSettings = document.getElementById('pageSettings');
   const pageAgents = document.getElementById('pageAgents');
-  const pageTokensaver = document.getElementById('pageTokensaver');
   const tabs = [
     ['gateway', btnGateway, pageGateway],
     ['accounts', btnAccounts, pageAccounts],
@@ -13263,8 +13162,7 @@ function switchMainTab(tab){
     ['analytics', btnAnalytics, pageAnalytics],
     ['logs', btnLogs, pageLogs],
     ['settings', btnSettings, pageSettings],
-    ['agents', btnAgents, pageAgents],
-    ['tokensaver', btnTokensaver, pageTokensaver]
+    ['agents', btnAgents, pageAgents]
   ];
   tabs.forEach(([name, btn, page]) => {
     if(!btn || !page) return;
@@ -13283,7 +13181,6 @@ function switchMainTab(tab){
   if(tab === 'analytics'){ loadAnalytics(); loadAnalyticsMatrix(); }
   if(tab === 'settings'){ loadSettings(); loadProxySlots(); }
   if(tab === 'agents'){ loadAgents(); }
-  if(tab === 'tokensaver'){ loadTokensaver(); }
   if(tab === 'logs'){
     startLogPolling();
     fetchNewLogs(true);
@@ -13291,202 +13188,6 @@ function switchMainTab(tab){
     stopLogPolling();
   }
   restorePageNavHash();
-}
-
-/* ---- 省 Token（wb_tokensaver）面板 ----
- * 设置与统计都从 GET /tokensaver 一次读回（响应里带 settings），保存走
- * POST /tokensaver/config。风格族决定档位清单，所以切换风格时要重建档位下拉。 */
-const TOKENSAVER_FAMILIES = {
-  off:      {label:'关闭', levels:['off']},
-  caveman:  {label:'电报体（话少、不寒暄）', levels:['off','lite','full','ultra','wenyan-lite','wenyan','wenyan-ultra']},
-  ponytail: {label:'YAGNI 最小实现（能跑就好）', levels:['off','lite','full','ultra']}
-};
-const TOKENSAVER_LEVEL_LABELS = {
-  off:'关闭', lite:'轻', full:'标准', ultra:'极简',
-  'wenyan-lite':'文言·轻', wenyan:'文言', 'wenyan-ultra':'文言·极简'
-};
-const TOKENSAVER_LOCAL_LABELS = {
-  quota:'额度探测', shell:'命令前缀', title:'会话标题', suggest:'补全建议', paths:'路径抽取'
-};
-
-function tsFmtBytes(n){
-  n = Number(n) || 0;
-  if(n < 1024) return n + ' B';
-  if(n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
-  return (n / 1024 / 1024).toFixed(2) + ' MB';
-}
-
-function tsEsc(s){
-  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
-    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
-  });
-}
-
-function renderTokensaverFamilyOptions(family){
-  const sel = document.getElementById('tsFamily');
-  if(!sel) return;
-  sel.textContent = '';
-  Object.keys(TOKENSAVER_FAMILIES).forEach(function(key){
-    const opt = document.createElement('option');
-    opt.value = key;
-    opt.textContent = TOKENSAVER_FAMILIES[key].label;
-    sel.appendChild(opt);
-  });
-  sel.value = TOKENSAVER_FAMILIES[family] ? family : 'off';
-}
-
-function renderTokensaverLevels(family, level){
-  const sel = document.getElementById('tsLevel');
-  if(!sel) return;
-  const fam = TOKENSAVER_FAMILIES[family] || TOKENSAVER_FAMILIES.off;
-  sel.textContent = '';
-  fam.levels.forEach(function(key){
-    const opt = document.createElement('option');
-    opt.value = key;
-    opt.textContent = TOKENSAVER_LEVEL_LABELS[key] || key;
-    sel.appendChild(opt);
-  });
-  sel.value = fam.levels.indexOf(level) !== -1 ? level : 'off';
-  sel.disabled = (family === 'off');
-}
-
-function renderTokensaverSettings(s){
-  s = s || {};
-  const enabled = s.enabled !== false;
-  const rtk = s.rtk !== false;
-  const setChecked = function(id, val){
-    const el = document.getElementById(id);
-    if(el) el.checked = !!val;
-  };
-  setChecked('tsEnabled', enabled);
-  setChecked('tsRtk', rtk);
-  renderTokensaverFamilyOptions(s.prompt_family || 'off');
-  renderTokensaverLevels(s.prompt_family || 'off', s.prompt_level || 'off');
-  const local = s.local || {};
-  Object.keys(TOKENSAVER_LOCAL_LABELS).forEach(function(kind){
-    setChecked('tsLocal' + kind.charAt(0).toUpperCase() + kind.slice(1), local[kind]);
-  });
-
-  const enabledState = document.getElementById('tsEnabledState');
-  if(enabledState){
-    enabledState.textContent = enabled ? '(已启用)' : '(未启用)';
-    enabledState.style.color = enabled ? 'var(--accent2)' : 'var(--dim)';
-  }
-  const promptState = document.getElementById('tsPromptState');
-  if(promptState){
-    const family = s.prompt_family || 'off';
-    const level = s.prompt_level || 'off';
-    if(family === 'off' || level === 'off'){
-      promptState.textContent = '(已关闭)';
-      promptState.style.color = 'var(--dim)';
-    } else {
-      promptState.textContent = '(' + (TOKENSAVER_FAMILIES[family] ? TOKENSAVER_FAMILIES[family].label : family)
-        + ' / ' + (TOKENSAVER_LEVEL_LABELS[level] || level) + ')';
-      promptState.style.color = 'var(--accent2)';
-    }
-  }
-  const localState = document.getElementById('tsLocalState');
-  if(localState){
-    const on = Object.keys(TOKENSAVER_LOCAL_LABELS).filter(function(k){ return local[k]; });
-    localState.textContent = on.length ? '(' + on.length + '/5 开启)' : '(全关)';
-    localState.style.color = on.length ? 'var(--accent2)' : 'var(--dim)';
-  }
-}
-
-function renderTokensaverStats(data){
-  const totals = (data && data.totals) || {};
-  const grid = document.getElementById('tsStatsGrid');
-  if(grid){
-    const cards = [
-      ['压缩次数', String(totals.calls || 0)],
-      ['节省字节', tsFmtBytes(totals.saved || 0)],
-      ['节省率', ((Number(totals.ratio) || 0) * 100).toFixed(1) + '%'],
-      ['本地应答', String(totals.local || 0)],
-      ['压缩前', tsFmtBytes(totals.before || 0)],
-      ['压缩后', tsFmtBytes(totals.after || 0)]
-    ];
-    grid.textContent = '';
-    cards.forEach(function(pair){
-      const box = document.createElement('div');
-      box.style.cssText = 'background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px';
-      const label = document.createElement('div');
-      label.style.cssText = 'font-size:12px;color:var(--dim)';
-      label.textContent = pair[0];
-      const value = document.createElement('div');
-      value.style.cssText = 'font-size:20px;font-weight:600;margin-top:4px;font-family:var(--mono,monospace)';
-      value.textContent = pair[1];
-      box.appendChild(label);
-      box.appendChild(value);
-      grid.appendChild(box);
-    });
-  }
-  const daysBody = document.getElementById('tsStatsDays');
-  if(daysBody){
-    const days = (data && data.days) || [];
-    if(!days.length){
-      daysBody.innerHTML = '<tr><td colspan="4" style="color:var(--dim)">暂无数据</td></tr>';
-    } else {
-      daysBody.innerHTML = days.map(function(d){
-        return '<tr><td class="mono">' + tsEsc(d.day) + '</td><td>' + (d.calls || 0)
-          + '</td><td>' + tsFmtBytes(d.saved || 0) + '</td><td>' + (d.local || 0) + '</td></tr>';
-      }).join('');
-    }
-  }
-  const modelsBody = document.getElementById('tsStatsModels');
-  if(modelsBody){
-    const models = (data && data.models) || [];
-    if(!models.length){
-      modelsBody.innerHTML = '<tr><td colspan="3" style="color:var(--dim)">暂无数据</td></tr>';
-    } else {
-      modelsBody.innerHTML = models.map(function(m){
-        return '<tr><td class="mono">' + tsEsc(m.model || '(未知)') + '</td><td>' + (m.calls || 0)
-          + '</td><td>' + tsFmtBytes(m.saved || 0) + '</td></tr>';
-      }).join('');
-    }
-  }
-  const state = document.getElementById('tsStatsState');
-  if(state){
-    state.textContent = totals.calls ? '(累计节省 ' + tsFmtBytes(totals.saved || 0) + ')' : '(暂无)';
-    state.style.color = totals.calls ? 'var(--accent2)' : 'var(--dim)';
-  }
-}
-
-async function loadTokensaver(){
-  let data;
-  try {
-    data = await getJSON('/tokensaver');
-  } catch(e){
-    toast('读取省 Token 统计失败: ' + e.message, 'bad');
-    return;
-  }
-  renderTokensaverSettings(data.settings || {});
-  renderTokensaverStats(data);
-}
-
-async function saveTokensaver(btn){
-  const payload = {
-    enabled: !!document.getElementById('tsEnabled').checked,
-    rtk: !!document.getElementById('tsRtk').checked,
-    prompt_family: document.getElementById('tsFamily').value,
-    prompt_level: document.getElementById('tsLevel').value,
-    local: {
-      quota: !!document.getElementById('tsLocalQuota').checked,
-      shell: !!document.getElementById('tsLocalShell').checked,
-      title: !!document.getElementById('tsLocalTitle').checked,
-      suggest: !!document.getElementById('tsLocalSuggest').checked,
-      paths: !!document.getElementById('tsLocalPaths').checked
-    }
-  };
-  if(btn) btn.disabled = true;
-  try {
-    const res = await postJSON('/tokensaver/config', payload);
-    renderTokensaverSettings(res.settings || payload);
-    toast('省 Token 设置已保存', 'ok');
-  } catch(e){
-    toast('保存失败: ' + e.message, 'bad');
-  } finally {
-    if(btn) btn.disabled = false;
-  }
 }
 
 /* ---- 智能体一键配置模块 ----

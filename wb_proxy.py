@@ -80,7 +80,6 @@ import wb_trae
 import wb_trae_chat
 import wb_probes
 import wb_updates
-import wb_tokensaver
 IS_WINDOWS = os.name == "nt"
 
 # ---- 一键配置客户端（wb_agents）的可用性判定（issue #246）----
@@ -10370,58 +10369,6 @@ def _usage_cache_maybe_save(kind, offset):
         log("usage aggregate cache write failed: %s" % exc)
 
 
-# ---------------------------------------------------------------------------
-# 省 Token（wb_tokensaver）：配置缓存 + 请求侧接线
-# ---------------------------------------------------------------------------
-# 配置每次请求都要读，但 settings.json 是磁盘文件；加一层 2 秒 TTL 的缓存，让
-# 面板刚改的开关最迟 2 秒生效，同时不给热路径叠一次 open+json 解析。
-_TS_CFG = {"at": 0.0, "value": None}
-_TS_CFG_TTL = 2.0
-
-
-def tokensaver_config_cached():
-    now = time.time()
-    cached = _TS_CFG.get("value")
-    if cached is not None and now - float(_TS_CFG.get("at") or 0.0) < _TS_CFG_TTL:
-        return cached
-    value = wb_settings.tokensaver_config(ACCOUNTS_DIR)
-    _TS_CFG["at"] = now
-    _TS_CFG["value"] = value
-    return value
-
-
-def invalidate_tokensaver_config():
-    _TS_CFG["value"] = None
-
-
-def tokensaver_settings_view():
-    """面板要显示的省 Token 设置（读盘一次）。"""
-    family, level = wb_settings.tokensaver_prompt(ACCOUNTS_DIR)
-    return {
-        "enabled": wb_settings.tokensaver_enabled(ACCOUNTS_DIR),
-        "rtk": wb_settings.tokensaver_rtk(ACCOUNTS_DIR),
-        "prompt_family": family,
-        "prompt_level": level,
-        "local": wb_settings.tokensaver_local(ACCOUNTS_DIR),
-    }
-
-
-def local_chat_object(model, text):
-    """一条本地作答的 Chat Completions 对象（供三种协议各自的回程转换复用）。"""
-    return {
-        "id": "chatcmpl-local",
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "message": {"role": "assistant", "content": text},
-            "finish_reason": "stop",
-        }],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-    }
-
-
 def runtime_settings_view():
     """Current panel-visible settings (never returns the password or the key)."""
     key = API_KEY or ""
@@ -10499,7 +10446,6 @@ def runtime_settings_view():
         "accounts_dir": ACCOUNTS_DIR,
         "usage_dir": USAGE_DIR,
         "settings_file": wb_settings.settings_path(ACCOUNTS_DIR),
-        "tokensaver": tokensaver_settings_view(),
         "version": "1.7.5",
     }
 def current_account():
@@ -17676,8 +17622,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._get_settings()
         if path == "/updates":
             return self._get_updates()
-        if path == "/tokensaver":
-            return self._get_tokensaver()
         if path == "/proxy/slots":
             if not self._panel_ok():
                 return self._error(
@@ -18109,14 +18053,6 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorized():
             return
         return self._json(200, runtime_settings_view())
-
-    def _get_tokensaver(self):
-        """省 Token 统计（只读本机 usage/tokensaver.jsonl，不发任何上游请求）。"""
-        if not self._authorized():
-            return
-        summary = wb_tokensaver.stats_summary(USAGE_DIR)
-        summary["settings"] = tokensaver_settings_view()
-        return self._json(200, summary)
 
     def _get_updates(self):
         """What the running build is, and whether a newer stable release exists.
@@ -19505,22 +19441,6 @@ class Handler(BaseHTTPRequestHandler):
             "accounts_count": len(targets)
         })
 
-    def _route_tokensaver_config(self, payload):
-        """省 Token 配置写入。只认白名单键，返回写入后的完整设置。"""
-        payload = payload if isinstance(payload, dict) else {}
-        if "enabled" in payload:
-            wb_settings.set_tokensaver_enabled(ACCOUNTS_DIR, payload.get("enabled"))
-        if "rtk" in payload:
-            wb_settings.set_tokensaver_rtk(ACCOUNTS_DIR, payload.get("rtk"))
-        if "prompt_family" in payload or "prompt_level" in payload:
-            wb_settings.set_tokensaver_prompt(
-                ACCOUNTS_DIR, payload.get("prompt_family"),
-                payload.get("prompt_level"))
-        if "local" in payload:
-            wb_settings.set_tokensaver_local(ACCOUNTS_DIR, payload.get("local"))
-        invalidate_tokensaver_config()
-        return self._json(200, {"ok": True, "settings": tokensaver_settings_view()})
-
     def _route_update_check(self):
         """Run one release check now, on the operator's explicit request.
 
@@ -20743,11 +20663,6 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_messages(self, payload, provider=None):
         """Serve an Anthropic Messages request through the chat pipeline."""
-        # 省 Token（Anthropic 形状）：同 _dispatch_chat_post，压缩工具结果 +
-        # 本地应答；命中就地按 Anthropic 信封作答。
-        payload = self._ts_prepare(payload, "anthropic")
-        if self._ts_local_reply(payload, "anthropic"):
-            return
         provider = wb_accounts.provider_filter(provider) \
             or wb_accounts.DEFAULT_PROVIDER
         qoder = provider == "qoder"
@@ -20917,14 +20832,6 @@ class Handler(BaseHTTPRequestHandler):
             if not self._panel_ok():
                 return self._error(401, "panel password required", "invalid_request_error")
             return self._handle_settings_save()
-        if path == "/tokensaver/config":
-            # Panel-only management write (省 Token 的开关都落 settings.json）。
-            if not self._panel_ok():
-                return self._error(401, "panel password required", "invalid_request_error")
-            payload = self._payload_or_error()
-            if payload is None:
-                return
-            return self._route_tokensaver_config(payload)
         if path == "/updates/check":
             # Panel-only management write, like the pricing ones. No body to
             # read: the action takes no parameters, so a button that posts
@@ -21039,93 +20946,7 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             _chat_slots.release()
 
-    # ---- 省 Token（wb_tokensaver）请求侧 ----
-    def _ts_prepare(self, payload, protocol):
-        """压缩历史工具输出 + 可选提示词瘦身；任何异常都原样放行。"""
-        if not isinstance(payload, dict):
-            return payload
-        try:
-            cfg = tokensaver_config_cached()
-            payload, stats = wb_tokensaver.compress_payload(payload, protocol, cfg)
-            wb_tokensaver.record_stats(USAGE_DIR, stats)
-            payload, _changed = wb_tokensaver.apply_prompt(payload, protocol, cfg)
-        except Exception:
-            pass
-        return payload
-
-    def _ts_local_reply(self, payload, protocol):
-        """命中本地应答就写响应并返回 True；否则 False（继续走上游）。"""
-        if not isinstance(payload, dict):
-            return False
-        try:
-            cfg = tokensaver_config_cached()
-            hit = wb_tokensaver.local_answer(payload, protocol, cfg)
-        except Exception:
-            return False
-        if not hit:
-            return False
-        kind, text = hit
-        model = str(payload.get("model") or "unknown")
-        try:
-            wb_tokensaver.record_stats(
-                USAGE_DIR, wb_tokensaver.local_stats(model, protocol, kind))
-        except Exception:
-            pass
-        try:
-            if protocol == "anthropic":
-                self._ts_write_anthropic(payload, model, text)
-            else:
-                self._ts_write_chat(payload, model, text)
-        except Exception as exc:
-            log("tokensaver: local reply failed: %s" % exc)
-        return True
-
-    @staticmethod
-    def _ts_sse_headers(handler):
-        handler.send_response(200)
-        handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        handler.send_header("Cache-Control", "no-cache")
-        handler.send_header("Connection", "close")
-        if cors_origin_allowed(handler.path):
-            handler.send_header("Access-Control-Allow-Origin", "*")
-        handler.end_headers()
-
-    def _ts_write_chat(self, payload, model, text):
-        if not payload.get("stream"):
-            return self._json(200, local_chat_object(model, text))
-        self._ts_sse_headers(self)
-        try:
-            self.wfile.write(
-                ("data: %s\n\n" % chat_text_chunk(model, text)).encode("utf-8"))
-            self.wfile.write(
-                ("data: %s\n\n" % chat_finish_chunk(model, "stop")).encode("utf-8"))
-            self.wfile.write(b"data: [DONE]\n\n")
-            self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-            pass
-        return
-
-    def _ts_write_anthropic(self, payload, model, text):
-        if not payload.get("stream"):
-            return self._json(200, chat_to_messages(local_chat_object(model, text)))
-        self._ts_sse_headers(self)
-        holder = {"usage": None}
-        try:
-            for frame in stream_messages_events(
-                    wb_tokensaver.LocalUpstreamAdapter(text, model), model, holder):
-                self.wfile.write(frame)
-            self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-            pass
-        return
-
     def _dispatch_chat_post(self, path, payload):
-        # 省 Token（请求侧）：压缩历史工具输出 + 可选提示词瘦身；命中本地应答
-        # 就直接在进程内答掉、完全不碰上游。放最前面，三条上游与全部渠道统一受益。
-        protocol = "responses" if path in ("/v1/responses", "/responses") else "chat"
-        payload = self._ts_prepare(payload, protocol)
-        if self._ts_local_reply(payload, protocol):
-            return
         provider = self._chat_provider(payload)
         # 先挡背景请求：Codex 自己发的（记忆整理／环境建议／自动复核）
         # 不算「使用者实际使用」，一律本地拒绝，不碰上游。
