@@ -29,16 +29,16 @@ import urllib.request
 
 import wb_settings
 
-# 官方仓库的 releases 接口——主路径。走 API 不抓 HTML：页面结构变了不该让检查失效。
-RELEASES_URL = "https://api.github.com/repos/ardeyouxipianyi/workbuddy2api-hub/releases"
+# 项目仓库的 releases 接口——主路径。走 API 不抓 HTML：页面结构变了不该让检查失效。
+RELEASES_URL = "https://api.github.com/repos/cty1735/wb-proxy/releases"
 # 回退路径：网页端点的 302 Location 末尾就是最新稳定版 tag。它按网页计流量，
 # 不受 API 那 60 次/小时/出口 IP 的匿名配额限制，也不需要凭据。
-LATEST_RELEASE_URL = "https://github.com/ardeyouxipianyi/workbuddy2api-hub/releases/latest"
+LATEST_RELEASE_URL = "https://github.com/cty1735/wb-proxy/releases/latest"
 TAG_RE = re.compile(r"/releases/tag/([^/?#]+)")
 # 可选凭据：认证请求的配额是 5000 次/小时。只从环境变量读，绝不落盘
 # （模块头第 3 条）。
 TOKEN_ENV = "GITHUB_TOKEN"
-USER_AGENT = "wb2api-hub-update-check"
+USER_AGENT = "wb-proxy-update-check"
 REQUEST_TIMEOUT = 5
 # 一份 releases 文档几十 KB；给足余量但设上限，坏响应不能把内存拉满。
 MAX_BODY = 2 * 1024 * 1024

@@ -1,5 +1,7 @@
 # wb-proxy — 基于 workbuddy2api-hub 的增量增强版
 
+> **本项目仓库**：**[cty1735/wb-proxy](https://github.com/cty1735/wb-proxy)**
+
 > 本项目以 **[ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub)** 的 **v1.7.5** 为基座：**完整保留其全部原始能力与实现细节**（见下方「原始项目介绍」与后续技术章节），并在此基础上持续叠加改进与修复。
 >
 > 相对上游基座多做了什么，见下方「增量功能」。
@@ -37,7 +39,7 @@
 ### WorkBuddy2API-Hub — 国际版、国内版多账号网关中枢
 
 <p align="center">
-  <a href="https://github.com/ardeyouxipianyi/workbuddy2api-hub/releases"><img src="https://img.shields.io/badge/Release-v1.7.5-2496ED?style=flat-square" alt="Version 1.6.20"></a>
+  <a href="https://github.com/cty1735/wb-proxy/releases"><img src="https://img.shields.io/badge/Release-v1.7.5-2496ED?style=flat-square" alt="Version 1.6.20"></a>
   <img src="https://img.shields.io/badge/Python-3.9+-blue.svg?style=flat-square" alt="Python">
   <img src="https://img.shields.io/badge/API-OpenAI_Compatible-412991?style=flat-square" alt="OpenAI API">
   <img src="https://img.shields.io/badge/Dual_Realm-Intl_&_CN-0DBD8B?style=flat-square" alt="Dual Realm">
@@ -106,11 +108,11 @@
 **方式一：一键脚本（推荐）**
 
 ```bash
-# 官方源（可直连 GitHub 环境）：
-curl -fsSL https://raw.githubusercontent.com/ardeyouxipianyi/workbuddy2api-hub/main/quick-deploy.sh | bash
+# GitHub 源（可直连 GitHub 环境）：
+curl -fsSL https://raw.githubusercontent.com/cty1735/wb-proxy/main/quick-deploy.sh | bash
 
 # 国内网络 / NAS 加速（Connection reset 时用）：
-curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/ardeyouxipianyi/workbuddy2api-hub/main/quick-deploy.sh | sudo bash
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/cty1735/wb-proxy/main/quick-deploy.sh | sudo bash
 ```
 
 NAS（如飞牛 fnOS）普通用户没有 Docker 权限时，把结尾的 `bash` 换成 `sudo bash`。再次运行同一条命令即平滑升级，账号与用量数据不受影响。
@@ -122,7 +124,7 @@ NAS（如飞牛 fnOS）普通用户没有 Docker 权限时，把结尾的 `bash`
 ```yaml
 services:
   wb-proxy:
-    image: ghcr.io/ardeyouxipianyi/workbuddy2api-hub:latest   # 或 ardeyouxipianyi/workbuddy2api-hub:latest
+    image: ghcr.io/cty1735/wb-proxy:latest   # 或 cty1735/wb-proxy:latest
     container_name: wb-proxy
     restart: unless-stopped
     ports:
@@ -154,10 +156,10 @@ docker run -d --name wb-proxy-watchtower --restart unless-stopped \
   ```bash
   docker run -d --name wb-proxy --restart unless-stopped -p 8788:8788 \
     -v $(pwd)/accounts:/app/accounts -v $(pwd)/usage:/app/usage \
-    ghcr.io/ardeyouxipianyi/workbuddy2api-hub:latest
+    ghcr.io/cty1735/wb-proxy:latest
   ```
 - **鉴权**：容器以 `--lan` 启动，无显式 `API_KEY` 时自动生成 Key 写入 `./accounts/settings.json` 并打印在日志里：`docker compose logs wb-proxy | grep -i "api key"`；
-- **镜像名要带 registry**：写成 `ardeyouxipianyi/workbuddy2api-hub` 会去 Docker Hub 找并报 `pull access denied`，正确写法是 `ghcr.io/ardeyouxipianyi/workbuddy2api-hub:latest`（GHCR 公开包，拉取无需登录）；
+- **镜像名要带 registry**：写成 `cty1735/wb-proxy` 会去 Docker Hub 找并报 `pull access denied`，正确写法是 `ghcr.io/cty1735/wb-proxy:latest`（GHCR 公开包，拉取无需登录）；
 - **目录权限**：默认以 root（`0:0`）运行；想以宿主用户跑就设 `PUID` / `PGID`（或 `--user $(id -u):$(id -g)`），并确保两个挂载目录对该 uid 可写；
 - **健康检查**：镜像自带 `HEALTHCHECK`（每 30s 探一次 `/health`），`docker ps` 的 STATUS 列会显示 healthy / unhealthy；
 - **源码构建**：`docker compose -f docker-compose.build.yml up -d --build`。
