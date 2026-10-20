@@ -28,7 +28,12 @@
   /* 页面左右留白：header 与 main 共用同一个值，窄屏收窄、宽屏封顶 28px，
      免得主区域两侧堆出一大片用不上的空白。 */
   --page-pad:clamp(14px,1.4vw,28px);
-  --serif:ui-serif, Georgia, "Source Han Serif SC", "Noto Serif SC", "Songti SC", serif;
+  /* 字体只留两套：正文 = --sans（body 用的就是这一份），代码/标识 = --mono。
+     之前标题单独走 --serif（中文被浏览器回退成宋体），mono 容器里的中文又掉回
+     宋体，于是同一页里混着三种字形。现在取消 --serif，--mono 的中文回退到
+     正文用的同一款中文字体（PingFang SC / Microsoft YaHei），不再是宋体。 */
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue","PingFang SC","Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Sarasa Mono SC","Noto Sans Mono CJK SC","PingFang SC","Microsoft YaHei",monospace;
   --radius-card:12px; --radius-control:8px; --radius-pill:12px;
   color-scheme:light;
 }
@@ -56,8 +61,11 @@
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);
-  font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue","PingFang SC","Microsoft YaHei",sans-serif;
+  font-family:var(--sans);font-size:14px;line-height:1.5;
   -webkit-font-smoothing:antialiased;transition:background-color .25s ease,color .25s ease}
+/* 表单控件默认吃浏览器自带的字体，跨平台不一定是正文那套：统一到 --sans。
+   .mono 的类选择器权重更高，代码类输入框仍走等宽。 */
+input,select,textarea{font-family:var(--sans)}
 .card,section.panel,#pageAnalytics .panel,#pageAnalytics .kpi,.modal{border-radius:var(--radius-card)}
 button,.btn,input,select,textarea,.chip,.range-btn,.badge,.tag{border-radius:var(--radius-control)}
 .pill,.chip.on,.theme-opt-check,.mini{border-radius:var(--radius-pill)}
@@ -167,7 +175,7 @@ th.sortable:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .sort-arrow.idle{color:var(--dim);opacity:0}
 th.sortable:hover .sort-arrow.idle,
 th.sortable:focus-visible .sort-arrow.idle{opacity:1}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.mono{font-family:var(--mono);font-size:12px}
 /* 输入 / 输出 / 思考：三个数字应该在一行内读完，不拆行 */
 .triple{white-space:nowrap}
 .bar-fill{height:6px;border-radius:3px;background:var(--accent);min-width:2px;display:inline-block;vertical-align:middle}
@@ -211,7 +219,7 @@ th.sortable:focus-visible .sort-arrow.idle{opacity:1}
 .collapse{display:grid;grid-template-rows:1fr;transition:grid-template-rows .18s ease}
 .collapse.collapsed{grid-template-rows:0fr}
 .collapse>.collapse-inner{min-height:0;overflow:hidden}
-.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-family:var(--sans);
   background:var(--panel2);border:1px solid var(--line);color:var(--dim);white-space:nowrap;font-weight:600}
 .badge.ok{color:#4a7a3d;background:rgba(94,140,79,.14);border-color:rgba(94,140,79,.32)}
 .badge.s{color:#2c6392;background:rgba(106,155,204,.14);border-color:rgba(106,155,204,.35)}
@@ -452,7 +460,7 @@ a:hover{text-decoration:underline}
 }
 .realm-badge-intl{color:#2c6e9e;background:rgba(106,155,204,.14);border:1px solid rgba(106,155,204,.35);padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600}
 .realm-badge-cn{color:#237a35;background:rgba(44,176,68,.12);border:1px solid rgba(44,176,68,.32);padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600}
-.badge-effort{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;line-height:1.4;white-space:nowrap;margin:1px 2px;background:var(--think-soft);color:var(--think);border:1px solid rgba(138,106,150,.3);font-weight:600}
+.badge-effort{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;line-height:1.4;white-space:nowrap;margin:1px 2px;background:var(--think-soft);color:var(--think);border:1px solid rgba(138,106,150,.3);font-weight:600;font-family:var(--sans)}
 .realm-filter{display:inline-flex;gap:6px;margin-left:8px}
 .realm-filter button{background:var(--panel2);border:1px solid var(--line);color:var(--dim);padding:3px 9px;font-size:11px}
 .realm-filter button.active{border-color:var(--accent);color:var(--accent);background:var(--panel)}
@@ -517,7 +525,7 @@ body.provider-trae #btnFetchCredits{display:none !important}
 .egg-pool-sub{font-size:11px;color:var(--dim);margin-top:3px}
 .egg-pool-models{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
 .egg-pool-model{background:var(--panel2);border:1px solid var(--line);border-radius:6px;
-  padding:2px 7px;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  padding:2px 7px;font-size:11px;font-family:var(--mono)}
 .egg-pool-foot{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:9px;
   padding-top:8px;border-top:1px solid var(--line);font-size:11px;color:var(--dim)}
 .egg-pool-foot a{color:var(--dim);cursor:pointer;text-decoration:none}
@@ -763,7 +771,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 /* 归属表表头里的行开关，直接复用设置页的 .switch 胶囊样式，只是表头比
    设置页紧凑，把 40px 的最小高度收掉。 */
 .key-row-switch{min-height:0}
-.log-line{display:flex;align-items:flex-start;gap:8px;padding:3px 6px;border-radius:4px;font-family:Consolas,Monaco,'Courier New',monospace;font-size:12px;line-height:1.55;transition:background .1s}
+.log-line{display:flex;align-items:flex-start;gap:8px;padding:3px 6px;border-radius:4px;font-family:var(--mono);font-size:12px;line-height:1.55;transition:background .1s}
 .log-line:hover{background:rgba(255,255,255,.05)}
 .log-ts{color:var(--terminal-dim);font-variant-numeric:tabular-nums;flex-shrink:0;user-select:none}
 .log-lvl{font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;flex-shrink:0;text-align:center;min-width:46px;user-select:none}
@@ -986,8 +994,6 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
   --hm0:#f0f0f0; --hm1:#e6f7ea; --hm2:#b9e9c4; --hm3:#74d18a; --hm4:#2cb044;
   --shadow:0 1px 2px rgba(0,0,0,.04), 0 4px 14px rgba(0,0,0,.06);
   --shadow-lg:0 2px 6px rgba(0,0,0,.06), 0 12px 32px rgba(0,0,0,.12);
-  --serif:ui-serif, Georgia, "Source Han Serif SC", "Noto Serif SC", "Songti SC", serif;
-  --sans:ui-sans-serif, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 [data-theme="dark"] #pageAnalytics{
   --bg:#000000; --panel:#0e0e0e; --panel2:#1a1a1a; --panel3:#242424;
@@ -1038,7 +1044,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 #pageAnalytics .wrap{max-width:1320px;margin:0 auto;padding:14px 20px 40px}
 #pageAnalytics .pagehead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
 #pageAnalytics h1.pagetitle{
-  margin:0;font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:.01em;
+  margin:0;font-family:var(--sans);font-size:19px;font-weight:600;letter-spacing:.01em;
   display:flex;align-items:baseline;gap:10px;
 }
 #pageAnalytics .pagesub{color:var(--dim);font-size:11.5px;margin-top:0}
@@ -4859,7 +4865,7 @@ void main(){
   <div id="pageGateway" class="main-page">
   <!-- 页面头部：标题 + 一行说明，与其它页面的头部结构保持一致 -->
   <div style="margin-bottom:16px">
-    <h2 id="gatewayPageTitle" style="margin:0;font-size:17px;color:var(--fg);font-family:var(--serif);font-weight:600;letter-spacing:.02em">网关与账号</h2>
+    <h2 id="gatewayPageTitle" style="margin:0;font-size:17px;color:var(--fg);font-family:var(--sans);font-weight:600;letter-spacing:.02em">网关与账号</h2>
     <div id="gatewayPageDesc" style="font-size:12px;color:var(--dim);margin-top:4px">管理账号池与代理出口，查看当日调用量、估算花费、成功率、最近请求与网关模型清单。</div>
   </div>
   <!-- 鸡蛋专属概览：免费、免账号、免密钥。切到鸡蛋时版本卡片与出口控件整个
@@ -5083,7 +5089,7 @@ void main(){
        版本视图切换（与网关页那两张出口卡片同一份状态，见 updateUI）。 -->
   <div id="accountsHeader" style="margin-bottom:16px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
     <div>
-      <h2 style="margin:0;font-size:17px;color:var(--fg);font-family:var(--serif);font-weight:600;letter-spacing:.02em">账号</h2>
+      <h2 style="margin:0;font-size:17px;color:var(--fg);font-family:var(--sans);font-weight:600;letter-spacing:.02em">账号</h2>
       <div style="font-size:12px;color:var(--dim);margin-top:4px">管理账号池：添加/导入/导出、启用停用、凭证与积分刷新、代理出口绑定，以及签到与每日活跃记录。</div>
     </div>
     <!-- 版本视图切换：账号列表、「当前禁用」与签到记录都按当前视图区域取，所以
@@ -5207,7 +5213,7 @@ void main(){
   <div id="pageTasks" class="main-page">
   <!-- 页面头部：标题 + 一行说明，与其它页面的头部结构保持一致 -->
   <div style="margin-bottom:16px">
-    <h2 style="margin:0;font-size:17px;color:var(--fg);font-family:var(--serif);font-weight:600;letter-spacing:.02em">任务与福利</h2>
+    <h2 style="margin:0;font-size:17px;color:var(--fg);font-family:var(--sans);font-weight:600;letter-spacing:.02em">任务与福利</h2>
     <div style="font-size:12px;color:var(--dim);margin-top:4px" id="pageTasksDesc">每日活跃打卡、Buddy 加油站、成长任务与福利积分总览。</div>
   </div>
 
@@ -5406,7 +5412,7 @@ void main(){
       </table>
     </div>
 
-    <div id="taskLogBox" style="display:none;margin-top:14px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:12px;font-family:ui-monospace,monospace;line-height:1.6;max-height:220px;overflow-y:auto"></div>
+    <div id="taskLogBox" style="display:none;margin-top:14px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:12px;font-family:var(--mono);line-height:1.6;max-height:220px;overflow-y:auto"></div>
   </section>
   </div><!-- /pageTasks -->
 
@@ -5693,7 +5699,7 @@ void main(){
 
   <div id="pageSettings" class="main-page">
     <div style="margin-bottom:16px">
-      <h2 style="margin:0;font-size:17px;color:var(--fg);font-family:var(--serif);font-weight:600;letter-spacing:.02em">网关设置</h2>
+      <h2 style="margin:0;font-size:17px;color:var(--fg);font-family:var(--sans);font-weight:600;letter-spacing:.02em">网关设置</h2>
       <div style="font-size:12px;color:var(--dim);margin-top:4px">面板密码与界面语言、API Key 与出口绑定、代理槽与限额、价格估算、出站身份与本地网络工具。</div>
     </div>
 
@@ -6327,7 +6333,7 @@ void main(){
 
   <div id="pageAgents" class="main-page">
     <div style="margin-bottom:16px">
-      <h2 style="margin:0;font-size:17px;color:var(--fg);font-family:var(--serif);font-weight:600;letter-spacing:.02em">智能体配置</h2>
+      <h2 style="margin:0;font-size:17px;color:var(--fg);font-family:var(--sans);font-weight:600;letter-spacing:.02em">智能体配置</h2>
       <div style="font-size:12px;color:var(--dim);margin-top:4px">检测本机已安装的 AI 编程客户端，一键把它们的配置指向本网关；原始文件会先备份，随时可一键还原。</div>
     </div>
 
@@ -6399,7 +6405,7 @@ void main(){
   <div id="pageLogs" class="main-page">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
       <div>
-        <h2 style="margin:0;font-size:17px;color:var(--fg);font-family:var(--serif);font-weight:600;letter-spacing:.02em">网关运行日志</h2>
+        <h2 style="margin:0;font-size:17px;color:var(--fg);font-family:var(--sans);font-weight:600;letter-spacing:.02em">网关运行日志</h2>
         <div id="logPageHint" style="font-size:12px;color:var(--dim);margin-top:4px">实时捕获反向代理请求、流式转发、调度巡检、任务打卡与异常告警 (内存保留最新 2000 条)</div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -6442,9 +6448,9 @@ void main(){
           <span style="width:10px;height:10px;border-radius:50%;background:var(--terminal-error);display:inline-block"></span>
           <span style="width:10px;height:10px;border-radius:50%;background:var(--terminal-warn);display:inline-block"></span>
           <span style="width:10px;height:10px;border-radius:50%;background:var(--terminal-ok);display:inline-block"></span>
-          <span style="font-size:11px;color:var(--terminal-fg);font-family:monospace;margin-left:8px">wb-proxy-console.log</span>
+          <span style="font-size:11px;color:var(--terminal-fg);font-family:var(--mono);margin-left:8px">wb-proxy-console.log</span>
         </div>
-        <div id="logTerminalStatus" style="font-size:11px;color:var(--terminal-dim);font-family:monospace">就绪</div>
+        <div id="logTerminalStatus" style="font-size:11px;color:var(--terminal-dim);font-family:var(--mono)">就绪</div>
       </div>
       <div id="logTerminalBody" style="height:620px;overflow-y:auto;padding:10px 12px;background:var(--terminal-bg);color:var(--terminal-fg)" onscroll="handleLogTerminalScroll()">
         <div class="log-empty">正在拉取网关日志...</div>
@@ -13068,7 +13074,9 @@ async function refreshInner(gen){
         + '<td class="mono" data-label="时间">' + esc((r.iso||'').replace('T',' ').slice(5)) + '</td>'
         + '<td class="mono" data-label="模型">' + esc(r.model) + (free ? ' <span class="badge ok" style="background:var(--accent2-soft);color:var(--accent2);font-size:10px" title="限时免费模型：不消耗积分，也不计入「积分消耗」与「API 等价花费」">限时免费</span>' : '') + '</td>'
         + '<td data-label="推理强度">' + (r.reasoning_effort ? ('<span class="badge-effort">' + esc(r.reasoning_effort) + '</span>') : '<span style="color:var(--dim)">—</span>') + '</td>'
-        + '<td class="mono" style="font-size:11px;color:var(--dim)" data-label="账号" title="' + esc(r.account||'') + '">' + esc(acctName(r.account)) + '</td>'
+        // 账号列是「昵称 / 鸡蛋（免账号）」这类人读的标签，不是标识符：
+        // 走等宽的话中文会被浏览器回退成宋体，跟表格里其它文字对不上。
+        + '<td style="font-size:11px;color:var(--dim)" data-label="账号" title="' + esc(r.account||'') + '">' + esc(acctName(r.account)) + '</td>'
         + '<td class="mono" style="font-size:11px;color:var(--dim)" data-label="API Key" title="' + esc(r.key||'') + '">' + esc(r.key_name || '—') + '</td>'
         + '<td data-label="模式"><span class="badge ' + (r.stream?'s':'') + '">' + (r.stream?'流式':'非流式') + '</span></td>'
         + '<td data-label="结果">' + outcomeBadge(r) + '</td>'
@@ -14707,7 +14715,7 @@ async function loadPricingStatus(){
       const models = Object.keys(cur);
       box.innerHTML = models.length
         ? '<details><summary style="cursor:pointer">展开查看每个模型当前生效的策略</summary>'
-          + '<div style="margin-top:6px;max-height:260px;overflow:auto;font-family:monospace;line-height:1.7">'
+          + '<div style="margin-top:6px;max-height:260px;overflow:auto;font-family:var(--mono);line-height:1.7">'
           + models.map(m => esc(m) + ' → ' + esc(cur[m].id || '')
               + (cur[m].via === 'variant' ? '（继承自 ' + esc(cur[m].inherited_from || '?') + '）' : '')
               + (cur[m].label ? '　' + esc(cur[m].label) + ' 首次取到' : '')).join('<br>')
@@ -17697,7 +17705,7 @@ function renderUsageSeries(data){
   ctx.clearRect(0, 0, cssW, cssH);
   if(!series.length){
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--chart-text').trim() || '#64748b';
-    ctx.font = '12px sans-serif';
+    ctx.font = '12px ' + getComputedStyle(document.body).fontFamily;
     ctx.fillText('当前范围没有请求数据', 12, 24);
     return;
   }
@@ -17986,7 +17994,7 @@ function renderAnalytics(data){
         return '<tr>'
           + '<td style="text-align:left">'
           +   '<b>' + esc(a.nickname || a.uid) + '</b>'
-          +   '<div style="color:var(--dim);font-size:11px;font-family:monospace">' + esc((a.uid || '').slice(0, 10)) + '...</div>'
+          +   '<div style="color:var(--dim);font-size:11px;font-family:var(--mono)">' + esc((a.uid || '').slice(0, 10)) + '...</div>'
           + '</td>'
           + '<td>' + realmBadge + '</td>'
           + '<td>' + creditStr + '</td>'
@@ -18789,7 +18797,7 @@ function kpiPartsLine(parts, kind, noun){
     return `<span class="kpi-bd-chip clickable${on ? ' on' : ''}"
       data-filter-key="${key}" data-filter-value="${esc(p.name)}"
       title="按${key === 'model' ? '模型' : '账号'}筛选"
-      ><span class="cn"${tag ? '' : ' style="font-family:monospace"'} title="${esc(p.name)}">${esc(p.name)}</span>${tag}<span class="cv">${f(w(p))}</span></span>`;
+      ><span class="cn"${tag ? '' : ' style="font-family:var(--mono)"'} title="${esc(p.name)}">${esc(p.name)}</span>${tag}<span class="cv">${f(w(p))}</span></span>`;
   };
   let html = head.map(chip).join('');
   if (rest.length){
@@ -19922,7 +19930,7 @@ if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TAB
 <style>
 #tunerBox{display:none;position:fixed;top:64px;right:14px;z-index:99999;width:258px;background:var(--panel);
   border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-md);
-  font:12px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;color:var(--fg)}
+  font-family:var(--sans);font-size:12px;line-height:1.5;color:var(--fg)}
 #tunerBox.open{display:block}
 #tunerHead{display:flex;align-items:center;gap:6px;padding:7px 10px;background:var(--panel2);
   border-bottom:1px solid var(--line);border-radius:10px 10px 0 0;cursor:move;user-select:none;font-weight:600}
@@ -19933,7 +19941,7 @@ if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TAB
 .tuner-row{display:flex;align-items:center;gap:7px;padding:2.5px 0}
 .tuner-row label{width:50px;flex-shrink:0;font-size:11px;color:var(--dim)}
 .tuner-row input[type=color]{width:28px;height:20px;border:1px solid var(--line);border-radius:4px;padding:0;cursor:pointer;background:none}
-.tuner-row code{font-size:10px;color:var(--dim);width:56px;font-family:ui-monospace,Consolas,monospace}
+.tuner-row code{font-size:10px;color:var(--dim);width:56px;font-family:var(--mono)}
 .tuner-row .ratio{margin-left:auto;font-size:10px;font-weight:600;color:var(--dim);white-space:nowrap}
 .tuner-row .ratio.ok{color:var(--accent2)}
 .tuner-row .ratio.low{color:var(--warn)}
