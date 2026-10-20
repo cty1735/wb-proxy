@@ -4343,26 +4343,109 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
      （暂停/继续、频率变更、数据转陈旧、取数失败），不播报每 5 秒的例行轮询——
      表格里全量重绘的 tbody 挂 aria-live 会变成每 5 秒读一遍整张表。 -->
 <div class="sr-only" id="liveAnnounce" role="status" aria-live="polite" aria-atomic="true"></div>
-<!-- 登录闸门（#panelGate）：3D 动效背景 + 鼠标跟随。
-     层级：canvas（3D 场景，铺满）→ 暗角 → 光晕（跟鼠标）→ 卡片（跟鼠标倾斜 + 高光）。
-     动效脚本见本块之后：startGateScene / stopGateScene 由 panelNeedsLogin /
-     panelHideGate 调用，闸门一关就停表，不空烧 CPU。 -->
+<!-- 登录闸门（#panelGate）：GitHub 官网首页同款背景 + 鼠标跟随。
+     背景照抄 GitHub hero 的做法：一层底色渐变 + 几团 filter:blur 的大号
+     radial-gradient 光晕（紫 / 靛 / 蓝，mix-blend-mode:plus-lighter 叠色），
+     再加网点纹理与底部透视网格。鼠标一动，几层按不同深度错位（视差），
+     卡片也跟着做 3D 倾斜。
+     动效全部交给 CSS（动画 + transition），JS 只写鼠标坐标到 CSS 变量上。 -->
 <style>
 .gate{position:fixed;inset:0;z-index:600;display:none;align-items:center;justify-content:center;
-  padding:20px;background:var(--bg);overflow:hidden}
-.gate-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;z-index:0;pointer-events:none}
-.gate-veil{position:absolute;inset:0;z-index:1;pointer-events:none;
-  background:radial-gradient(125% 95% at 50% 40%,transparent 0%,transparent 40%,rgba(0,0,0,.32) 100%)}
-.gate-glow{position:absolute;left:0;top:0;width:560px;height:560px;margin:-280px 0 0 -280px;z-index:2;
-  pointer-events:none;border-radius:50%;opacity:.55;will-change:transform;
-  background:radial-gradient(circle,color-mix(in srgb,var(--accent) 32%,transparent) 0%,transparent 68%)}
+  padding:20px;background:var(--bg);overflow:hidden;
+  --gate-line:rgba(255,255,255,.16); --gate-dot:rgba(255,255,255,.15);
+  --gx:0; --gy:0; --rx:0deg; --ry:0deg}
+[data-theme="light"] .gate{--gate-line:rgba(31,35,40,.13); --gate-dot:rgba(31,35,40,.13)}
+
+/* 底色：页面底色往黑里压一档，顶部再蒙一层主色 */
+.gate-bg{position:absolute;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(70% 50% at 12% 104%, color-mix(in srgb,var(--accent) 16%,transparent), transparent 68%),
+    radial-gradient(120% 70% at 50% -10%, color-mix(in srgb,var(--accent) 9%,transparent), transparent 62%),
+    linear-gradient(180deg, var(--bg) 0%, color-mix(in srgb,var(--bg) 78%,#000) 100%)}
+
+/* 三团光晕：配色与层次照 GitHub hero（#9a7cff / #e6b7fe / #5049c2 / #3a37ff） */
+.gate-glows{position:absolute;inset:0;z-index:1;pointer-events:none;overflow:hidden;
+  transform:translate3d(calc(var(--gx) * -18px), calc(var(--gy) * -13px), 0);
+  transition:transform .28s cubic-bezier(.16,.84,.44,1)}
+.gate-glow{position:absolute;display:block;filter:blur(60px);mix-blend-mode:plus-lighter;opacity:.32}
+.gate-glow-a{width:78%;height:112%;right:-14%;top:-26%;
+  background:radial-gradient(141.53% 114.68% at 87.46% 55.27%, #9a7cff 36.75%, #0e0aa200 100%);
+  animation:gateFloatA 26s ease-in-out infinite alternate}
+.gate-glow-b{width:60%;padding:30% 0;left:20%;top:2%;
+  transform:translateY(-70%) rotate(-45deg);filter:blur(40px);opacity:.40;
+  background:radial-gradient(circle at 0 100%, #e6b7fe 10%, #5049c2 20%, #574eff00 60%);
+  animation:gateFloatB 32s ease-in-out infinite alternate}
+.gate-glow-c{width:60%;padding:30% 0;left:35%;top:8%;
+  transform:translateY(-70%) rotate(-45deg);filter:blur(50px);opacity:.34;
+  background:radial-gradient(circle at 0 100%, #e6b7fe 20%, #5049c2 40%, #3a37ff00 50%);
+  animation:gateFloatC 38s ease-in-out infinite alternate}
+/* 主色点睛：跟着强调色走的一团亮光，落在卡片上方 */
+.gate-glow-d{width:40%;padding:18% 0;left:30%;top:-2%;
+  transform:translateY(-70%) rotate(-45deg);filter:blur(42px);mix-blend-mode:color-dodge;opacity:.22;
+  background:radial-gradient(circle at 0 100%,
+    color-mix(in srgb,var(--accent) 70%,#ffc58b) 12%,
+    color-mix(in srgb,var(--accent) 45%,#e1a6ff) 26%,
+    #352eee00 62%);
+  animation:gateFloatD 30s ease-in-out infinite alternate}
+@keyframes gateFloatA{from{transform:translate3d(0,0,0) scale(1)}to{transform:translate3d(-4%,3%,0) scale(1.08)}}
+@keyframes gateFloatB{from{transform:translateY(-70%) rotate(-45deg) scale(1)}to{transform:translateY(-64%) rotate(-38deg) scale(1.1)}}
+@keyframes gateFloatC{from{transform:translateY(-70%) rotate(-45deg) scale(1.06)}to{transform:translateY(-78%) rotate(-52deg) scale(.96)}}
+@keyframes gateFloatD{from{transform:translateY(-70%) rotate(-45deg) scale(1)}to{transform:translateY(-78%) rotate(-40deg) scale(1.14)}}
+[data-theme="light"] .gate-glow{opacity:.20;mix-blend-mode:multiply;filter:blur(80px)}
+[data-theme="light"] .gate-glow-d{opacity:.16;mix-blend-mode:multiply}
+
+/* 网点纹理：GitHub 营销页那套细点阵，缓慢漂移 */
+.gate-dots{position:absolute;inset:-80px;z-index:1;pointer-events:none;opacity:.9;
+  background-image:radial-gradient(circle at 1px 1px, var(--gate-dot) 1px, transparent 1.6px);
+  background-size:26px 26px;
+  -webkit-mask-image:radial-gradient(68% 52% at 50% 40%, #000 0%, rgba(0,0,0,.5) 55%, transparent 82%);
+  mask-image:radial-gradient(68% 52% at 50% 40%, #000 0%, rgba(0,0,0,.5) 55%, transparent 82%);
+  animation:gateDrift 54s linear infinite}
+@keyframes gateDrift{from{transform:translate3d(0,0,0)}to{transform:translate3d(26px,26px,0)}}
+
+/* 底部透视网格：把画面撑出纵深，是这版唯一的「3D」。
+   灭点要落在上沿（地平线），所以元素从上往下铺、绕上沿转。 */
+.gate-floor{position:absolute;left:-80%;right:-80%;top:40%;height:150%;z-index:1;pointer-events:none;
+  transform:perspective(260px) rotateX(68deg)
+            translate3d(calc(var(--gx) * 12px), calc(var(--gy) * 5px), 0);
+  transform-origin:50% 0%;
+  background-image:linear-gradient(to right, var(--gate-line) 1px, transparent 1px),
+                   linear-gradient(to bottom, var(--gate-line) 1px, transparent 1px);
+  background-size:64px 64px;
+  -webkit-mask-image:linear-gradient(to top, #000 0%, rgba(0,0,0,.35) 48%, transparent 88%);
+  mask-image:linear-gradient(to top, #000 0%, rgba(0,0,0,.35) 48%, transparent 88%)}
+
+/* 卡片外围那圈缓慢自转的光环 */
+.gate-halo{position:absolute;left:50%;top:50%;z-index:1;pointer-events:none;
+  width:min(760px,94vw);aspect-ratio:1;margin:calc(min(760px,94vw) / -2) 0 0 calc(min(760px,94vw) / -2);
+  border-radius:50%;opacity:.6;filter:blur(2px);
+  background:conic-gradient(from 0deg, transparent 0deg 18deg,
+    color-mix(in srgb,var(--accent) 75%,transparent) 66deg,
+    color-mix(in srgb,var(--blue) 65%,transparent) 156deg,
+    transparent 236deg 360deg);
+  -webkit-mask-image:radial-gradient(circle, transparent 0 54%, #000 57% 67%, transparent 70%);
+  mask-image:radial-gradient(circle, transparent 0 54%, #000 57% 67%, transparent 70%);
+  animation:gateSpin 26s linear infinite}
+@keyframes gateSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+
+/* 跟鼠标走的那团光 */
+.gate-cursor{position:absolute;left:0;top:0;width:520px;height:520px;margin:-260px 0 0 -260px;z-index:2;
+  pointer-events:none;border-radius:50%;opacity:.42;will-change:transform;
+  background:radial-gradient(circle, color-mix(in srgb,var(--accent) 42%,transparent) 0%, transparent 66%)}
+
+/* 四周压暗，把视线收到中间 */
+.gate-veil{position:absolute;inset:0;z-index:2;pointer-events:none;
+  background:radial-gradient(120% 88% at 50% 42%, transparent 0%, transparent 46%, rgba(0,0,0,.34) 100%)}
+[data-theme="light"] .gate-veil{background:radial-gradient(120% 88% at 50% 42%, transparent 0%, transparent 52%, rgba(31,35,40,.16) 100%)}
+
 .gate-card-wrap{position:relative;z-index:3;width:min(380px,100%);perspective:1200px}
 .gate-card{position:relative;width:100%;border:1px solid var(--line);border-radius:14px;padding:26px 24px;
   background:var(--panel);
-  background:color-mix(in srgb,var(--panel) 90%,transparent);
-  -webkit-backdrop-filter:blur(18px) saturate(1.35);backdrop-filter:blur(18px) saturate(1.35);
+  background:color-mix(in srgb,var(--panel) 82%,transparent);
+  -webkit-backdrop-filter:blur(20px) saturate(1.4);backdrop-filter:blur(20px) saturate(1.4);
   box-shadow:0 18px 46px rgba(15,23,42,.16),0 2px 8px rgba(15,23,42,.08);
-  will-change:transform;transition:box-shadow .25s ease}
+  transform:perspective(1200px) rotateX(var(--rx)) rotateY(var(--ry));
+  transition:transform .2s cubic-bezier(.16,.84,.44,1),box-shadow .25s ease}
 [data-theme="dark"] .gate-card{border-color:rgba(255,255,255,.10);
   box-shadow:0 26px 64px rgba(0,0,0,.62),0 2px 10px rgba(0,0,0,.45)}
 /* 卡片上那圈跟着鼠标走的高光 */
@@ -4384,13 +4467,23 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
 }
 @media (prefers-reduced-motion: reduce){
   .gate-card-wrap.enter{animation:none}
-  .gate-glow{display:none}
+  .gate-glow,.gate-dots,.gate-halo{animation:none}
+  .gate-cursor{display:none}
 }
 </style>
 <div id="panelGate" class="gate">
-  <canvas id="gateCanvas" class="gate-canvas" aria-hidden="true"></canvas>
+  <div class="gate-bg" aria-hidden="true"></div>
+  <div class="gate-glows" aria-hidden="true">
+    <span class="gate-glow gate-glow-a"></span>
+    <span class="gate-glow gate-glow-b"></span>
+    <span class="gate-glow gate-glow-c"></span>
+    <span class="gate-glow gate-glow-d"></span>
+  </div>
+  <div class="gate-halo" aria-hidden="true"></div>
+  <div class="gate-dots" aria-hidden="true"></div>
+  <div class="gate-floor" aria-hidden="true"></div>
   <div class="gate-veil" aria-hidden="true"></div>
-  <div id="gateGlow" class="gate-glow" aria-hidden="true"></div>
+  <div id="gateCursor" class="gate-cursor" aria-hidden="true"></div>
   <div class="gate-card-wrap" id="gateCardWrap">
     <div class="gate-card" id="gateCard">
       <div class="gate-title">WorkBuddy 网关</div>
@@ -4410,418 +4503,60 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
   </div>
 </div>
 <script>
-/* 登录闸门的 3D 场景 + 鼠标跟随效果。
-   · 自绘 WebGL（光线步进 SDF 场景），不引外部依赖——本面板是单文件 HTML，
-     要能离线跑起来。
-   · 只在闸门可见时跑：startGateScene / stopGateScene 由 panelNeedsLogin /
-     panelHideGate 调用，关掉即停表，不空烧 CPU。
-   · 拿不到 WebGL 就退回 2D 画布（辉光 + 透视网格 + 环绕粒子），观感差一档
-     但不白屏。
-   · prefers-reduced-motion: reduce 时只画一帧静态画面，卡片也不跟鼠标倾斜。 */
+/* 登录闸门的鼠标跟随。背景动画、卡片倾斜、入场都是纯 CSS，这里只负责把
+   鼠标位置写成 CSS 变量（--gx/--gy 视差、--rx/--ry 卡片倾斜、--mx/--my
+   高光位置），所以不需要动画循环，也没有 WebGL。 */
 (function(){
-  let canvas = document.getElementById('gateCanvas');
-  const gate   = document.getElementById('panelGate');
-  const card   = document.getElementById('gateCard');
-  const wrap   = document.getElementById('gateCardWrap');
-  const glow   = document.getElementById('gateGlow');
-  if(!canvas || !gate) return;
+  const gate = document.getElementById('panelGate');
+  const card = document.getElementById('gateCard');
+  const cursor = document.getElementById('gateCursor');
+  const wrap = document.getElementById('gateCardWrap');
+  if(!gate) return;
 
-  const VERT = 'attribute vec2 aPos;void main(){gl_Position=vec4(aPos,0.0,1.0);}';
-
-  /* 场景：一颗浮在卡片上方的自转八面体晶体 + 一圈倾斜光环 + 三颗环上卫星，
-     底下是一片网格地面。相机绕 Y 轴跟着鼠标转，主光方向也跟着鼠标走——
-     鼠标一动，光影跟着跑。 */
-  const FRAG = `
-precision highp float;
-uniform vec2 uRes;
-uniform float uTime;
-uniform vec2 uMouse;
-uniform vec3 uAccent;
-uniform float uDark;
-
-mat2 rot(float a){ float c=cos(a), s=sin(a); return mat2(c,-s,s,c); }
-float sdOcta(vec3 p, float s){ p=abs(p); return (p.x+p.y+p.z-s)*0.57735027; }
-float sdTorus(vec3 p, vec2 t){ vec2 q=vec2(length(p.xz)-t.x, p.y); return length(q)-t.y; }
-
-float mapScene(vec3 p, out float mat){
-  mat = 0.0;
-  float d = p.y + 1.5;                                  // 地面
-  vec3 q = p;
-  q.y -= 1.55 + 0.12*sin(uTime*0.7);
-  q.xz *= rot(uTime*0.20);
-  q.xy *= rot(sin(uTime*0.27)*0.40);
-  float core = sdOcta(q, 0.52) - 0.05;                 // 核心晶体（浮在卡片上方）
-  if(core < d){ d = core; mat = 1.0; }
-  vec3 r = p;
-  r.xz *= rot(-uTime*0.42);
-  r.xy *= rot(0.45 + 0.10*sin(uTime*0.5));
-  float ring = sdTorus(r, vec2(2.15, 0.05));            // 倾斜光环
-  if(ring < d){ d = ring; mat = 2.0; }
-  for(int i=0;i<3;i++){                                 // 环上三颗卫星
-    float a = -uTime*0.85 + float(i)*2.0944;
-    vec3 c = vec3(cos(a)*2.15, 0.16*sin(uTime*1.1+float(i)*2.1), sin(a)*2.15);
-    float sp = length(r-c) - 0.10;
-    if(sp < d){ d = sp; mat = 3.0; }
-  }
-  return d;
-}
-float mapOnly(vec3 p){ float m; return mapScene(p, m); }
-vec3 calcNormal(vec3 p){
-  vec2 e = vec2(0.0016, 0.0);
-  return normalize(vec3(mapOnly(p+e.xyy)-mapOnly(p-e.xyy),
-                        mapOnly(p+e.yxy)-mapOnly(p-e.yxy),
-                        mapOnly(p+e.yyx)-mapOnly(p-e.yyx)));
-}
-float softShadow(vec3 ro, vec3 rd){
-  float res = 1.0, t = 0.05;
-  for(int i=0;i<20;i++){
-    float h = mapOnly(ro+rd*t);
-    res = min(res, 8.0*h/t);
-    t += clamp(h, 0.03, 0.3);
-    if(res < 0.03 || t > 7.0) break;
-  }
-  return clamp(res, 0.0, 1.0);
-}
-float calcAO(vec3 p, vec3 n){
-  float occ = 0.0, sca = 1.0;
-  for(int i=0;i<5;i++){
-    float hr = 0.03 + 0.14*float(i)/4.0;
-    occ += (hr - mapOnly(p+n*hr))*sca;
-    sca *= 0.82;
-  }
-  return clamp(1.0 - 1.5*occ, 0.0, 1.0);
-}
-void main(){
-  vec2 uv = (gl_FragCoord.xy - 0.5*uRes)/uRes.y;
-  float ang  = uMouse.x*0.26;                          // 鼠标带动相机环绕
-  float dist = 8.2 - uMouse.y*0.45;
-  vec3 ro = vec3(sin(ang)*dist, 1.75 + uMouse.y*0.70, cos(ang)*dist);
-  vec3 ta = vec3(0.0, -0.05, 0.0);
-  vec3 fw = normalize(ta-ro);
-  vec3 rt = normalize(cross(fw, vec3(0.0,1.0,0.0)));
-  vec3 up = cross(rt, fw);
-  vec3 rd = normalize(uv.x*rt + uv.y*up + 1.45*fw);
-
-  float t = 0.0, mat = 0.0;
-  bool hit = false;
-  for(int i=0;i<90;i++){
-    vec3 p = ro + rd*t;
-    float d = mapScene(p, mat);
-    if(d < 0.0016*t + 0.0012){ hit = true; break; }
-    t += d*0.85;
-    if(t > 30.0) break;
-  }
-
-  vec3 sky = mix(vec3(0.955,0.968,0.958), vec3(0.015,0.020,0.018), uDark);
-  float g = exp(-length(uv - vec2(uMouse.x*0.30, uMouse.y*0.22))*1.5);
-  vec3 col = sky + uAccent*g*mix(0.09, 0.20, uDark);
-
-  if(hit){
-    vec3 p = ro + rd*t;
-    vec3 n = calcNormal(p);
-    vec3 lp = normalize(vec3(uMouse.x*1.9, 1.5 + uMouse.y*1.5, 1.2));  // 鼠标带动主光
-    float dif = max(dot(n, lp), 0.0);
-    float spe = pow(max(dot(reflect(-lp, n), -rd), 0.0), 40.0);
-    float sha = softShadow(p + n*0.012, lp);
-    float ao  = calcAO(p, n);
-    vec3 base;
-    if(mat < 0.5){                                      // 地面网格
-      vec2 gc = p.xz*0.5;
-      vec2 gv = abs(fract(gc-0.5)-0.5);
-      float lw = 0.012 + t*0.0035;
-      float line = 1.0 - smoothstep(0.0, lw, min(gv.x, gv.y));
-      float fade = exp(-0.07*dot(p.xz, p.xz));
-      base = mix(sky*0.97, uAccent*0.85, line*0.45*fade);
-    } else if(mat < 1.5){                               // 核心晶体
-      base = mix(uAccent*0.50, vec3(1.0), 0.16);
-    } else if(mat < 2.5){                               // 光环
-      base = uAccent*0.95;
-    } else {                                            // 卫星
-      base = mix(uAccent, vec3(1.0), 0.30);
-    }
-    float fres = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
-    vec3 lit = base*(mix(0.34, 0.22, uDark) + 0.9*dif*sha)*ao;
-    lit += vec3(1.0)*spe*sha*(mat < 1.5 ? 0.5 : 0.22);
-    lit += uAccent*fres*0.5*mix(0.40, 1.0, uDark);
-    if(mat > 0.5 && mat < 1.5) lit += uAccent*0.20*mix(0.55, 1.0, uDark);   // 晶体自带一点荧光
-    float fog = 1.0 - exp(-0.012*t*t);
-    col = mix(lit, sky + uAccent*0.04, fog);
-  }
-  col *= 1.0 - 0.26*dot(uv, uv);
-  gl_FragColor = vec4(col, 1.0);
-}`;
-
-  let gl = null, prog = null, u = {}, fb = null;
-  let raf = 0, running = false, t0 = 0, prev = 0;
-  const mouse = {x:0, y:0}, aim = {x:0, y:0}, ptr = {x:0, y:0};
-  let accent = [0.17, 0.69, 0.27], accentCss = '#2cb044', dark = 0;
-  const mqReduce = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
-  const reduced = () => !!(mqReduce && mqReduce.matches);
-
-  /* ---- 主题取色（跟着 亮/暗 + 主题风格 走） ---- */
-  function readTheme(){
-    const cs = getComputedStyle(document.documentElement);
-    const a = (cs.getPropertyValue('--accent') || '').trim();
-    if(a) accentCss = a;
-    accent = parseColor(accentCss);
-    dark = document.documentElement.getAttribute('data-theme') === 'dark' ? 1 : 0;
-  }
-  function parseColor(css){
-    css = (css || '').trim();
-    let m = css.match(/^#([0-9a-f]{3})$/i);
-    if(m) return [hx(m[1][0]+m[1][0]), hx(m[1][1]+m[1][1]), hx(m[1][2]+m[1][2])];
-    m = css.match(/^#([0-9a-f]{6})$/i);
-    if(m) return [hx(m[1].slice(0,2)), hx(m[1].slice(2,4)), hx(m[1].slice(4,6))];
-    m = css.match(/rgba?\(([^)]+)\)/i);
-    if(m){
-      const p = m[1].split(/[,\s/]+/).filter(Boolean).map(parseFloat);
-      return [(p[0]||0)/255, (p[1]||0)/255, (p[2]||0)/255];
-    }
-    return [0.17, 0.69, 0.27];
-  }
-  function hx(s){ return parseInt(s, 16)/255; }
-  function rgbaOf(c, a){
-    return 'rgba(' + Math.round(c[0]*255) + ',' + Math.round(c[1]*255) + ','
-         + Math.round(c[2]*255) + ',' + a + ')';
-  }
-
-  /* ---- WebGL 初始化 ---- */
-  function initGL(){
-    if(gl || fb) return;
-    const opts = {antialias:false, alpha:false, depth:false, stencil:false,
-                  powerPreference:'high-performance', preserveDrawingBuffer:false};
-    try { gl = canvas.getContext('webgl', opts) || canvas.getContext('experimental-webgl', opts); }
-    catch(e){ gl = null; }
-    if(!gl){ fallback2D(); return; }
-    const vs = compile(gl.VERTEX_SHADER, VERT);
-    const fs = compile(gl.FRAGMENT_SHADER, FRAG);
-    if(!vs || !fs){ gl = null; fallback2D(); return; }
-    prog = gl.createProgram();
-    gl.attachShader(prog, vs);
-    gl.attachShader(prog, fs);
-    gl.linkProgram(prog);
-    if(!gl.getProgramParameter(prog, gl.LINK_STATUS)){
-      console.warn('[gate3d] 着色器链接失败，退回 2D 画布', gl.getProgramInfoLog(prog));
-      gl = null; fallback2D(); return;
-    }
-    gl.useProgram(prog);
-    const buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
-    const loc = gl.getAttribLocation(prog, 'aPos');
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-    u.res = gl.getUniformLocation(prog, 'uRes');
-    u.time = gl.getUniformLocation(prog, 'uTime');
-    u.mouse = gl.getUniformLocation(prog, 'uMouse');
-    u.accent = gl.getUniformLocation(prog, 'uAccent');
-    u.dark = gl.getUniformLocation(prog, 'uDark');
-  }
-  function compile(type, src){
-    const s = gl.createShader(type);
-    gl.shaderSource(s, src);
-    gl.compileShader(s);
-    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
-      console.warn('[gate3d] 着色器编译失败，退回 2D 画布', gl.getShaderInfoLog(s));
-      return null;
-    }
-    return s;
-  }
-
-  /* 退回 2D 画布。一块 canvas 只能有一种上下文：WebGL 已经建成就换不回 2D，
-     所以这里换一块新画布顶上（属性照抄，位置不变）。 */
-  function fallback2D(){
-    if(fb) return;
-    const fresh = canvas.cloneNode(false);
-    if(canvas.parentNode) canvas.parentNode.replaceChild(fresh, canvas);
-    canvas = fresh;
-    fb = canvas.getContext('2d');
-  }
-
-  /* ---- 尺寸：跟着闸门走，并给像素数封顶（4K 屏别把着色器跑满） ---- */
-  function resize(){
-    const r = gate.getBoundingClientRect();
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-    let w = Math.max(1, Math.round(r.width * dpr));
-    let h = Math.max(1, Math.round(r.height * dpr));
-    const maxPx = 2200000;
-    if(w*h > maxPx){
-      const k = Math.sqrt(maxPx/(w*h));
-      w = Math.max(1, Math.round(w*k));
-      h = Math.max(1, Math.round(h*k));
-    }
-    if(canvas.width !== w || canvas.height !== h){
-      canvas.width = w;
-      canvas.height = h;
-      if(gl) gl.viewport(0, 0, w, h);
-    }
-  }
-
-  /* ---- 渲染一帧 ---- */
-  function drawGL(t){
-    gl.uniform2f(u.res, canvas.width, canvas.height);
-    gl.uniform1f(u.time, t);
-    gl.uniform2f(u.mouse, mouse.x, mouse.y);
-    gl.uniform3f(u.accent, accent[0], accent[1], accent[2]);
-    gl.uniform1f(u.dark, dark);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-  }
-
-  /* 2D 兜底：辉光 + 透视网格 + 环绕粒子 */
-  function draw2D(t){
-    const c = fb, w = canvas.width, h = canvas.height;
-    if(!c || !w || !h) return;
-    const dpr = w / Math.max(1, canvas.clientWidth);
-    c.clearRect(0, 0, w, h);
-    const g = c.createLinearGradient(0, 0, 0, h);
-    g.addColorStop(0, dark ? '#05080a' : '#eef4ef');
-    g.addColorStop(1, dark ? '#0a0e0b' : '#ffffff');
-    c.fillStyle = g;
-    c.fillRect(0, 0, w, h);
-    const cx = w*(0.5 + mouse.x*0.12), cy = h*(0.46 - mouse.y*0.10);
-    const R = Math.max(w, h)*0.46;
-    const rg = c.createRadialGradient(cx, cy, 0, cx, cy, R);
-    rg.addColorStop(0, rgbaOf(accent, dark ? 0.50 : 0.32));
-    rg.addColorStop(0.45, rgbaOf(accent, dark ? 0.14 : 0.10));
-    rg.addColorStop(1, rgbaOf(accent, 0));
-    c.fillStyle = rg;
-    c.fillRect(0, 0, w, h);
-    c.save();
-    c.strokeStyle = rgbaOf(accent, dark ? 0.30 : 0.22);
-    c.lineWidth = Math.max(1, dpr);
-    const hz = h*0.66;
-    for(let i = 1; i <= 12; i++){
-      const f = i/12, y = hz + Math.pow(f, 2.2)*(h-hz)*1.3;
-      c.globalAlpha = Math.max(0, 1 - f*0.8);
-      c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke();
-    }
-    for(let j = -10; j <= 10; j++){
-      c.globalAlpha = 0.45;
-      c.beginPath();
-      c.moveTo(w/2 + j*w*0.055, hz);
-      c.lineTo(w/2 + j*w*0.60, h*1.3);
-      c.stroke();
-    }
-    c.restore();
-    c.save();
-    c.translate(cx, cy);
-    c.strokeStyle = rgbaOf(accent, 0.85);
-    c.lineWidth = Math.max(1.5, dpr*1.6);
-    c.beginPath(); c.ellipse(0, 0, R*0.30, R*0.10, t*0.4, 0, Math.PI*2); c.stroke();
-    c.fillStyle = rgbaOf(accent, 0.9);
-    for(let k = 0; k < 3; k++){
-      const a = t*0.9 + k*2.0944;
-      c.beginPath();
-      c.arc(Math.cos(a)*R*0.30, Math.sin(a)*R*0.10, R*0.022, 0, Math.PI*2);
-      c.fill();
-    }
-    c.restore();
-  }
-
-  function frame(now){
-    raf = requestAnimationFrame(frame);
-    if(!prev) prev = now;
-    const dt = Math.min(0.05, (now - prev)/1000);
-    prev = now;
-    mouse.x += (aim.x - mouse.x) * Math.min(1, dt*6);
-    mouse.y += (aim.y - mouse.y) * Math.min(1, dt*6);
-    if(card && !reduced()){
-      // 卡片跟着鼠标做 3D 倾斜（绕卡片中心，中心不动，不会自己抖）
-      const cr = card.getBoundingClientRect();
-      let cx = (ptr.x - (cr.left + cr.width/2)) / (cr.width/2 || 1);
-      let cy = (ptr.y - (cr.top + cr.height/2)) / (cr.height/2 || 1);
-      cx = Math.max(-1, Math.min(1, cx));
-      cy = Math.max(-1, Math.min(1, cy));
-      card.style.transform = 'perspective(1200px) rotateX(' + (-cy*7).toFixed(2)
-                           + 'deg) rotateY(' + (cx*9).toFixed(2) + 'deg) translateZ(0)';
-    }
-    if(gl) drawGL((now - t0)/1000);
-    else if(fb) draw2D((now - t0)/1000);
-  }
-
-  /* ---- 鼠标 / 触摸跟随 ---- */
-  function track(clientX, clientY){
+  function track(x, y){
     const r = gate.getBoundingClientRect();
     if(!r.width || !r.height) return;
-    ptr.x = clientX;
-    ptr.y = clientY;
-    aim.x = Math.max(-1, Math.min(1, (clientX - r.left)/r.width*2 - 1));
-    aim.y = Math.max(-1, Math.min(1, -((clientY - r.top)/r.height*2 - 1)));
-    if(glow){
-      glow.style.transform = 'translate3d(' + (clientX - r.left) + 'px,'
-                             + (clientY - r.top) + 'px, 0)';
-    }
+    const nx = Math.max(-1, Math.min(1, (x - r.left)/r.width*2 - 1));
+    const ny = Math.max(-1, Math.min(1, -((y - r.top)/r.height*2 - 1)));
+    gate.style.setProperty('--gx', nx.toFixed(3));
+    gate.style.setProperty('--gy', ny.toFixed(3));
     if(card){
-      card.style.setProperty('--mx', ((clientX - r.left)/r.width*100) + '%');
-      card.style.setProperty('--my', ((clientY - r.top)/r.height*100) + '%');
+      // 靠鼠标那一侧的边沿抬起来
+      card.style.setProperty('--rx', (-ny*7).toFixed(2) + 'deg');
+      card.style.setProperty('--ry', (-nx*9).toFixed(2) + 'deg');
+      card.style.setProperty('--mx', ((x - r.left)/r.width*100).toFixed(1) + '%');
+      card.style.setProperty('--my', ((y - r.top)/r.height*100).toFixed(1) + '%');
+    }
+    if(cursor){
+      cursor.style.transform = 'translate3d(' + (x - r.left) + 'px,' + (y - r.top) + 'px,0)';
     }
   }
-  function onMove(e){ track(e.clientX, e.clientY); }
-  function onTouch(e){
+
+  gate.addEventListener('mousemove', function(e){ track(e.clientX, e.clientY); });
+  gate.addEventListener('touchmove', function(e){
     if(e.touches && e.touches.length) track(e.touches[0].clientX, e.touches[0].clientY);
-  }
-  function onLeave(){
-    aim.x = 0; aim.y = 0;
-    if(card) card.style.transform = '';
+  }, {passive:true});
+  function reset(){
+    gate.style.setProperty('--gx', '0');
+    gate.style.setProperty('--gy', '0');
     if(card){
-      card.style.setProperty('--mx', '50%');
-      card.style.setProperty('--my', '50%');
+      card.style.setProperty('--rx', '0deg');
+      card.style.setProperty('--ry', '0deg');
     }
   }
-  gate.addEventListener('mousemove', onMove);
-  gate.addEventListener('mouseleave', onLeave);
-  gate.addEventListener('touchmove', onTouch, {passive:true});
-  gate.addEventListener('touchend', onLeave);
+  gate.addEventListener('mouseleave', reset);
+  gate.addEventListener('touchend', reset);
 
-  window.addEventListener('resize', function(){ if(running) resize(); });
-  document.addEventListener('visibilitychange', function(){
-    if(document.hidden){
-      if(raf){ cancelAnimationFrame(raf); raf = 0; }
-    } else if(running && !raf){
-      prev = 0;
-      raf = requestAnimationFrame(frame);
-    }
-  });
-  /* 主题/配色一变就重新取色（data-theme、data-theme-style、以及调色台写在
-     <html> 上的行内 style 都会走到这里）。 */
-  if(window.MutationObserver){
-    new MutationObserver(function(){
-      readTheme();
-      if(running) resize();
-    }).observe(document.documentElement, {attributes:true, attributeFilter:['data-theme','data-theme-style','style']});
-  }
-
-  function renderStatic(){
-    if(gl) drawGL(6.0);
-    else if(fb) draw2D(6.0);
-  }
-
+  /* 闸门打开时重放入场动画；关着的时候不用管——display:none 下 CSS 动画
+     本来就不跑。 */
   window.startGateScene = function(){
-    readTheme();
-    initGL();
-    resize();
-    // 只有闸门是「刚打开」时才重放入场动画：会话掉线时闸门本来就开着，
-    // 没必要每次 401 都把卡片动画重放一遍。
-    const fresh = !running;
-    if(wrap && fresh){
+    if(wrap){
       wrap.classList.remove('enter');
       void wrap.offsetWidth;              // 强制回流，让入场动画能重放
       wrap.classList.add('enter');
     }
-    if(reduced()){ renderStatic(); return; }
-    if(running) return;
-    running = true;
-    t0 = performance.now();
-    prev = 0;
-    raf = requestAnimationFrame(frame);
   };
-
-  window.stopGateScene = function(){
-    running = false;
-    if(raf){ cancelAnimationFrame(raf); raf = 0; }
-    prev = 0;
-    if(card) card.style.transform = '';
-  };
+  window.stopGateScene = function(){};
 })();
 </script>
 <!-- 全局主导航：页面页签 + 仓库入口。结构与 id 全部保留，只是换了位置——页签
