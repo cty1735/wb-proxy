@@ -4413,7 +4413,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
      但不白屏。
    · prefers-reduced-motion: reduce 时只画一帧静态画面，卡片也不跟鼠标倾斜。 */
 (function(){
-  const canvas = document.getElementById('gateCanvas');
+  let canvas = document.getElementById('gateCanvas');
   const gate   = document.getElementById('panelGate');
   const card   = document.getElementById('gateCard');
   const wrap   = document.getElementById('gateCardWrap');
@@ -4422,8 +4422,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
 
   const VERT = 'attribute vec2 aPos;void main(){gl_Position=vec4(aPos,0.0,1.0);}';
 
-  /* 场景：一颗自转的八面体核心 + 一圈倾斜光环 + 三颗卫星，落在网格地面上。
-     相机绕 Y 轴跟着鼠标转，主光方向也跟着鼠标走——鼠标一动，光影跟着跑。 */
+  /* 场景：一颗浮在卡片上方的自转八面体晶体 + 一圈倾斜光环 + 三颗环上卫星，
+     底下是一片网格地面。相机绕 Y 轴跟着鼠标转，主光方向也跟着鼠标走——
+     鼠标一动，光影跟着跑。 */
   const FRAG = `
 precision highp float;
 uniform vec2 uRes;
@@ -4585,17 +4586,17 @@ void main(){
                   powerPreference:'high-performance', preserveDrawingBuffer:false};
     try { gl = canvas.getContext('webgl', opts) || canvas.getContext('experimental-webgl', opts); }
     catch(e){ gl = null; }
-    if(!gl){ fb = canvas.getContext('2d'); return; }
+    if(!gl){ fallback2D(); return; }
     const vs = compile(gl.VERTEX_SHADER, VERT);
     const fs = compile(gl.FRAGMENT_SHADER, FRAG);
-    if(!vs || !fs){ gl = null; fb = canvas.getContext('2d'); return; }
+    if(!vs || !fs){ gl = null; fallback2D(); return; }
     prog = gl.createProgram();
     gl.attachShader(prog, vs);
     gl.attachShader(prog, fs);
     gl.linkProgram(prog);
     if(!gl.getProgramParameter(prog, gl.LINK_STATUS)){
       console.warn('[gate3d] 着色器链接失败，退回 2D 画布', gl.getProgramInfoLog(prog));
-      gl = null; fb = canvas.getContext('2d'); return;
+      gl = null; fallback2D(); return;
     }
     gl.useProgram(prog);
     const buf = gl.createBuffer();
@@ -4619,6 +4620,16 @@ void main(){
       return null;
     }
     return s;
+  }
+
+  /* 退回 2D 画布。一块 canvas 只能有一种上下文：WebGL 已经建成就换不回 2D，
+     所以这里换一块新画布顶上（属性照抄，位置不变）。 */
+  function fallback2D(){
+    if(fb) return;
+    const fresh = canvas.cloneNode(false);
+    if(canvas.parentNode) canvas.parentNode.replaceChild(fresh, canvas);
+    canvas = fresh;
+    fb = canvas.getContext('2d');
   }
 
   /* ---- 尺寸：跟着闸门走，并给像素数封顶（4K 屏别把着色器跑满） ---- */
@@ -4783,7 +4794,10 @@ void main(){
     readTheme();
     initGL();
     resize();
-    if(wrap){
+    // 只有闸门是「刚打开」时才重放入场动画：会话掉线时闸门本来就开着，
+    // 没必要每次 401 都把卡片动画重放一遍。
+    const fresh = !running;
+    if(wrap && fresh){
       wrap.classList.remove('enter');
       void wrap.offsetWidth;              // 强制回流，让入场动画能重放
       wrap.classList.add('enter');
