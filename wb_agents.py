@@ -77,13 +77,18 @@ def _read_bytes(path):
 
 
 def _read_text(path):
-    """UTF-8 text of an existing file, or "" when the file does not exist."""
+    """UTF-8 text of an existing file, or "" when the file does not exist.
+
+    Decoded with utf-8-sig: a config file another tool wrote with a BOM would
+    otherwise fail to parse (json.loads chokes on the leading U+FEFF) and the
+    panel would report a broken client instead of just reading it.
+    """
     try:
         data = _read_bytes(path)
     except FileNotFoundError:
         return ""
     try:
-        return data.decode("utf-8")
+        return data.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise AgentConfigError("%s is not valid UTF-8: %s" % (path, exc))
 
@@ -489,6 +494,128 @@ def env_upsert(text, mapping):
 
 
 # ---------------------------------------------------------------------------
+# Readers for the "managed" slice of a client config
+#
+# The integration record used to compare the *whole* config file with the
+# bytes we last wrote. Any unrelated edit (another provider's model list, a
+# plugin entry, the client rewriting its own file) then looked like a hand
+# edit of *our* part, and the panel skipped that client when the gateway
+# switched provider - so the model list baked into the client config stayed on
+# the previous provider's catalogue ("switch the gateway, the models do not
+# change").
+#
+# Every client now declares the slice of its files the gateway owns (the
+# "managed" projection below). Only a change inside that slice counts as an
+# external change; the rest of the file may drift freely.
+# ---------------------------------------------------------------------------
+
+def _json_from_text(text):
+    """Parse a JSON document from text; {} when it is missing or broken."""
+    if not text or not str(text).strip():
+        return {}
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _yaml_leaf(text, key_path):
+    """Read one dotted key path out of a block-style YAML document.
+
+    Only the subset this module writes is supported: block mappings whose
+    leaves are inline values. Returns the raw inline text ("" when the leaf
+    is there but empty) or None when the path is absent.
+    """
+    keys = [part.strip() for part in str(key_path or "").split(".") if part.strip()]
+    if not keys:
+        return None
+    lines = str(text or "").split("\n")
+    return _yaml_find_leaf(lines, 0, len(lines), 0, keys)
+
+
+def _yaml_find_leaf(lines, start, end, indent, keys):
+    """Block scanner for _yaml_leaf; mirrors _yaml_upsert_at's structure."""
+    key = keys[0]
+    idx = start
+    while idx < end:
+        line = lines[idx]
+        if line.strip() and not line.strip().startswith("#") \
+                and _yaml_indent(line) == indent and _yaml_key(line) == key:
+            after = line.split(":", 1)[1].strip() if ":" in line else ""
+            child_end = _yaml_block_end(lines, idx, indent)
+            if len(keys) == 1:
+                return after
+            if after:
+                # The parent holds an inline mapping: this module never writes
+                # that shape, so the path cannot be read back.
+                return None
+            return _yaml_find_leaf(lines, idx + 1, child_end, indent + 2, keys[1:])
+        idx += 1
+    return None
+
+
+def _env_value(text, key):
+    """The value of a KEY=VALUE line in a dotenv document (None when absent)."""
+    for line in str(text or "").split("\n"):
+        m = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$", line)
+        if m and m.group(1) == key:
+            return m.group(2).strip()
+    return None
+
+
+def _toml_section(text, table):
+    """The raw lines of a TOML table section (header + body), "" when absent."""
+    header = "[%s]" % table
+    lines = str(text or "").split("\n")
+    out = []
+    inside = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if inside:
+                break
+            inside = (stripped == header)
+            if inside:
+                out.append(line)
+            continue
+        if inside:
+            out.append(line)
+    return "\n".join(out)
+
+
+def _toml_top_value(text, key):
+    """The value of a top-level TOML key (None when absent)."""
+    for line in str(text or "").split("\n"):
+        stripped = line.strip()
+        if "=" not in stripped or stripped.startswith("#"):
+            continue
+        name = stripped.split("=", 1)[0].strip()
+        if name == key:
+            return stripped.split("=", 1)[1].strip()
+    return None
+
+
+def _managed_fingerprint(client, paths, contents):
+    """Hash of the slice of the client's files the gateway owns.
+
+    ``contents`` maps a file path to its current text. Returns None when the
+    client declares no managed slice (or it cannot be read), which the caller
+    treats as "unknown".
+    """
+    fn = client.get("managed")
+    if not fn:
+        return None
+    try:
+        projection = fn(paths, contents)
+    except Exception:
+        return None
+    if projection is None:
+        return None
+    return _sha256_bytes(str(projection).encode("utf-8"))
+
+
+# ---------------------------------------------------------------------------
 # Backup + state bookkeeping
 # ---------------------------------------------------------------------------
 
@@ -588,6 +715,18 @@ def _apply_claude_code(paths, ctx):
     return {path: _dump_json(data)}
 
 
+def _managed_claude_code(paths, contents):
+    """The env entries Claude Code points at the gateway with."""
+    data = _json_from_text(contents.get(paths["settings"]))
+    env = data.get("env") if isinstance(data.get("env"), dict) else {}
+    keys = ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_CUSTOM_HEADERS", "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL")
+    return json.dumps({k: env.get(k) for k in keys},
+                      sort_keys=True, ensure_ascii=False)
+
+
 def _codex_home(home):
     return os.environ.get("CODEX_HOME") or os.path.join(home, ".codex")
 
@@ -608,6 +747,17 @@ def _apply_codex(paths, ctx):
     auth = _load_json(auth_path, "codex auth")
     auth = deep_merge(auth, {"OPENAI_API_KEY": ctx["api_key"]})
     return {config_path: text, auth_path: _dump_json(auth)}
+
+
+def _managed_codex(paths, contents):
+    """The provider table and the key Codex uses to reach the gateway."""
+    text = contents.get(paths["config"]) or ""
+    auth = _json_from_text(contents.get(paths["auth"]))
+    return json.dumps({
+        "provider": _toml_section(text, "model_providers." + PROVIDER_ID),
+        "model_provider": _toml_top_value(text, "model_provider"),
+        "key": auth.get("OPENAI_API_KEY"),
+    }, sort_keys=True, ensure_ascii=False)
 
 
 def _apply_opencode(paths, ctx):
@@ -674,6 +824,17 @@ def _apply_opencode(paths, ctx):
         if data["model"].split("/", 1)[1] not in models:
             data.pop("model", None)
     return {path: _dump_json(data)}
+
+
+def _managed_opencode(paths, contents):
+    """The wb-proxy provider entry (model table included) and the default model."""
+    data = _json_from_text(contents.get(paths["config"]))
+    provider = data.get("provider") if isinstance(data.get("provider"), dict) else {}
+    model = data.get("model")
+    if not (isinstance(model, str) and model.startswith(PROVIDER_ID + "/")):
+        model = None
+    return json.dumps({"provider": provider.get(PROVIDER_ID), "model": model},
+                      sort_keys=True, ensure_ascii=False)
 
 
 def dsh_reasoning_levels(raw):
@@ -776,6 +937,17 @@ def _apply_dsh(paths, ctx):
     return {settings_path: text, credentials_path: cred_text}
 
 
+def _managed_dsh(paths, contents):
+    """The provider entry, the default model and the credential reference."""
+    text = contents.get(paths["settings"]) or ""
+    cred = contents.get(paths["credentials"]) or ""
+    return json.dumps({
+        "provider": _yaml_leaf(text, "llm-pi-ai.providers." + PROVIDER_ID),
+        "default_model": _yaml_leaf(text, "agent-default-model"),
+        "credential": _env_value(cred, CREDENTIAL_REF),
+    }, sort_keys=True, ensure_ascii=False)
+
+
 def _apply_crush(paths, ctx):
     path = paths["config"]
     data = _load_json(path, "crush config")
@@ -799,6 +971,14 @@ def _apply_crush(paths, ctx):
     }
     data = deep_merge(data, {"providers": {PROVIDER_ID: provider}})
     return {path: _dump_json(data)}
+
+
+def _managed_crush(paths, contents):
+    """The wb-proxy provider entry (model table included)."""
+    data = _json_from_text(contents.get(paths["config"]))
+    providers = data.get("providers") if isinstance(data.get("providers"), dict) else {}
+    return json.dumps({"provider": providers.get(PROVIDER_ID)},
+                      sort_keys=True, ensure_ascii=False)
 
 
 def _apply_zcode(paths, ctx):
@@ -873,6 +1053,21 @@ def _apply_zcode(paths, ctx):
     return {path: _dump_json(data)}
 
 
+def _managed_zcode(paths, contents):
+    """The wb-proxy provider rule (its model list included)."""
+    data = _json_from_text(contents.get(paths["config"]))
+    config = data.get("config") if isinstance(data.get("config"), dict) else {}
+    holder = config.get("providerConfigRules") \
+        if isinstance(config.get("providerConfigRules"), dict) else {}
+    rules = holder.get("providerRules") if isinstance(holder.get("providerRules"), list) else []
+    rule = None
+    for item in rules:
+        if isinstance(item, dict) and item.get("providerId") == PROVIDER_ID:
+            rule = item
+            break
+    return json.dumps({"rule": rule}, sort_keys=True, ensure_ascii=False)
+
+
 def _hermes_home(home):
     """Hermes home dir: ``HERMES_HOME``, else Hermes' own platform default.
 
@@ -943,6 +1138,18 @@ def _apply_hermes(paths, ctx):
     return {config_path: text, env_path: env_text}
 
 
+def _managed_hermes(paths, contents):
+    """The provider entry, the selected provider/model and the key reference."""
+    text = contents.get(paths["config"]) or ""
+    env = contents.get(paths["env"]) or ""
+    return json.dumps({
+        "provider": _yaml_leaf(text, "providers." + PROVIDER_ID),
+        "model_provider": _yaml_leaf(text, "model.provider"),
+        "model_default": _yaml_leaf(text, "model.default"),
+        "key": _env_value(env, CREDENTIAL_REF),
+    }, sort_keys=True, ensure_ascii=False)
+
+
 CLIENTS = {
     "claude-code": {
         "id": "claude-code",
@@ -958,6 +1165,7 @@ CLIENTS = {
             or bool(shutil.which("claude"))
         ),
         "apply": _apply_claude_code,
+        "managed": _managed_claude_code,
     },
     "codex": {
         "id": "codex",
@@ -974,6 +1182,7 @@ CLIENTS = {
             or bool(shutil.which("codex"))
         ),
         "apply": _apply_codex,
+        "managed": _managed_codex,
     },
     "opencode": {
         "id": "opencode",
@@ -989,6 +1198,7 @@ CLIENTS = {
             or bool(shutil.which("opencode"))
         ),
         "apply": _apply_opencode,
+        "managed": _managed_opencode,
     },
     "dsh": {
         "id": "dsh",
@@ -1005,6 +1215,7 @@ CLIENTS = {
             or bool(shutil.which("dsh"))
         ),
         "apply": _apply_dsh,
+        "managed": _managed_dsh,
     },
     "crush": {
         "id": "crush",
@@ -1020,6 +1231,7 @@ CLIENTS = {
             or bool(shutil.which("crush"))
         ),
         "apply": _apply_crush,
+        "managed": _managed_crush,
     },
     "zcode": {
         "id": "zcode",
@@ -1036,6 +1248,7 @@ CLIENTS = {
                                            "provider_config.json"))
         ),
         "apply": _apply_zcode,
+        "managed": _managed_zcode,
     },
     "hermes": {
         "id": "hermes",
@@ -1053,6 +1266,7 @@ CLIENTS = {
             or bool(shutil.which("hermes"))
         ),
         "apply": _apply_hermes,
+        "managed": _managed_hermes,
     },
 }
 
@@ -1107,19 +1321,44 @@ def overview(accounts_dir, home=None):
         applied = None
         record = state.get(client_id)
         if isinstance(record, dict):
+            # external_change = 「我们自己写的那一段」被手改过；
+            # file_changed = 整个文件跟我们上次写的字节不一样（只是提示）。
+            # 以前这里比的是整份文件：别的 provider 加个模型、客户端自己重排
+            # 一下配置，都会被当成「用户改了我们那段」，于是切网关时这个客户端
+            # 被跳过，配置里写死的模型表就一直停在上一个提供商的目录。
             external = False
+            file_changed = False
             for entry in record.get("files") or []:
                 path = entry.get("path")
                 if not path or not os.path.exists(path):
-                    external = True
+                    file_changed = True
                     continue
                 # Compare against the bytes we last wrote, not the backup: a
                 # hand edit after apply must read as an external change.
                 try:
                     if _sha256_bytes(_read_bytes(path)) != entry.get("sha256"):
-                        external = True
+                        file_changed = True
                 except AgentConfigError:
-                    external = True
+                    file_changed = True
+            managed_sha = record.get("managed_sha256")
+            if managed_sha:
+                contents = {}
+                for entry in record.get("files") or []:
+                    path = entry.get("path")
+                    if not path:
+                        continue
+                    try:
+                        contents[path] = _read_text(path)
+                    except AgentConfigError:
+                        contents[path] = ""
+                current = _managed_fingerprint(client, paths, contents)
+                external = (current is None or current != managed_sha)
+            else:
+                # 旧记录没有指纹：无从判断我们那段有没有被改过。先当作没被改——
+                # 切网关时我们要做的正是「把我们那段重写一遍」，不能因为文件
+                # 里别的段落变了就把这个客户端跳过。下一次 apply 会记上指纹，
+                # 之后的判断就准了。
+                external = False
             applied = {
                 "at": record.get("applied_at"),
                 "base_url": record.get("base_url"),
@@ -1127,6 +1366,7 @@ def overview(accounts_dir, home=None):
                 "key_id": record.get("key_id") or "",
                 "files": len(record.get("files") or []),
                 "external_change": external,
+                "file_changed": file_changed,
             }
         out[client_id] = {
             "id": client_id,
@@ -1208,6 +1448,8 @@ def integrate(accounts_dir, client_id, base_url, api_key, model=None,
     """
     built = plan(client_id, base_url, api_key, model=model, models=models,
                  home=home, provider=provider)
+    client = _client(client_id)
+    paths = client["files"](_resolve_home(home))
     state = _load_state(accounts_dir)
     record = state.get(client_id) or {}
     previous_files = {entry.get("path"): entry
@@ -1279,6 +1521,11 @@ def integrate(accounts_dir, client_id, base_url, api_key, model=None,
         # 不会把用户特意选的 Key 换成全局 Key。
         "key_id": str(key_id or ""),
         "files": entries,
+        # 我们自己写的那一段（provider 条目 / 模型表 / 默认模型）的指纹：
+        # 之后判断「文件被外部改过」只看这一段，文件里别的部分怎么变都不算。
+        "managed_sha256": _managed_fingerprint(
+            client, paths,
+            {entry["path"]: entry["content"] for entry in built["files"]}),
     }
     _save_state(accounts_dir, state)
     return {

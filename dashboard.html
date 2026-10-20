@@ -470,6 +470,19 @@ a:hover{text-decoration:underline}
 .provider-switch button.active{background:var(--panel);color:var(--accent);border-color:var(--accent);box-shadow:var(--shadow-sm)}
 .provider-switch button.active#providerBtnQoder{color:var(--think);border-color:var(--think)}
 .provider-switch button.active#providerBtnTrae{color:var(--accent);border-color:var(--accent)}
+.provider-switch button.active#providerBtnEgg{color:#c2410c;border-color:#c2410c}
+/* 鸡蛋视图专属区块：免费模型概览 / 说明。其它视图下收起。 */
+body:not(.provider-egg) .egg-only{display:none !important}
+/* 鸡蛋没有账号池、也没有出口：账号区块、版本卡片、出口控件全部收起，只留
+   免费模型概览、最近请求与模型清单。 */
+body.provider-egg .realm-cards-grid,
+body.provider-egg .gw-exit,
+body.provider-egg #schedulerBar,
+body.provider-egg #accountsHeader,
+body.provider-egg #accountsRealmSwitch,
+body.provider-egg #accountsToggle,
+body.provider-egg .accounts-section,
+body.provider-egg #btnNavAccounts{display:none !important}
 /* 非 WorkBuddy 视图统一收起 WorkBuddy 专属控件（签到/活跃/桌面扫描/出站身份…）。
    集中在这一条规则里管，免得给每个按钮已有的按视图显隐逻辑（updateUI 里的 inline
    display）再各补一份 provider 条件。 */
@@ -4118,6 +4131,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       <button type="button" id="providerBtnWorkbuddy" class="active" onclick="switchProvider('workbuddy')" aria-pressed="true">WorkBuddy</button>
       <button type="button" id="providerBtnQoder" onclick="switchProvider('qoder')" aria-pressed="false">Qoder</button>
       <button type="button" id="providerBtnTrae" onclick="switchProvider('trae')" aria-pressed="false">Trae</button>
+      <button type="button" id="providerBtnEgg" onclick="switchProvider('egg')" aria-pressed="false" title="鸡蛋：免账号、免密钥的免费模型聚合">鸡蛋</button>
     </div>
     <!-- 网关默认出口：只切网关真实默认出口的版本（影响所有未按版本绑定的 Key），
          不改提供商；品牌位里的版本跟着它一起变。 -->
@@ -4278,6 +4292,41 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     <h2 id="gatewayPageTitle" style="margin:0;font-size:17px;color:var(--fg);font-family:var(--serif);font-weight:600;letter-spacing:.02em">网关与账号</h2>
     <div id="gatewayPageDesc" style="font-size:12px;color:var(--dim);margin-top:4px">管理账号池与代理出口，查看当日调用量、估算花费、成功率、最近请求与网关模型清单。</div>
   </div>
+  <!-- 鸡蛋专属概览：免费、免账号、免密钥。切到鸡蛋时版本卡片与出口控件整个
+       收起，这里换成两个免费源的实时状态 + 一键刷新。数据来自 /v1/models
+       响应里的 egg 字段（见 wb_zen.status）。 -->
+  <section id="sectionEggOverview" class="egg-only" style="margin-bottom:18px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <div>
+        <h2 style="margin:0">鸡蛋 · 免费白嫖</h2>
+        <div style="font-size:12px;color:var(--dim);margin-top:4px">
+          不需要账号、不需要密钥：聚合 OpenCode Zen 免费车道与 Kilo 免费池。切到鸡蛋会自动刷新免费模型清单。
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="primary" id="btnEggRefresh" onclick="refreshEggCatalog(this)">刷新免费模型</button>
+      </div>
+    </div>
+    <div class="cards" style="margin-bottom:12px;grid-template-columns:repeat(auto-fit,minmax(165px,1fr))">
+      <div class="card accent2">
+        <div class="k">免费模型</div>
+        <div class="v" id="eggModelCount">-</div>
+      </div>
+      <div class="card accent">
+        <div class="k">Zen 免费车道</div>
+        <div class="v" id="eggZenCount" style="color:var(--accent)">-</div>
+      </div>
+      <div class="card">
+        <div class="k">Kilo 免费池</div>
+        <div class="v" id="eggKiloCount">-</div>
+      </div>
+      <div class="card warn">
+        <div class="k">最近刷新</div>
+        <div class="v" id="eggCatalogAt" style="color:var(--warn);font-size:15px">-</div>
+      </div>
+    </div>
+    <div id="eggSourceLine" class="hint" style="margin:0"></div>
+  </section>
   <!-- 版本中枢控制栏 (三列等高对齐网格) -->
   <div class="realm-cards-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:18px">
     
@@ -4423,6 +4472,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       <button type="button" id="accountsRealmCn" onclick="switchViewRealm('cn')" aria-pressed="false">国内版</button>
     </div>
   </div>
+  <!-- 鸡蛋视图：没有账号可管，用一段说明替代整个账号区（区块由 CSS 收起）。 -->
+  <section id="sectionEggAccounts" class="egg-only">
+    <h2 style="margin:0">鸡蛋不需要账号</h2>
+    <div style="font-size:13px;color:var(--dim);margin-top:8px;line-height:1.7">
+      免费模型完全免凭据，网关不会在这里写入任何账号或密钥。<br>
+      切回 WorkBuddy / Qoder / Trae 可继续管理对应的账号池。
+    </div>
+  </section>
   <!-- 拆分模式下三个区块的落点（页头之后、原顺序）；合并模式搬走之后这里就空着 -->
   <span id="accountsHomeAnchor" hidden></span>
   <section>
@@ -4529,6 +4586,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     <h2 style="margin:0;font-size:17px;color:var(--fg);font-family:var(--serif);font-weight:600;letter-spacing:.02em">任务与福利</h2>
     <div style="font-size:12px;color:var(--dim);margin-top:4px" id="pageTasksDesc">每日活跃打卡、Buddy 加油站、成长任务与福利积分总览。</div>
   </div>
+
+  <!-- 鸡蛋视图：免费白嫖没有签到/任务体系，用一段说明替代整页福利区块。 -->
+  <section id="sectionEggTasks" class="egg-only">
+    <h2 style="margin:0">鸡蛋没有任务与福利</h2>
+    <div style="font-size:13px;color:var(--dim);margin-top:8px;line-height:1.7">
+      免费白嫖不需要签到，也不消耗账号额度。<br>
+      切回 WorkBuddy / Qoder / Trae 才会显示任务、签到与成长福利。
+    </div>
+  </section>
 
   <!-- Qoder 额度与福利视图：Qoder 没有签到/成长任务体系，「任务与福利」页在
        Qoder 模式下改成为「额度与福利」——按账号展示套餐与加油包的剩余、已用
@@ -5675,6 +5741,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
           <h2 style="margin:0">本机客户端 <em id="agentDetectState"></em></h2>
           <div style="font-size:12px;color:var(--dim);margin-top:4px">检测到以下客户端安装在本机；点击「一键配置」即可让它改走本网关，原配置自动备份，可随时还原。</div>
         </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="sec mini" onclick="syncAgentModels(this)" title="把当前网关的模型清单重新写进已配置的客户端（OpenCode 等把模型写死在配置文件里）">同步模型清单</button>
+        </div>
       </div>
       <div id="agentCardGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px"></div>
     </section>
@@ -6168,6 +6237,10 @@ function closeLogin(){
 }
 
 function openLoginModal(targetRealm){
+  if(currentProvider() === 'egg'){
+    toast('鸡蛋网关不需要账号：免费模型直接可用', 'ok');
+    return;
+  }
   // Qoder / Trae 各有自己的弹窗（Qoder：设备码 + PAT；Trae：本机登录态 + JWT）；
   // WorkBuddy 保持原 OAuth 弹窗。
   if(currentProvider() === 'qoder'){ openQoderLogin(); return; }
@@ -6877,12 +6950,12 @@ window.ACCOUNTS = [];
 // 持久化的 provider（POST /realm），提供商与它记住的出口一起落盘；面板每个按
 // 提供商取数的请求仍显式带 ?provider=，保证看板数字和网关真实状态一致。
 window.PROVIDER = "workbuddy";
-window.PROVIDER_REALMS = {workbuddy: "intl", qoder: "intl", trae: "cn"};
+window.PROVIDER_REALMS = {workbuddy: "intl", qoder: "intl", trae: "cn", egg: "intl"};
 
-const PROVIDER_NAMES = {workbuddy: "WorkBuddy", qoder: "Qoder", trae: "Trae"};
+const PROVIDER_NAMES = {workbuddy: "WorkBuddy", qoder: "Qoder", trae: "Trae", egg: "鸡蛋"};
 function currentProvider(){
   const p = String(window.PROVIDER || "workbuddy").toLowerCase();
-  return (p === "qoder" || p === "trae") ? p : "workbuddy";
+  return (p === "qoder" || p === "trae" || p === "egg") ? p : "workbuddy";
 }
 function providerName(p){
   return PROVIDER_NAMES[p || currentProvider()] || "WorkBuddy";
@@ -6897,24 +6970,29 @@ function withProvider(url){
 const GATEWAY_TITLE_WB = "网关与账号";
 const GATEWAY_TITLE_QODER = "Qoder 网关与账号";
 const GATEWAY_TITLE_TRAE = "Trae 网关与账号";
+const GATEWAY_TITLE_EGG = "鸡蛋网关 · 免费白嫖";
 const GATEWAY_DESC_WB = "管理账号池与代理出口，查看当日调用量、估算花费、成功率、最近请求与网关模型清单。";
 const GATEWAY_DESC_QODER = "管理 Qoder 账号池与代理出口，查看当日调用量、成功率、最近请求与网关模型清单。";
 const GATEWAY_DESC_TRAE = "管理 Trae 账号池与代理出口，查看当日调用量、成功率、最近请求与网关模型清单。";
+const GATEWAY_DESC_EGG = "免账号、免密钥聚合 OpenCode Zen 免费车道与 Kilo 免费池；切到鸡蛋会自动刷新免费模型清单。";
 // 「任务与福利」页的副标题与标题之外的说明；Qoder 模式下整页内容换成额度视图，
 // 副标题必须跟着换，否则页面在说一件它没做的事。
 const TASKS_DESC_WB = "每日活跃打卡、Buddy 加油站、成长任务与福利积分总览。";
 const TASKS_DESC_QODER = "Qoder 账号的套餐与加油包额度总览：剩余、已用与到期。";
 const TASKS_DESC_TRAE = "Trae 账号状态、积分与模型目录总览（国内版每天可签到，模型倍率随账号目录更新）。";
+const TASKS_DESC_EGG = "鸡蛋免费白嫖：没有签到与成长任务，模型清单在「网关」页刷新。";
 // 模型清单页的说明：Qoder 的目录可能没有倍率（按账号额度计费）；Trae 的
 // 倍率来自账号目录的 consumption_rate（客户端选择器同款），可正常展示。
 const MODELS_DESC_WB = "展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率";
 const MODELS_DESC_QODER = "展示 Qoder 的官方对话大模型、上下文容量、推理/视觉能力、思考控制与默认采样参数；倍率为 Credits 消耗参考系数";
 const MODELS_DESC_TRAE = "展示 Trae 的官方对话大模型、上下文容量、推理/视觉能力与默认采样参数；倍率为客户端选择器同款消耗倍率（Credits 消耗系数，含低谷折扣）";
+const MODELS_DESC_EGG = "展示鸡蛋当前可用的免费模型（OpenCode Zen 免费车道 + Kilo 免费池）、上下文容量、推理/视觉能力与工具支持；全部免账号、免密钥";
 // 三个版本卡片上展示的上游主机名，跟着提供商换。
 const PROVIDER_HOSTS = {
   workbuddy: {intl: "www.workbuddy.ai", cn: "copilot.tencent.com"},
   qoder: {intl: "qoder.com", cn: "qoder.com.cn"},
   trae: {intl: "www.trae.ai", cn: "www.trae.cn"},
+  egg: {intl: "opencode.ai", cn: "api.kilo.ai"},
 };
 
 // 提供商相关的界面同步（头部切换器、品牌名、页头文案、版本卡片主机名、
@@ -6928,27 +7006,32 @@ function syncProviderChrome(force){
   document.body.classList.toggle("provider-workbuddy", p === "workbuddy");
   document.body.classList.toggle("provider-qoder", p === "qoder");
   document.body.classList.toggle("provider-trae", p === "trae");
-  // 品牌位由 updateUI() 写：提供商名（WorkBuddy / Qoder / Trae）+ 网关真实
-  // 默认出口版本，两者都跟着服务端持久化的真实状态走。
+  document.body.classList.toggle("provider-egg", p === "egg");
+  // 品牌位由 updateUI() 写：提供商名（WorkBuddy / Qoder / Trae / 鸡蛋）+ 网关
+  // 真实默认出口版本，两者都跟着服务端持久化的真实状态走。
   const gt = document.getElementById("gatewayPageTitle");
   if(gt){
     gt.textContent = p === "qoder" ? GATEWAY_TITLE_QODER
-                   : p === "trae" ? GATEWAY_TITLE_TRAE : GATEWAY_TITLE_WB;
+                   : p === "trae" ? GATEWAY_TITLE_TRAE
+                   : p === "egg" ? GATEWAY_TITLE_EGG : GATEWAY_TITLE_WB;
   }
   const gd = document.getElementById("gatewayPageDesc");
   if(gd){
     gd.textContent = p === "qoder" ? GATEWAY_DESC_QODER
-                   : p === "trae" ? GATEWAY_DESC_TRAE : GATEWAY_DESC_WB;
+                   : p === "trae" ? GATEWAY_DESC_TRAE
+                   : p === "egg" ? GATEWAY_DESC_EGG : GATEWAY_DESC_WB;
   }
   const td = document.getElementById("pageTasksDesc");
   if(td){
     td.textContent = p === "qoder" ? TASKS_DESC_QODER
-                   : p === "trae" ? TASKS_DESC_TRAE : TASKS_DESC_WB;
+                   : p === "trae" ? TASKS_DESC_TRAE
+                   : p === "egg" ? TASKS_DESC_EGG : TASKS_DESC_WB;
   }
   const md = document.getElementById("modelsTableDesc");
   if(md){
     md.textContent = p === "qoder" ? MODELS_DESC_QODER
-                   : p === "trae" ? MODELS_DESC_TRAE : MODELS_DESC_WB;
+                   : p === "trae" ? MODELS_DESC_TRAE
+                   : p === "egg" ? MODELS_DESC_EGG : MODELS_DESC_WB;
   }
   const btnWb = document.getElementById("providerBtnWorkbuddy");
   if(btnWb){
@@ -6964,6 +7047,11 @@ function syncProviderChrome(force){
   if(btnT){
     btnT.classList.toggle("active", p === "trae");
     btnT.setAttribute("aria-pressed", p === "trae" ? "true" : "false");
+  }
+  const btnE = document.getElementById("providerBtnEgg");
+  if(btnE){
+    btnE.classList.toggle("active", p === "egg");
+    btnE.setAttribute("aria-pressed", p === "egg" ? "true" : "false");
   }
   const hosts = PROVIDER_HOSTS[p] || PROVIDER_HOSTS.workbuddy;
   const hIntl = document.getElementById("tabIntlHost");
@@ -7013,13 +7101,15 @@ async function switchProvider(p){
   // 目标出口取该提供商自己记住的那版（服务端 /realm 只给 provider 时也是这么落）。
   const targetRealm = (window.PROVIDER_REALMS && (window.PROVIDER_REALMS[p] === "intl" || window.PROVIDER_REALMS[p] === "cn"))
                       ? window.PROVIDER_REALMS[p] : window.ACTIVE_GATEWAY_REALM;
-  beginSwitch('正在切换网关到 ' + providerName(p) + ' · '
-              + (targetRealm === "cn" ? "国内版" : "国际版") + '…');
+  beginSwitch('正在切换到 ' + providerName(p)
+              + (p === 'egg' ? ' · 免费白嫖'
+                              : ' · ' + (targetRealm === "cn" ? "国内版" : "国际版"))
+              + '…');
   // 模型清单先清空：等待新目录返回的这段间隙里，不该还挂着上一个提供商的模型。
   renderModelsLoading();
   try{
     const res = await postJSON("/realm", {provider: p});
-    window.PROVIDER = (res.provider === "qoder" || res.provider === "trae" || res.provider === "workbuddy") ? res.provider : p;
+    window.PROVIDER = (res.provider === "qoder" || res.provider === "trae" || res.provider === "egg" || res.provider === "workbuddy") ? res.provider : p;
     if(res.realms && typeof res.realms === "object") window.PROVIDER_REALMS = res.realms;
     // 切提供商就是切网关真实上游：服务端把提供商和该家记住的出口一起落盘，
     // 这里同步网关出口和视图版本，品牌位（提供商 · 版本）与右边出口控件都显示
@@ -7041,6 +7131,16 @@ async function switchProvider(p){
     lastRemainingData = null;
     syncProviderChrome();
     window.updateUI();
+    // 切到鸡蛋就自动刷新免费清单：服务端 /realm 已经在后台预热，这里再强制
+    // 跑一次并等它完成，保证第一屏看到的是这次刷新的结果而不是旧名单。
+    window.__EGG_SWITCH_REFRESH__ = "";
+    if(window.PROVIDER === 'egg'){
+      try{
+        const cr = await postJSON('/catalog/refresh', {
+          realm: window.ACTIVE_GATEWAY_REALM || 'intl', provider: 'egg'});
+        window.__EGG_SWITCH_REFRESH__ = (cr && cr.ok) ? 'ok' : 'warn';
+      }catch(e){ window.__EGG_SWITCH_REFRESH__ = 'bad'; }
+    }
     await Promise.all([loadAccounts(), loadModels(), loadSchedulerStatus(), refresh()]);
     // 当前页签的内容跟着换提供商重拉一遍：这些页面只在切页签或轮询时取数，
     // 光等下一轮会停在旧提供商的数字上。
@@ -7061,9 +7161,16 @@ async function switchProvider(p){
     // 写死在配置文件里，不重应用就会一直留着上一家的模型）。
     await loadAgents();
     const synced = await syncAppliedAgents();
-    toast('网关默认上游已切换并永久保存为: ' + providerName() + '（'
-          + (window.ACTIVE_GATEWAY_REALM === "cn" ? "国内版" : "国际版") + '）'
-          + (synced ? '，已同步 ' + synced + ' 个客户端的模型' : ''), 'ok');
+    if(window.PROVIDER === 'egg'){
+      toast('网关已切换到 鸡蛋（免费白嫖）'
+            + (window.__EGG_SWITCH_REFRESH__ === 'ok' ? '，免费模型清单已刷新' : '')
+            + (window.__EGG_SWITCH_REFRESH__ === 'warn' ? '，但这次刷新没拿到新清单，已保留上次结果' : '')
+            + (synced ? '，已同步 ' + synced + ' 个客户端的模型（重启客户端后生效）' : ''), 'ok');
+    } else {
+      toast('网关默认上游已切换并永久保存为: ' + providerName() + '（'
+            + (window.ACTIVE_GATEWAY_REALM === "cn" ? "国内版" : "国际版") + '）'
+            + (synced ? '，已同步 ' + synced + ' 个客户端的模型（重启客户端后生效）' : ''), 'ok');
+    }
   }catch(e){
     alert('切换提供商失败: ' + e.message);
     // 切失败时表还停在「加载中…」，把当前提供商的清单拉回来。
@@ -7106,8 +7213,9 @@ function updateUI(){
   // 提供商前缀，和 WorkBuddy 的同名区块一眼区分。
   const sectionProvider = (currentProvider() === 'qoder' ? "Qoder · "
                           : currentProvider() === 'trae' ? "Trae · " : "");
-  const sectionRealm = "（" + sectionProvider
-                     + (isIntlView ? "国际版" : "国内版") + "）";
+  const sectionRealm = (currentProvider() === 'egg')
+                     ? "（鸡蛋 · 免费模型）"
+                     : "（" + sectionProvider + (isIntlView ? "国际版" : "国内版") + "）";
   ["disabledRealmTag", "recentRealmTag", "modelsRealmTag"].forEach(function(id){
     const el = document.getElementById(id);
     if(el) el.textContent = sectionRealm;
@@ -7128,7 +7236,8 @@ function updateUI(){
   const brandTitle = document.getElementById("brandTitle");
   if(brandTitle) brandTitle.textContent = providerName();
   const brandRealm = document.getElementById("brandRealm");
-  if(brandRealm) brandRealm.textContent = isIntlGw ? "国际版 (Global)" : "国内版 (China)";
+  if(brandRealm) brandRealm.textContent = currentProvider() === 'egg'
+    ? "免费白嫖" : (isIntlGw ? "国际版 (Global)" : "国内版 (China)");
   const gwName = document.getElementById("activeGatewayName");
   if(gwName) gwName.textContent = isIntlGw ? "国际版" : "国内版";
   const ep = document.getElementById("activeEndpoint");
@@ -7258,7 +7367,7 @@ async function toggleActiveGatewayRealm(){
     const synced = await syncAppliedAgents();
     toast("网关默认上游已切换并永久保存为: " + providerName() + "（"
           + (window.ACTIVE_GATEWAY_REALM === "intl" ? "国际版" : "国内版") + "）"
-          + (synced ? '，已同步 ' + synced + ' 个客户端的模型' : ''));
+          + (synced ? '，已同步 ' + synced + ' 个客户端的模型（重启客户端后生效）' : ''));
   }catch(e){
     alert("切换失败: " + e.message);
     loadModels();
@@ -7278,7 +7387,7 @@ async function refreshActiveRealm(){
     const r = await getJSON("/realm");
     if(r && r.current) window.ACTIVE_GATEWAY_REALM = r.current;
     if(r && r.realms && typeof r.realms === "object") window.PROVIDER_REALMS = r.realms;
-    if(r && (r.provider === "qoder" || r.provider === "trae" || r.provider === "workbuddy")) window.PROVIDER = r.provider;
+    if(r && (r.provider === "qoder" || r.provider === "trae" || r.provider === "egg" || r.provider === "workbuddy")) window.PROVIDER = r.provider;
   } catch(e){}
 }
 
@@ -7291,7 +7400,7 @@ async function initRealm(){
   // ?provider= 只在本次会话里钉住看板视图（书签/对比用），**不**改服务端状态；
   // 刷新后仍然跟服务端记着的值走。
   const provFromUrl = new URLSearchParams(window.location.search).get('provider');
-  if(provFromUrl === 'qoder' || provFromUrl === 'trae' || provFromUrl === 'workbuddy') window.PROVIDER = provFromUrl;
+  if(provFromUrl === 'qoder' || provFromUrl === 'trae' || provFromUrl === 'egg' || provFromUrl === 'workbuddy') window.PROVIDER = provFromUrl;
   window.VIEW_REALM = window.ACTIVE_GATEWAY_REALM;
   const viewFromUrl = new URLSearchParams(window.location.search).get('view');
   if(viewFromUrl && ['intl', 'cn'].includes(viewFromUrl)) window.VIEW_REALM = viewFromUrl;
@@ -7306,7 +7415,9 @@ async function refreshModelCatalog(btn){
   // （服务端会挑该版本自己的账号发请求）。Qoder 由面板显式点名 provider。
   const realm = window.VIEW_REALM === 'cn' ? 'cn' : 'intl';
   const provider = currentProvider();
-  const label = (provider === 'qoder' ? 'Qoder ' : (provider === 'trae' ? 'Trae ' : '')) + (realm === 'cn' ? '国内版' : '国际版');
+  const label = provider === 'egg' ? '鸡蛋 '
+              : (provider === 'qoder' ? 'Qoder ' : (provider === 'trae' ? 'Trae ' : ''))
+                + (realm === 'cn' ? '国内版' : '国际版');
   if(btn) btn.disabled = true;
   const prevText = btn ? btn.textContent : '';
   if(btn) btn.textContent = '刷新中...';
@@ -7315,6 +7426,12 @@ async function refreshModelCatalog(btn){
     if(r && r.ok){
       toast(label + '模型清单：' + (r.msg || '已更新'), 'ok');
       await loadModels();
+      // 上游清单变了，客户端配置里写死的模型表也得跟着换（OpenCode 等）。
+      await loadAgents();
+      const synced = await syncAppliedAgents();
+      if(synced){
+        toast('已同步 ' + synced + ' 个客户端的模型（重启客户端后生效）', 'ok');
+      }
     } else if(r && r.cooldown){
       // 冷却不是失败：清单还在、只是这次没到窗口，按提示语气说。
       toast(label + '模型清单：' + (r.msg || '刷新太频繁'), 'warn');
@@ -7351,6 +7468,10 @@ async function loadModels(){
     if(seq !== MODELS_REQ_SEQ) return;
     MODELS_DATA = r.data || [];
     renderModelsSourceLine(r.catalog || null);
+    if(currentProvider() === 'egg'){
+      window.EGG_STATUS = r.egg || null;
+      renderEggOverview();
+    }
     renderAvailableModels();
   }catch(e){
     if(seq !== MODELS_REQ_SEQ) return;
@@ -7362,6 +7483,63 @@ async function loadModels(){
       const countEm = document.getElementById('availModelCount');
       if(countEm) countEm.textContent = '(加载失败)';
     }
+  }
+}
+
+// 鸡蛋概览：免费源状态来自 /v1/models 响应的 egg 字段（wb_zen.status），
+// 模型条数与 /v1/models 的 data 同源。刷新按钮走 POST /catalog/refresh。
+function renderEggOverview(){
+  const st = window.EGG_STATUS || null;
+  const src = (st && st.sources) || {};
+  const set = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
+  const zenCount = st && st.zen != null ? st.zen : ((src.zen && src.zen.count) || 0);
+  const kiloCount = st && st.kilo != null ? st.kilo : ((src.kilo && src.kilo.count) || 0);
+  const total = st && st.count != null ? st.count : MODELS_DATA.length;
+  set('eggModelCount', total ? String(total) : '—');
+  set('eggZenCount', zenCount ? String(zenCount) : '0');
+  set('eggKiloCount', kiloCount ? String(kiloCount) : '0');
+  set('eggCatalogAt', fmtCatalogStamp(st && st.at) || '—');
+  const el = document.getElementById('eggSourceLine');
+  if(!el) return;
+  if(!st){
+    el.style.cssText = '';
+    el.textContent = '免费源状态：等待刷新（点击「刷新免费模型」或切到其它提供商再切回来）';
+    return;
+  }
+  const describe = name => {
+    const item = src[name] || null;
+    if(!item) return name === 'zen' ? 'Zen 免费车道：等待刷新' : 'Kilo 免费池：等待刷新';
+    const label = name === 'zen' ? 'Zen 免费车道' : 'Kilo 免费池';
+    if(item.ok) return label + '：✓ ' + (item.count || 0) + ' 个';
+    return label + '：⚠ 本次不可用' + (item.error ? '（' + item.error + '）' : '');
+  };
+  const note = st.note ? ' · ' + st.note : '';
+  el.style.cssText = 'flex-direction:column;align-items:flex-start;gap:2px';
+  el.innerHTML = '<b>免费源状态</b>'
+    + '<span style="color:var(--dim)">' + esc(describe('zen') + ' · ' + describe('kilo'))
+    + esc(note) + '</span>'
+    + '<span style="color:var(--dim)">免费名单轮换很快：切到鸡蛋会自动刷新，清单 180 秒过期；失败的源会保留上一次可用结果。</span>';
+}
+
+async function refreshEggCatalog(btn){
+  if(btn) btn.disabled = true;
+  const prevText = btn ? btn.textContent : '';
+  if(btn) btn.textContent = '刷新中...';
+  try{
+    const r = await postJSON('/catalog/refresh', {
+      realm: window.VIEW_REALM || 'intl', provider: 'egg'});
+    if(r && r.ok){
+      toast('鸡蛋免费模型：' + (r.msg || '已更新'), 'ok');
+    } else if(r && r.cooldown){
+      toast('鸡蛋免费模型：' + (r.msg || '刷新太频繁'), 'warn');
+    } else {
+      toast('鸡蛋免费模型刷新失败：' + ((r && r.msg) || '未知原因'), 'warn');
+    }
+    await loadModels();
+  }catch(e){
+    toast('鸡蛋免费模型刷新失败：' + e.message, 'bad');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = prevText || '刷新免费模型'; }
   }
 }
 
@@ -7385,6 +7563,7 @@ function catalogSourceLabel(source){
     const p = currentProvider();
     if(p === 'qoder') return '上游 API · Qoder 模型清单';
     if(p === 'trae') return '上游 API · Trae get_detail_param';
+    if(p === 'egg') return '上游 API · OpenCode Zen / Kilo 免费池';
   }
   return CATALOG_SOURCE_ORIGIN[source] || source;
 }
@@ -7408,6 +7587,9 @@ function renderModelsSourceLine(meta){
     : (currentProvider() === 'trae')
     ? '清单构建顺序：先请求上游 API（Trae get_detail_param，用当前视图版本的账号，目录与倍率均取自上游响应）→ 失败则用内置快照。'
       + '清单在 5 分钟缓存期内复用，过期自动重取；点「刷新模型清单」可立即更新。倍率是客户端同款消耗倍率（含低谷折扣）。'
+    : (currentProvider() === 'egg')
+    ? '清单构建顺序：同时拉 OpenCode Zen 免费车道与 Kilo 免费池（无需账号/密钥）→ 某个源失败时保留它上一次的可用结果。'
+      + '目录 180 秒过期，切到鸡蛋会自动刷新；点「刷新免费模型」可立即重拉。'
     : '清单构建顺序：先请求上游 API（/v3/config，用当前视图版本的账号）→ 失败则读取本机桌面客户端缓存文件 → 都拿不到才用内置快照。'
       + '清单在 5 分钟缓存期内复用，过期自动重取；网关后台每天也会兜底获取一次；点「刷新模型清单」可立即从上游更新。';
   if(!meta || !meta.source){
@@ -7464,7 +7646,10 @@ function renderAvailableModels(){
     const c = credText.toLowerCase().replace('x', '');
     const credNote = String(m.credits_note || '').trim();
     const credTitle = credNote ? ' title="' + esc(credNote) + '"' : '';
-    if(c === '0.00' || c === '0'){
+    if(currentProvider() === 'egg' && (c === '0.00' || c === '0' || !credText)){
+      // 鸡蛋的全部模型都是免费额度：显示「免费」比「限时免费 0.00x」准确。
+      credBadge = '<span class="badge ok" style="background:var(--accent2-soft);color:var(--accent2)"' + credTitle + '>免费</span>';
+    } else if(c === '0.00' || c === '0'){
       // 0 就是官网选择器里的「限时免费」（Qoder 的 Efficient 目前就是这种）。
       credBadge = '<span class="badge ok" style="background:var(--accent2-soft);color:var(--accent2)"' + credTitle + '>限时免费 0.00x</span>';
     } else if(credText){
@@ -7643,8 +7828,8 @@ async function loadIntlTasks(){
 }
 
 async function loadGrowthTasks(){
-  // Trae 没有签到/成长任务体系：切到 Trae 视图时不必去打 WorkBuddy 的任务接口。
-  if(currentProvider() === 'trae') return;
+  // Trae / 鸡蛋没有签到/成长任务体系：切到这些视图时不必去打 WorkBuddy 的任务接口。
+  if(currentProvider() === 'trae' || currentProvider() === 'egg') return;
   loadIntlTasks();
   const sec = document.getElementById("sectionGrowthTasks");
   if(!sec) return;
@@ -9375,7 +9560,7 @@ function activityStatusChip(a){
 async function loadActivityToday(){
   // 签到/活跃是 WorkBuddy 专属数据：Qoder / Trae 视图不读它，账号行的
   // 「今日活动」一列会显示占位符（见 activityStatusChip）。
-  if(currentProvider() === 'qoder' || currentProvider() === 'trae'){
+  if(currentProvider() === 'qoder' || currentProvider() === 'trae' || currentProvider() === 'egg'){
     ACTIVITY_TODAY = {byUid: {}, error: '', loaded: true};
     return;
   }
@@ -10113,7 +10298,8 @@ async function loadAccounts(){
     if(LAST_CREDIT_DATA) renderCreditHistory();
     // Auto-fetch credits once if not present. Trae 积分改为在 Trae 页按需查询
     //（或后台定时刷新），避免每次打开网关页都打一轮 Trae 积分接口。
-    if(currentProvider() !== 'trae' && window.ACCOUNTS.length && window.ACCOUNTS.some(a => !a.credits)){
+    if(currentProvider() !== 'trae' && currentProvider() !== 'egg'
+       && window.ACCOUNTS.length && window.ACCOUNTS.some(a => !a.credits)){
       postJSON('/accounts/credits', {provider: currentProvider()}).then(r => {
         window.ACCOUNTS = r.accounts || ACCOUNTS;
         renderAccounts();
@@ -12520,8 +12706,12 @@ function accountsPageSections(){
   });
   const found = [];
   scopes.forEach(scope => Array.from(scope.children).forEach(el => {
-    if(el.tagName === 'SECTION' && found.indexOf(el) === -1) found.push(el);
+    // 鸡蛋的说明区块不是账号区，不参与搬移，也不吃 .accounts-section 的收起规则。
+    if(el.tagName === 'SECTION' && el.id !== 'sectionEggAccounts'
+       && found.indexOf(el) === -1) found.push(el);
   }));
+  // 标记成账号区块：鸡蛋视图下由 CSS 统一收起（区块在合并模式下会被搬到网关页）。
+  found.forEach(el => { try{ el.classList.add('accounts-section'); }catch(e){} });
   if(found.length) _accountsSections = found;
   return found;
 }
@@ -14719,6 +14909,8 @@ function switchMainTab(tab){
   // 账号页被合并掉之后（设置里的「账号独立成一个页签」关闭，默认），
   // ?tab=accounts 的书签与上次停留的页签都退回「网关与账号」页——区块就在那一页里。
   if(tab === 'accounts' && !_accountsSeparateTab) tab = 'gateway';
+  // 鸡蛋没有账号可管：账号页的书签/停留页签都退回网关页（入口也由 CSS 收起）。
+  if(tab === 'accounts' && currentProvider() === 'egg') tab = 'gateway';
   currentMainTab = tab;
   // Remember the page across reloads. The URL is updated so the address bar
   // matches what is on screen and a copied link reopens the same page;
@@ -15066,6 +15258,34 @@ async function syncAppliedAgents(){
   return synced;
 }
 
+/* 手动把当前网关的模型清单同步进已配置的客户端（不用切网关）。
+   OpenCode / Crush / ZCode / DSH 把模型写死在各自的配置文件里，模型表不刷新，
+   选择器里就一直停在上一个提供商的目录——「切了网关，模型却没变」。
+   客户端多数只在启动时读一次配置：同步完要重启客户端（或让它重载配置）。 */
+async function syncAgentModels(btn){
+  if(btn){ btn.disabled = true; }
+  try{
+    await loadAgents();
+    const synced = await syncAppliedAgents();
+    const skipped = agentClients().filter(c =>
+      c.applied && c.applied.external_change);
+    await loadAgents();
+    if(synced){
+      toast('已把当前网关的模型清单同步到 ' + synced + ' 个客户端（重启客户端后生效）', 'ok');
+    }else{
+      toast('没有可同步的客户端：还没有客户端指向本网关', 'warn');
+    }
+    if(skipped.length){
+      toast('跳过 ' + skipped.length + ' 个被手工改过的客户端：'
+            + skipped.map(c => (c.label || c.id)).join('、'), 'warn');
+    }
+  }catch(e){
+    if(!isAuthError(e)) toast('同步失败: ' + e.message, 'bad');
+  }finally{
+    if(btn){ btn.disabled = false; }
+  }
+}
+
 async function restoreAgent(id, btn){
   const client = agentFindClient(id);
   const label = (client && (client.label || client.name)) || id;
@@ -15101,6 +15321,7 @@ window.renderAgentCards = renderAgentCards;
 window.applyAgent = applyAgent;
 window.restoreAgent = restoreAgent;
 window.copyAgentUrl = copyAgentUrl;
+window.syncAgentModels = syncAgentModels;
 
 /* ---- 系统运行日志模块 ---- */
 let logEntries = [];
