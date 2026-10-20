@@ -204,6 +204,76 @@ try:
         check("未知模型报错", False, "没有抛异常")
     except wb_zen.EggError as exc:
         check("未知模型报错", exc.status == 400, exc.detail)
+
+    # 一路拉挂时，另一路不能跟着完蛋（否则新用户只剩一条被地区封掉的车道）
+    orig_fetch = {
+        "zen": wb_zen.fetch_zen_listing,
+        "kilo": wb_zen.fetch_kilo_listing,
+    }
+    try:
+        wb_zen.fetch_zen_listing = lambda *a, **k: ["deepseek-v4.1-flash-free"]
+        wb_zen.fetch_kilo_listing = lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("模拟上游超时"))
+        wb_zen._state["models"] = []
+        wb_zen._state["at"] = 0.0
+        snap = wb_zen.refresh(force=True, timeout=5)
+        ids = [m.get("id") for m in snap.get("models") or []]
+        check("Kilo 拉挂了仍有 Kilo 的模型（静态兜底）",
+              any(i.endswith(":free") for i in ids), ids[:5])
+        check("Zen 那一路照常在", "deepseek-v4.1-flash-free" in ids, ids[:5])
+    finally:
+        wb_zen.fetch_zen_listing = orig_fetch["zen"]
+        wb_zen.fetch_kilo_listing = orig_fetch["kilo"]
+
+    # 鸡蛋出口代理：设置 → 解析成地址 → 槽位没了就当直连
+    import wb_settings
+    wb_settings.set_proxy_slots(tmp, [{"name": "测试槽", "url": "http://127.0.0.1:9",
+                                       "enabled": True}])
+    slots = wb_settings.proxy_slots(tmp)
+    check("代理槽存下来了", len(slots) == 1, slots)
+    slot_id = slots[0]["id"]
+    check("默认鸡蛋出口是直连",
+          wb_settings.egg_proxy_slot(tmp) == "", wb_settings.egg_proxy_slot(tmp))
+    check("默认直连没有代理地址",
+          wb_settings.egg_proxy_url(tmp) == "", wb_settings.egg_proxy_url(tmp))
+    wb_settings.set_egg_proxy_slot(tmp, slot_id)
+    check("指定槽位后拿到代理地址",
+          wb_settings.egg_proxy_url(tmp) == "http://127.0.0.1:9",
+          wb_settings.egg_proxy_url(tmp))
+    try:
+        wb_settings.set_egg_proxy_slot(tmp, "slot-does-not-exist")
+        check("指向不存在的槽子要报错", False, "没有抛异常")
+    except ValueError:
+        check("指向不存在的槽子要报错", True)
+    wb_settings.set_proxy_slots(tmp, [])
+    check("槽位被删了就算直连",
+          wb_settings.egg_proxy_url(tmp) == "", wb_settings.egg_proxy_url(tmp))
+
+    # 代理连不上 → 回退直连（代理挂了不等于上游拒了，不该整个哑掉）
+    from wb_accounts import urlopen_with_fallback
+    calls = []
+
+    def fake_urlopen(req, timeout=30, proxy=""):
+        calls.append(proxy)
+        if proxy:
+            raise OSError("代理连不上")
+        class _R(object):
+            def read(self, n=-1):
+                return b"ok"
+        return _R()
+
+    import wb_accounts
+    orig_urlopen = wb_accounts.urlopen
+    try:
+        wb_accounts.urlopen = fake_urlopen
+        resp = urlopen_with_fallback(
+            __import__("urllib.request", fromlist=["x"]).Request("http://x/"),
+            timeout=1, proxy="http://127.0.0.1:9")
+        check("代理不通时回退直连",
+              calls == ["http://127.0.0.1:9", ""], calls)
+        check("回退后仍拿到响应", resp.read() == b"ok")
+    finally:
+        wb_accounts.urlopen = orig_urlopen
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 

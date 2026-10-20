@@ -33,9 +33,11 @@ KILO_UA = "zen-gate/1.4"
 CATALOG_TTL_SECONDS = 180
 #: 单个源的列表请求超时。两个源并发拉取，整体上限由 _refresh_locked 的
 #: 共享截止时间控制（约等于这个值），不会因为先 join 一个慢源再等另一个而叠加。
-#: Kilo 的 /models 返回 500KB+，实测 3~18s（TLS 握手波动大）；给到 20s 以减少
-#: 偶发超时，同时避免面板切换等待过久。zen-gate 用的 15s 在这台机器上仍会超时。
-LIST_TIMEOUT_SECONDS = 20
+#: Kilo 的 /models 返回 500KB+，实测 3~18s（TLS 握手波动大）；给到 45s —— 20s
+#: 太贴边，慢一点的网就正好超时，然后新用户只剩 Zen 那一路，而 Zen 在不少地区
+#: 是被按 IP 拒掉的，等于「鸡蛋网关一个模型都不可用」。冷启动那一轮不等上游
+#: （见 ensure），所以这个上限只在明确要刷新时才真的占这么久。
+LIST_TIMEOUT_SECONDS = 45
 
 #: 目录落盘文件名（放在 accounts 目录里，跟其它运行期状态一起）。
 CATALOG_FILENAME = "zen-catalog.json"
@@ -182,6 +184,12 @@ KILO_FALLBACK_IDS = [
     "kilo-auto/free", "minimax/minimax-m3.1-flash:free",
     "nvidia/nemotron-3.5-super-vl:free", "reflection/beam-free",
     "stealth/glyph-cluster", "xingchen-agi/xing4.0-29b-a4b:free",
+    "cohere/north-mini-code:free", "dots-studio/dots-3-note-preview:free",
+    "liquid/lfm-2.5-2.6b:free", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+    "nvidia/nemotron-3-super-120b-a12b:free", "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nvidia/nemotron-3.5-content-safety:free", "nvidia/nemotron-3.5-lightning:free",
+    "openrouter/free", "poolside/laguna-s-2.1:free", "poolside/laguna-xs-2.1:free",
+    "thinkingmachines/inkling-small:free",
 ]
 
 #: 免费池的短名：面板的模型清单要标出每个模型属于哪一路免费源，两者的限流、
@@ -585,32 +593,55 @@ def _save_cache():
         _log("egg catalog: 写入缓存失败（%s）" % exc)
 
 
-def _static_models():
+def _static_zen_models():
     models = []
     for mid in ZEN_FALLBACK_IDS:
         if _SYSTEM_ONE_RE.search(mid):
             continue
         models.append(_zen_model(mid))
-    for mid in KILO_FALLBACK_IDS:
-        models.append({
-            "id": mid,
-            "name": _display_name(mid.split("/")[-1].replace(":free", "")),
-            "source": "kilo",
-            "sourceLabel": "Kilo 免费池",
-            "context": 131072,
-            "output": 32768,
-            "vision": False,
-            "reasoning": False,
-            "tools": True,
-            "blurb": "Kilo 免费池模型，无需任何凭据；免费池提示词可能被上游记录，别交机密内容。",
-        })
     return models
 
 
+def _static_kilo_models():
+    return [{
+        "id": mid,
+        "name": _display_name(mid.split("/")[-1].replace(":free", "")),
+        "source": "kilo",
+        "sourceLabel": "Kilo 免费池",
+        "context": 131072,
+        "output": 32768,
+        "vision": False,
+        "reasoning": False,
+        "tools": True,
+        "blurb": "Kilo 免费池模型，无需任何凭据；免费池提示词可能被上游记录，别交机密内容。",
+    } for mid in KILO_FALLBACK_IDS]
+
+
+def _static_models():
+    return _static_zen_models() + _static_kilo_models()
+
+
+def _proxy_url():
+    """鸡蛋免费车道的出口代理地址（空串 = 直连）。
+
+    Zen 免费车道按出口 IP 判「滥用流量」，直连的机器会被整条拒掉；Kilo 免费池
+    同理可能撞上地区限制。设置里指定的代理槽对这两条车道统一生效（见
+    wb_settings.egg_proxy_url）。每次现取，改了设置立刻生效。
+    """
+    if not _data_dir:
+        return ""
+    try:
+        import wb_settings
+        return wb_settings.egg_proxy_url(_data_dir)
+    except Exception:
+        return ""
+
+
 def _http_json(url, headers, timeout):
-    from wb_accounts import urlopen
+    from wb_accounts import urlopen_with_fallback
     req = urllib.request.Request(url, headers=headers)
-    with urlopen(req, timeout=timeout) as resp:
+    with urlopen_with_fallback(req, timeout=timeout, proxy=_proxy_url(),
+                               log=_log) as resp:
         raw = resp.read(8 << 20)
     return json.loads(raw.decode("utf-8", "replace"))
 
@@ -754,11 +785,15 @@ def _refresh_locked(force, timeout):
         else:
             kilo_rows = value
     if zen_ids is None:
-        zen_models = previous["zen"]
+        # 这一路拉挂了：先用上一次的，没有就退回静态兜底清单。**不能整份清空**
+        # —— 新用户首次启动时 Kilo 的目录常常拉超时（那个上游要 17 秒左右），
+        # 而 Zen 又可能按地区把整条车道拒掉；一锅端的话新用户拿到的就是一份
+        # 全都 403 的清单，「鸡蛋网关不能用」。
+        zen_models = previous["zen"] or _static_zen_models()
     else:
         zen_models = [_zen_model(mid) for mid in zen_ids if mid]
     if kilo_rows is None:
-        kilo_models = previous["kilo"]
+        kilo_models = previous["kilo"] or _static_kilo_models()
     else:
         kilo_models = [_kilo_model(row) for row in kilo_rows
                        if isinstance(row, dict)]
@@ -789,13 +824,59 @@ def _refresh_locked(force, timeout):
 
 
 def ensure(directory=None, timeout=LIST_TIMEOUT_SECONDS):
-    """按 TTL 取目录；冷启动或过期时自动走一次刷新。"""
+    """按 TTL 取目录；冷启动或过期时自动走一次刷新。
+
+    冷启动（目录还是空的）**不等上游**：先把静态兜底清单交出去，真实目录在
+    后台慢慢拉。新用户克隆下来第一次调 /v1/models，不该为了等一个要十几秒的
+    上游而卡住 —— 卡住的印象比「清单暂时是兜底版」差得多。
+    """
     if directory is not None:
         configure(directory)
     with _lock:
         if _state["models"] and time.time() - _state["at"] < CATALOG_TTL_SECONDS:
             return snapshot()
+        cold = not _state["models"]
+    if cold:
+        _warm_in_background()
+        return _static_snapshot()
     return refresh(force=False, timeout=timeout)
+
+
+_warm_thread = {"thread": None}
+
+
+def _warm_in_background():
+    """后台拉一次目录（冷启动用）。已经在跑就不重复拉。"""
+    with _lock:
+        thread = _warm_thread["thread"]
+        if thread is not None and thread.is_alive():
+            return
+
+    def run():
+        try:
+            refresh(force=False)
+        except Exception as exc:
+            _log("egg catalog: 后台预热失败（%s）" % exc)
+
+    thread = threading.Thread(target=run, name="egg-catalog-warm")
+    thread.daemon = True
+    _warm_thread["thread"] = thread
+    thread.start()
+
+
+def _static_snapshot():
+    """还没拉到真实目录时给出去的兜底视图。"""
+    return {
+        "at": 0.0,
+        "models": _static_models(),
+        "sources": {
+            "zen": {"ok": False, "count": len(_static_zen_models()),
+                    "error": "正在拉取真实目录"},
+            "kilo": {"ok": False, "count": len(_static_kilo_models()),
+                     "error": "正在拉取真实目录"},
+        },
+        "note": "静态兜底清单（正在拉取真实目录）",
+    }
 
 
 def snapshot():
@@ -1234,11 +1315,12 @@ def open_stream(payload, session_key="", timeout=600):
     """打开一次免费上游流；返回 (EggUpstream, 元数据)。"""
     url, body, headers, rename, source, base, sse = build_request(payload,
                                                                   session_key)
-    from wb_accounts import urlopen
+    from wb_accounts import urlopen_with_fallback
     data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST", headers=headers)
     try:
-        resp = urlopen(req, timeout=timeout)
+        resp = urlopen_with_fallback(req, timeout=timeout, proxy=_proxy_url(),
+                                     log=_log)
     except urllib.error.HTTPError as exc:
         detail = ""
         try:

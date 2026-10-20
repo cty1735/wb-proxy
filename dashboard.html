@@ -2876,6 +2876,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '账号 Token 自动保活与凭证常驻 (每日 22:00 集中巡检)': 'Automatic account token keep-alive and persistent credentials (batch check daily at 22:00)',
     '账号不存在': 'Account does not exist',
     '账号代理槽': 'Account proxy slots',
+    '鸡蛋出口代理': 'Egg egress proxy',
+    '直连（不用代理）': 'Direct (no proxy)',
+    'Zen 免费车道、Kilo 免费池、自建供应商池的请求都从这个出口出去。免费车道按出口 IP 判地区与滥用，直连被拒时挂一个槽位就能用；代理连不上会自动回退直连。': 'Requests from the Zen free lane, the Kilo free pool and your own provider pools all leave through this exit. The free lanes judge the exit IP for region and abuse, so when a direct connection is refused a proxy slot gets them working; if the proxy is unreachable the gateway falls back to a direct connection.',
+    '还没有代理槽。先在上面「自动发现 mihomo 端口」或「+ 添加槽位」，再回到这里选它。': 'No proxy slot yet. Use "Auto-discover mihomo ports" or "+ Add slot" above first, then pick it here.',
+    '当前出口：': 'Current exit: ',
+    '—— 鸡蛋的所有请求都从这里出去。': ' - every request of the egg gateway leaves through it.',
+    '当前出口：直连（本机 IP）。Zen 免费车道在部分地区会被上游按 IP 拒掉，遇到 403 可以换一个槽位。': 'Current exit: direct (this machine\'s IP). The Zen free lane is refused by the upstream in some regions - switch to a slot when you hit a 403.',
+    '鸡蛋出口已切到 ': 'Egg egress switched to ',
+    '鸡蛋出口改为直连': 'Egg egress switched back to a direct connection',
     '账号余额低于该值时不再接单，避免余额被用尽后触发上游的短信提醒。填 0 表示关闭。': 'An account stops taking orders once its balance drops below this, so the balance is never drained enough to trigger the upstream SMS alert. 0 turns it off.',
     '账号凭证刷新成功': 'Account credentials refreshed',
     '账号列表是空的': 'The account list is empty',
@@ -5575,6 +5584,21 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       </div>
       <div id="slotList"></div>
       <div id="slotDiscover"></div>
+      <!-- 鸡蛋车道的出口：Zen 免费车道 / Kilo 免费池 / 自建供应商池都从这里出。
+           免费车道按出口 IP 判地区与滥用，直连被拒时挂一个槽位就能用。 -->
+      <div id="eggProxyBox" style="margin-top:16px;padding:14px;border:1px solid var(--line);border-radius:12px">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <div style="flex:1 1 300px">
+            <div style="font-weight:600;font-size:13px">鸡蛋出口代理</div>
+            <div style="font-size:12px;color:var(--dim);margin-top:3px">
+              Zen 免费车道、Kilo 免费池、自建供应商池的请求都从这个出口出去。免费车道按出口 IP 判地区与滥用，直连被拒时挂一个槽位就能用；代理连不上会自动回退直连。
+            </div>
+          </div>
+          <select id="eggProxySlot" onchange="saveEggProxySlot(this)"
+                  style="min-width:220px;min-height:36px"></select>
+        </div>
+        <div id="eggProxyState" style="font-size:12px;color:var(--dim);margin-top:8px"></div>
+      </div>
     </section>
 
     <section>
@@ -15697,6 +15721,9 @@ async function saveApiKeys(btn){
 }
 
 let PROXY_SLOTS = [];
+/* 鸡蛋车道的出口代理槽 id（空 = 直连）。跟账号绑哪个槽是两回事：账号是
+ * 账号自己的事，这里管鸡蛋这一摊（Zen 免费车道 / Kilo 免费池 / 自建池）。 */
+let EGG_PROXY_SLOT = '';
 /* 编辑器里有未保存改动时为 true（issue #79）。
  *
  * 刷新槽位是「拉服务端列表 → 整体替换 → 重绘整张表」，而「+ 添加槽位」只是把
@@ -15748,9 +15775,59 @@ async function loadProxySlots(force){
   try{
     const r = await getJSON('/proxy/slots');
     PROXY_SLOTS = r.slots || [];
+    EGG_PROXY_SLOT = r.egg_slot || '';
     renderProxySlots();
+    renderEggProxySlot();
   }catch(e){
     // Panel not logged in yet; actions on the settings page surface errors.
+  }
+}
+
+/* 鸡蛋出口代理的下拉：直连 + 每个槽位。槽位停用了照样列出来（可能只是想
+ * 先选中、晚点再启用），但标出来。 */
+function renderEggProxySlot(){
+  const sel = document.getElementById('eggProxySlot');
+  if(!sel) return;
+  const opts = ['<option value="">直连（不用代理）</option>'];
+  PROXY_SLOTS.forEach(s => {
+    opts.push('<option value="' + esc(s.id) + '">'
+      + esc(s.label || s.name || s.id)
+      + (s.enabled === false ? '（停用）' : '') + '</option>');
+  });
+  sel.innerHTML = opts.join('');
+  sel.value = EGG_PROXY_SLOT || '';
+  const stateEl = document.getElementById('eggProxyState');
+  if(stateEl){
+    if(!PROXY_SLOTS.length){
+      stateEl.innerHTML = '还没有代理槽。先在上面「自动发现 mihomo 端口」或「+ 添加槽位」，'
+        + '再回到这里选它。';
+      stateEl.style.color = 'var(--warn)';
+    }else if(EGG_PROXY_SLOT){
+      const slot = PROXY_SLOTS.find(s => s.id === EGG_PROXY_SLOT);
+      stateEl.innerHTML = '当前出口：<b>' + esc(slot ? (slot.label || slot.name || slot.id) : EGG_PROXY_SLOT)
+        + '</b>' + (slot && slot.ip ? '（' + esc(slot.ip) + '）' : '')
+        + ' —— 鸡蛋的所有请求都从这里出去。';
+      stateEl.style.color = 'var(--dim)';
+    }else{
+      stateEl.innerHTML = '当前出口：直连（本机 IP）。Zen 免费车道在部分地区会被上游按 IP 拒掉，'
+        + '遇到 403 可以换一个槽位。';
+      stateEl.style.color = 'var(--dim)';
+    }
+  }
+}
+
+async function saveEggProxySlot(el){
+  el.disabled = true;
+  try{
+    const r = await postJSON('/proxy/egg-slot', {id: el.value || ''});
+    EGG_PROXY_SLOT = (r && r.egg_slot) || '';
+    renderEggProxySlot();
+    toast(EGG_PROXY_SLOT ? '鸡蛋出口已切到 ' + EGG_PROXY_SLOT : '鸡蛋出口改为直连', 'ok');
+  }catch(e){
+    toast('切换失败: ' + (e && e.message ? e.message : e), 'bad');
+    renderEggProxySlot();
+  }finally{
+    el.disabled = false;
   }
 }
 

@@ -195,6 +195,29 @@ def urlopen(req, timeout=30, proxy=""):
     return opener.open(req, timeout=timeout)
 
 
+def urlopen_with_fallback(req, timeout=30, proxy="", log=None):
+    """走指定代理；代理本身连不上时回退直连。
+
+    鸡蛋的出口挂在一个代理槽上。代理进程挂了、端口没监听、代理自身超时 ——
+    这些都是「代理没了」，不是「上游拒了」，这时回退直连还能继续干活（Zen
+    免费车道直连会被 403，Kilo 免费池直连照常能用）。所以只有连不上代理才
+    回退；上游真回了 4xx/5xx（HTTPError）就原样抛出去，不换出口重试 ——
+    换个出口再问一次，403/429 的判定还是上游说的那份，不该由我们改口径。
+
+    回退会写一行日志：出口变了，操作者得知道。
+    """
+    if not proxy:
+        return urlopen(req, timeout=timeout)
+    try:
+        return urlopen(req, timeout=timeout, proxy=proxy)
+    except urllib.error.HTTPError:
+        raise
+    except Exception as exc:
+        if log:
+            log("代理 %s 连不上（%s），鸡蛋出口回退直连" % (proxy, exc))
+        return urlopen(req, timeout=timeout)
+
+
 def http_json(url, data=None, method=None, headers=None, timeout=30,
               retries=3, backoff=1.0, log=None, proxy=""):
     """urlopen + json decode with retries.

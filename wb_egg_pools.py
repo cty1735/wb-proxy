@@ -701,10 +701,27 @@ def set_models(pool_id, models):
 # 拉模型清单
 # ---------------------------------------------------------------------------
 
+def _proxy_url():
+    """供应商池的出口代理地址（空串 = 直连）。
+
+    自建池用的多半是境外上游（OpenRouter 之类），直连会被按地区挡掉；出口
+    统一走设置里指定的代理槽（见 wb_settings.egg_proxy_url）。每次现取，
+    改完设置立刻生效。
+    """
+    if not _data_dir:
+        return ""
+    try:
+        import wb_settings
+        return wb_settings.egg_proxy_url(_data_dir)
+    except Exception:
+        return ""
+
+
 def _http_json(url, headers, timeout):
-    from wb_accounts import urlopen
+    from wb_accounts import urlopen_with_fallback
     req = urllib.request.Request(url, headers=headers)
-    with urlopen(req, timeout=timeout) as resp:
+    with urlopen_with_fallback(req, timeout=timeout, proxy=_proxy_url(),
+                               log=_log) as resp:
         raw = resp.read(8 << 20)
     return json.loads(raw.decode("utf-8", "replace"))
 
@@ -844,9 +861,10 @@ def test_pool(pool_id, model=None, timeout=TEST_TIMEOUT_SECONDS):
     data = json.dumps(body, ensure_ascii=False,
                       separators=(",", ":")).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST", headers=headers)
-    from wb_accounts import urlopen
+    from wb_accounts import urlopen_with_fallback
     try:
-        resp = urlopen(req, timeout=timeout)
+        resp = urlopen_with_fallback(req, timeout=timeout, proxy=_proxy_url(),
+                                     log=_log)
     except urllib.error.HTTPError as exc:
         raw = b""
         try:

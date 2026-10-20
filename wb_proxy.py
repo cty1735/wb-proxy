@@ -11313,18 +11313,22 @@ def _fetch_egg_models(realm):
     """鸡蛋目录：OpenCode Zen 免费车道 + Kilo 免费池（无需任何账号）。
 
     目录由 wb_zen 自己维护（TTL 180s + 落盘 accounts/zen-catalog.json），这里只
-    做「转成 /v1/models 条目 + 5 分钟内存缓存」的适配。失败时保留上一次可用
-    清单：免费名单偶尔抽风不该让客户端整页模型消失。
+    做「转成 /v1/models 条目 + 内存缓存」的适配。失败时保留上一次可用清单：
+    免费名单偶尔抽风不该让客户端整页模型消失。
+
+    缓存时长跟着「这份清单是不是活的」走：真拉下来的缓存 5 分钟，而冷启动
+    先发出去的静态兜底清单只缓存 20 秒 —— 否则后台拉回来的真目录要等 5 分钟
+    才看得到（用户会以为模型就这么多）。
     """
     key = _catalog_cache_key(realm, "egg")
     with _lock:
-        c = _models_cache.get(key) or {"at": 0.0, "data": None}
-        if c["data"] and time.time() - c["at"] < 300:
+        c = _models_cache.get(key) or {"at": 0.0, "data": None, "ttl": 300}
+        if c["data"] and time.time() - c["at"] < c.get("ttl", 300):
             return c["data"]
     with _catalog_lock:
         with _lock:
-            c = _models_cache.get(key) or {"at": 0.0, "data": None}
-            if c["data"] and time.time() - c["at"] < 300:
+            c = _models_cache.get(key) or {"at": 0.0, "data": None, "ttl": 300}
+            if c["data"] and time.time() - c["at"] < c.get("ttl", 300):
                 return c["data"]
         try:
             snap = wb_zen.ensure(ACCOUNTS_DIR, timeout=wb_zen.LIST_TIMEOUT_SECONDS)
@@ -11342,7 +11346,8 @@ def _fetch_egg_models(realm):
             live = True
         source = "remote" if live else "bundled"
         with _lock:
-            _models_cache[key] = {"at": time.time(), "data": entries}
+            _models_cache[key] = {"at": time.time(), "data": entries,
+                                  "ttl": 300 if live else 20}
             _catalog_meta[key] = {"source": source, "fetched_at": time.time(),
                                   "file_mtime": None}
         return entries
@@ -20331,7 +20336,20 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_proxy_slots(self, path, payload):
         """Proxy-slot management (panel-authenticated)."""
         if path == "/proxy/slots":
-            return self._json(200, {"slots": proxy_slots_view()})
+            return self._json(200, {"slots": proxy_slots_view(),
+                                     "egg_slot": wb_settings.egg_proxy_slot(
+                                         ACCOUNTS_DIR)})
+        if path == "/proxy/egg-slot":
+            # 鸡蛋车道的出口：Zen 免费车道 / Kilo 免费池 / 自建供应商池统一走
+            # 这个代理槽（账号绑哪个槽是账号自己的事，这里管鸡蛋这一摊）。
+            slot_id = str(payload.get("id") or "").strip()
+            try:
+                saved = wb_settings.set_egg_proxy_slot(ACCOUNTS_DIR, slot_id)
+            except ValueError as exc:
+                return self._error(400, str(exc), "invalid_request_error")
+            log("egg egress proxy slot: %s" % (saved or "direct"))
+            return self._json(200, {"egg_slot": saved,
+                                     "slots": proxy_slots_view()})
         if path == "/proxy/slots/save":
             raw = payload.get("slots")
             if not isinstance(raw, list):
@@ -23512,6 +23530,11 @@ def _bootstrap_runtime(args):
     # 自建供应商池（egg-pools.json）同理：池子、Key 与挑好的模型清单都跟着
     # 账号目录走，换机器时整份拷过去就行。
     wb_egg_pools.configure(ACCOUNTS_DIR, log=log)
+    # 鸡蛋目录后台预热：Kilo 那个上游拉目录要十几秒，冷启动不等它（第一次
+    # /v1/models 先给静态兜底清单），但也别等到用户第一次调用才拉 —— 拉完
+    # 之前他看到的清单就是兜底版。先在后台拉起来，等面板打开就已经是新的。
+    threading.Thread(target=_warm_egg_catalog, name="egg-catalog-warm",
+                     daemon=True).start()
     global SCHEDULER
     from wb_scheduler import Scheduler
     SCHEDULER = Scheduler(POOL)
@@ -23668,6 +23691,18 @@ def _log_startup_summary(args, api_key_generated):
         print()
         print("  The browser flow adds the account automatically.")
         print("  This window must stay open.")
+        print("  " + "=" * 62)
+        print()
+        # 只要免费模型的话，一个账号都不用登录：鸡蛋网关（Zen 免费车道 /
+        # Kilo 免费池）不认账号也不认 Key，克隆下来就能调。
+        print("  只用免费模型（鸡蛋网关）？不用登录任何账号，现在就能调：")
+        print()
+        print("    curl http://localhost:%s/v1/chat/completions?provider=egg \\" % args.port)
+        print("      -H 'Content-Type: application/json' \\")
+        print("      -d '{\"model\":\"kilo-auto/free\",\"messages\":"
+              "[{\"role\":\"user\",\"content\":\"hi\"}]}'")
+        print()
+        print("    模型清单：curl http://localhost:%s/v1/models?provider=egg" % args.port)
         print("  " + "=" * 62)
         print()
         sys.stdout.flush()

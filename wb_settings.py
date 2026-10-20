@@ -2219,6 +2219,47 @@ def find_proxy_slot(accounts_dir, slot_id):
     return None
 
 
+# ---------------------------------------------------------------------------
+# 鸡蛋车道的出口代理
+# ---------------------------------------------------------------------------
+# 鸡蛋的免费车道（Zen / Kilo）和自建供应商池原先是**直连**的：账号那套代理槽
+# 只管 workbuddy / qoder / trae。于是 Zen 免费车道按出口 IP 判「滥用流量」把整条
+# 车道拒了（8 个模型全 403），而 OpenRouter 也会按地区挡掉部分模型。这里让鸡蛋
+# 的所有出口统一走一个指定的代理槽 —— 账号走哪个槽是账号自己的事，鸡蛋是另一码
+# 事，但用的是同一批槽位。
+
+def egg_proxy_slot(accounts_dir):
+    """鸡蛋出口用的代理槽 id；空串 = 直连。"""
+    return str(load(accounts_dir).get("egg_proxy_slot") or "").strip()
+
+
+def set_egg_proxy_slot(accounts_dir, slot_id):
+    """设定鸡蛋出口的代理槽；空串 = 直连。指向不存在的槽子会报错。"""
+    slot_id = str(slot_id or "").strip()
+    if slot_id and find_proxy_slot(accounts_dir, slot_id) is None:
+        raise ValueError("没有这个代理槽：%s" % slot_id)
+    with _lock:
+        data = load(accounts_dir)
+        data["egg_proxy_slot"] = slot_id
+        save(accounts_dir, data)
+    return slot_id
+
+
+def egg_proxy_url(accounts_dir):
+    """鸡蛋出口的代理地址（空串 = 直连）。
+
+    每次现取，不缓存：面板上改完设置立刻生效，不用重启网关。槽子被删了
+    （find_proxy_slot 找不到）就当直连，别让鸡蛋整个哑掉。
+    """
+    slot_id = egg_proxy_slot(accounts_dir)
+    if not slot_id:
+        return ""
+    slot = find_proxy_slot(accounts_dir, slot_id)
+    if slot is None:
+        return ""
+    return str(slot.get("url") or "").strip()
+
+
 class PanelSessions(object):
     """In-memory bearer tokens handed out after a successful panel login.
 
