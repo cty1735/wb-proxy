@@ -81,6 +81,7 @@ import wb_qoder_chat
 import wb_trae
 import wb_trae_chat
 import wb_zen
+import wb_egg_pools
 import wb_probes
 import wb_updates
 import wb_update_request
@@ -183,6 +184,9 @@ def port_owner_hint(port):
         return "netstat -ano | findstr :%d" % port
     return "lsof -nP -iTCP:%d -sTCP:LISTEN" % port
 CURRENT_REALM = os.environ.get("WB_PROXY_DEFAULT_REALM", "intl")
+#: 鸡蛋（免账号的免费网关）记账用的伪账号 uid：它没有账号池，成功与失败的请求
+#: 都记在这个 uid 上，看板的「按账号」才是一行而不是两行。
+EGG_ACCOUNT_UID = "egg"
 #: 提供者维度（workbuddy | qoder），与 CURRENT_REALM 平行的全局开关：面板头部的
 #: WorkBuddy/Qoder 切换改它并落盘，账号列表 / 积分 / 统计 / 默认出口 / 模型清单
 #: 都跟着它走。聊天链路永远拿不到 qoder 账号（池的选择方法按 provider 过滤）。
@@ -1049,6 +1053,12 @@ def record_error(model, status, message, elapsed_ms=None, account=None,
         prov = acc.provider
     if prov and prov != wb_accounts.DEFAULT_PROVIDER:
         row["provider"] = prov
+        if prov == "egg" and not account:
+            # 鸡蛋的失败与成功记在同一个伪账号上：不这么记，看板的「按账号」
+            # 会把鸡蛋拆成两行（成功记在 "egg"，失败落进「未归属」），按这个
+            # 口径看鸡蛋的调用量就少一半失败。
+            row["account"] = EGG_ACCOUNT_UID
+            row["realm"] = CURRENT_REALM
     row["key"] = key or ""
     _persist_usage(row, "error persist failed")
     dur = f" {elapsed_ms:.0f}ms" if elapsed_ms is not None else ""
@@ -11322,10 +11332,22 @@ def _fetch_egg_models(realm):
             log("egg catalog: %s failed (%s)" % (realm, exc))
             snap = wb_zen.snapshot()
         models = [m for m in snap.get("models") or [] if m.get("id")]
+        # 自建供应商池的模型跟在内置免费源后面：同一个 id 只能有一个去处，
+        # 内置源先占。
+        seen = set(m["id"] for m in models)
+        for pool_model in wb_zen.pool_models():
+            mid = pool_model.get("id")
+            if not mid or mid in seen:
+                continue
+            seen.add(mid)
+            models.append(pool_model)
         entries = [(m["id"], wb_zen.model_entry_meta(m)) for m in models]
         sources = snap.get("sources") or {}
         live = any(isinstance(v, dict) and v.get("ok")
                    for v in sources.values())
+        if not live and any(p.get("count") for p in (wb_zen.pool_status() or [])):
+            # 内置免费源这次没拉到，但自建池子有模型：清单仍然是活的。
+            live = True
         source = "remote" if live else "bundled"
         with _lock:
             _models_cache[key] = {"at": time.time(), "data": entries}
@@ -11569,6 +11591,11 @@ def model_entry(mid, meta):
         item["credits"] = meta["credits"]
     if meta.get("credits_note"):
         item["credits_note"] = meta["credits_note"]
+    if meta.get("egg_source"):
+        # 鸡蛋的免费池归属（zen = OpenCode Zen 免费车道 / kilo = Kilo 免费池）：
+        # 面板的模型清单按它给每行标出这条模型走的是哪一路免费源。
+        item["egg_source"] = meta["egg_source"]
+        item["egg_source_label"] = meta.get("egg_source_label") or meta["egg_source"]
     if meta.get("off_peak_rate"):
         item["off_peak_rate"] = meta["off_peak_rate"]
     if meta.get("available") is False:
@@ -11870,10 +11897,21 @@ def _refresh_egg_catalog():
             log("catalog refresh: egg failed (%s)" % exc)
             snap = wb_zen.snapshot()
         models = [m for m in snap.get("models") or [] if m.get("id")]
+        seen = set(m["id"] for m in models)
+        for pool_model in wb_zen.pool_models():
+            mid = pool_model.get("id")
+            if not mid or mid in seen:
+                continue
+            seen.add(mid)
+            models.append(pool_model)
         entries = [(m["id"], wb_zen.model_entry_meta(m)) for m in models]
         sources = snap.get("sources") or {}
         live = [name for name, val in sources.items()
                 if isinstance(val, dict) and val.get("ok")]
+        pool_count = sum((p.get("count") or 0)
+                         for p in (wb_zen.pool_status() or []))
+        if not live and pool_count:
+            live = ["pool"]
         source = "remote" if live else "bundled"
         if entries:
             with _lock:
@@ -11884,10 +11922,12 @@ def _refresh_egg_catalog():
     counts = {name: (val.get("count") or 0)
               for name, val in sources.items() if isinstance(val, dict)}
     if live and entries:
-        msg = ("已刷新鸡蛋免费模型：共 %d 个（Zen %d / Kilo %d）"
-               % (len(entries), counts.get("zen", 0), counts.get("kilo", 0)))
-        log("catalog refresh: egg updated %d free models (zen=%d kilo=%d)"
-            % (len(entries), counts.get("zen", 0), counts.get("kilo", 0)))
+        msg = ("已刷新鸡蛋免费模型：共 %d 个（Zen %d / Kilo %d / 自建池 %d）"
+               % (len(entries), counts.get("zen", 0), counts.get("kilo", 0),
+                  pool_count))
+        log("catalog refresh: egg updated %d free models (zen=%d kilo=%d pool=%d)"
+            % (len(entries), counts.get("zen", 0), counts.get("kilo", 0),
+               pool_count))
         return {"ok": True, "realm": realm, "source": source,
                 "count": len(entries), "sources": sources, "msg": msg}
     note = str(snap.get("note") or "").strip()
@@ -11909,6 +11949,31 @@ def _warm_egg_catalog():
         wb_zen.refresh(force=False)
     except Exception as exc:
         log("egg catalog: warm-up failed (%s)" % exc)
+
+
+def invalidate_egg_catalog_cache():
+    """池子改了之后，鸡蛋的清单缓存要立刻作废。
+
+    缓存键是 "egg:<realm>"，两个 realm 都清：池子与 realm 无关，留着旧的那
+    一份会让面板在切视图后看到过期的模型列表。
+    """
+    with _lock:
+        for r in ("intl", "cn", "all"):
+            _models_cache.pop(_catalog_cache_key(r, "egg"), None)
+            _catalog_meta.pop(_catalog_cache_key(r, "egg"), None)
+
+
+def _egg_pool_view(pool):
+    """池子给面板的视图：Key 打码，模型清单原样带上。"""
+    if not isinstance(pool, dict):
+        return {}
+    view = dict(pool)
+    view["api_key_masked"] = wb_egg_pools.mask_key(pool.get("api_key"))
+    view["protocol_label"] = wb_egg_pools.PROTOCOL_LABELS.get(
+        pool.get("protocol"), pool.get("protocol"))
+    view["model_count"] = len(pool.get("models") or [])
+    view["catalog_count"] = len(pool.get("catalog") or [])
+    return view
 
 
 def _refresh_qoder_catalog(realm, provider="qoder"):
@@ -14936,7 +15001,7 @@ class _EggAccount(object):
     enabled = True
 
     def __init__(self, realm=None):
-        self.uid = "egg"
+        self.uid = EGG_ACCOUNT_UID
         self.realm = realm or CURRENT_REALM
         self.nickname = "鸡蛋"
 
@@ -18977,6 +19042,21 @@ class Handler(BaseHTTPRequestHandler):
                     401, "panel password required", "invalid_request_error"
                 )
             return self._json(200, {"slots": proxy_slots_view()})
+        if path == "/egg/pools":
+            # 面板的「供应商池」：自带 Key 与 Base URL，只给面板会话看。
+            if not self._panel_ok():
+                return self._error(
+                    401, "panel password required", "invalid_request_error"
+                )
+            return self._json(200, {
+                "pools": wb_egg_pools.public_pools(),
+                "presets": wb_egg_pools.PRESETS,
+                "protocols": [
+                    {"value": value,
+                     "label": wb_egg_pools.PROTOCOL_LABELS[value]}
+                    for value in wb_egg_pools.PROTOCOLS
+                ],
+            })
         if path == "/logs":
             return self._get_logs(query)
         if path == "/logs/export":
@@ -21073,6 +21153,103 @@ class Handler(BaseHTTPRequestHandler):
     def _route_logs_clear(self, payload):
         clear_logs()
         return self._json(200, {"ok": True})
+
+    # ------------------------------------------------------------------
+    # 鸡蛋：自建供应商池
+    # ------------------------------------------------------------------
+    def _route_egg_pools(self, payload):
+        """面板的「添加供应商」表单：先拉模型清单（不落盘），再保存。
+
+        拉清单这一步是操作者点了「拉取模型列表」之后的即时反馈：给错了
+        Base URL 或 Key 错误要当场说出来，而不是保存之后才在第一次对话时
+        才发现。已保存的池子带 id 上来时走刷新那条路。
+        """
+        payload = payload or {}
+        pool_id = str(payload.get("id") or "").strip()
+        if pool_id:
+            pool = wb_egg_pools.get(pool_id)
+            if pool is None:
+                return self._error(404, "供应商不存在", "invalid_request_error")
+            base_url = pool["base_url"]
+            api_key = pool["api_key"]
+            protocol = pool["protocol"]
+        else:
+            base_url = str(payload.get("base_url") or "").strip()
+            api_key = str(payload.get("api_key") or "").strip()
+            protocol = str(payload.get("protocol") or "").strip()
+        models, error = wb_egg_pools.fetch_models(base_url, api_key, protocol)
+        if error:
+            return self._json(200, {"ok": False, "msg": error, "models": []})
+        return self._json(200, {"ok": True, "models": models,
+                                "count": len(models),
+                                "msg": "拉到 %d 个模型" % len(models)})
+
+    def _route_egg_pool_save(self, payload):
+        """新建或更新一个供应商池。"""
+        try:
+            pool = wb_egg_pools.upsert(payload or {})
+        except wb_egg_pools.PoolError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        except Exception as exc:
+            return self._error(500, "保存供应商失败：%s" % exc)
+        # 池子的模型变了：网关里的清单缓存要立刻作废，不然面板看到的还是
+        # 上一次的模型列表。
+        invalidate_egg_catalog_cache()
+        return self._json(200, {"ok": True, "pool": _egg_pool_view(pool),
+                                "pools": wb_egg_pools.public_pools()})
+
+    def _route_egg_pool_delete(self, payload):
+        pool_id = str((payload or {}).get("id") or "").strip()
+        if not pool_id:
+            return self._error(400, "缺少供应商 id", "invalid_request_error")
+        if not wb_egg_pools.delete(pool_id):
+            return self._error(404, "供应商不存在", "invalid_request_error")
+        invalidate_egg_catalog_cache()
+        return self._json(200, {"ok": True,
+                                "pools": wb_egg_pools.public_pools()})
+
+    def _route_egg_pool_toggle(self, payload):
+        payload = payload or {}
+        pool_id = str(payload.get("id") or "").strip()
+        if not pool_id:
+            return self._error(400, "缺少供应商 id", "invalid_request_error")
+        pool = wb_egg_pools.set_enabled(pool_id,
+                                        payload.get("enabled", True) is not False)
+        if pool is None:
+            return self._error(404, "供应商不存在", "invalid_request_error")
+        invalidate_egg_catalog_cache()
+        return self._json(200, {"ok": True, "pool": _egg_pool_view(pool),
+                                "pools": wb_egg_pools.public_pools()})
+
+    def _route_egg_pool_models(self, payload):
+        """只改「这个池子对外提供哪些模型」（面板的「挑选模型」）。"""
+        payload = payload or {}
+        pool_id = str(payload.get("id") or "").strip()
+        if not pool_id:
+            return self._error(400, "缺少供应商 id", "invalid_request_error")
+        try:
+            pool = wb_egg_pools.set_models(pool_id, payload.get("models") or [])
+        except wb_egg_pools.PoolError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        invalidate_egg_catalog_cache()
+        return self._json(200, {"ok": True, "pool": _egg_pool_view(pool),
+                                "pools": wb_egg_pools.public_pools()})
+
+    def _route_egg_pool_refresh(self, payload):
+        """重拉一个已存池子的模型清单（面板卡片上的「刷新」）。"""
+        pool_id = str((payload or {}).get("id") or "").strip()
+        if not pool_id:
+            return self._error(400, "缺少供应商 id", "invalid_request_error")
+        try:
+            pool = wb_egg_pools.refresh_pool(pool_id)
+        except wb_egg_pools.PoolError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        except Exception as exc:
+            return self._error(500, "刷新失败：%s" % exc)
+        invalidate_egg_catalog_cache()
+        return self._json(200, {"ok": True, "pool": _egg_pool_view(pool),
+                                "pools": wb_egg_pools.public_pools(),
+                                "msg": "已刷新：%d 个模型" % len(pool.get("models") or [])})
 
     def _route_pricing_mapping(self, payload):
         """面板手填一条「hub 模型 → OpenRouter id」映射。
@@ -23267,6 +23444,9 @@ def _bootstrap_runtime(args):
     # 鸡蛋的免费目录落在 accounts 目录里（zen-catalog.json），启动时读回来：
     # 冷启动后第一屏就能看到上次的清单，不必等一次网络往返。
     wb_zen.configure(ACCOUNTS_DIR, log=log)
+    # 自建供应商池（egg-pools.json）同理：池子、Key 与挑好的模型清单都跟着
+    # 账号目录走，换机器时整份拷过去就行。
+    wb_egg_pools.configure(ACCOUNTS_DIR, log=log)
     global SCHEDULER
     from wb_scheduler import Scheduler
     SCHEDULER = Scheduler(POOL)

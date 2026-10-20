@@ -1725,6 +1725,20 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     'OpenRouter 价估算：按 OpenRouter 公布的模型价折算，覆盖该账号在所选区间内的请求；按条件定价的模型（输入长度阈值或时段）按每条请求取档；单条请求实际用的策略、三档单价与匹配来源见「最近请求」里那条的悬停提示': 'OpenRouter estimate: converted from the model prices OpenRouter publishes, covering the requests of this account in the selected range; conditionally priced models (input-length thresholds or time windows) are tiered per request; the policy a single request actually used, its three unit prices and the match source are in the hover tip of that row in Recent requests',
     'OpenRouter 价估算：按该行（模型·区域·账号）的 token 消耗折算；按条件定价的模型（输入长度阈值或时段）按每条请求取档；单条请求实际用的策略、三档单价与匹配来源见「最近请求」里那条的悬停提示': 'OpenRouter estimate: converted from the token usage of this row (model · region · account); conditionally priced models (input-length thresholds or time windows) are tiered per request; the policy a single request actually used, its three unit prices and the match source are in the hover tip of that row in Recent requests',
     'OpenRouter 无对应': 'no OpenRouter match',
+    '鸡蛋': 'Egg',
+    '免费池': 'Free pool',
+    'Zen 免费车道': 'Zen free lane',
+    'Kilo 免费池': 'Kilo free pool',
+    'OpenCode Zen 免费车道': 'OpenCode Zen free lane',
+    '鸡蛋（免账号）': 'Egg (no account)',
+    '免费网关 · 免账号免密钥': 'Free gateway · no account or key',
+    '鸡蛋 · 免费白嫖': 'Egg · free for all',
+    '鸡蛋不需要账号': 'Egg needs no account',
+    '鸡蛋没有任务与福利': 'Egg has no check-in or perks',
+    '不需要账号、不需要密钥：聚合 OpenCode Zen 免费车道与 Kilo 免费池。切到鸡蛋会自动刷新免费模型清单。': 'No account and no key: aggregates the OpenCode Zen free lane and the Kilo free pool. Switching to Egg refreshes the free model list.',
+    '免账号、免密钥聚合 OpenCode Zen 免费车道与 Kilo 免费池；切到鸡蛋会自动刷新免费模型清单。': 'Aggregates the OpenCode Zen free lane and the Kilo free pool with no account and no key; switching to Egg refreshes the free model list.',
+    '鸡蛋免费白嫖：没有签到与成长任务，模型清单在「网关」页刷新。': 'Egg is free for all: no check-in and no growth tasks; refresh the model list on the Gateway page.',
+    '展示鸡蛋当前可用的免费模型（每行标注所属免费池：OpenCode Zen 免费车道 / Kilo 免费池）、上下文容量、推理/视觉能力与工具支持；全部免账号、免密钥': 'The free models the Egg gateway currently serves (each row is tagged with its free pool: OpenCode Zen free lane / Kilo free pool), context size, reasoning/vision support and tool support; no account and no key required',
     'Token 消耗与推理指标透视': 'Token usage and reasoning metrics',
     'WorkBuddy 独立桌面客户端 (WB)': 'WorkBuddy standalone desktop client (WB)',
     'WorkBuddy 用量看板': 'WorkBuddy Usage Dashboard',
@@ -3646,6 +3660,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     "变": "變",
     "台": "臺",
     "号": "號",
+    "鸡": "雞",
+    "车": "車",
     "后": "後",
     "吗": "嗎",
     "听": "聽",
@@ -4437,14 +4453,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       <table id="modelsTable" class="data-cards">
         <thead>
           <tr>
-            <th style="text-align:left;width:17%">模型 ID</th>
-            <th style="text-align:left;width:11%">名称</th>
-            <th style="text-align:center;width:12%">消费倍率 / 优惠</th>
-            <th style="text-align:center;width:14%">模型能力</th>
+            <th style="text-align:left;width:15%">模型 ID</th>
+            <th style="text-align:left;width:10%">名称</th>
+            <th style="text-align:center;width:11%">免费池</th>
+            <th style="text-align:center;width:11%">消费倍率 / 优惠</th>
+            <th style="text-align:center;width:13%">模型能力</th>
             <th style="text-align:center;width:9%">上下文窗口</th>
             <th style="text-align:center;width:9%">最大输出</th>
-            <th style="text-align:left;width:16%">思考档位</th>
-            <th style="text-align:left;width:12%;white-space:nowrap">默认采样参数</th>
+            <th style="text-align:left;width:13%">思考档位</th>
+            <th style="text-align:left;width:9%;white-space:nowrap">默认采样参数</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -4803,6 +4820,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
         <option value="workbuddy">WorkBuddy</option>
         <option value="qoder">Qoder</option>
         <option value="trae">Trae</option>
+        <option value="egg">鸡蛋</option>
       </select>
       <div class="seg" id="rangeSeg">
         <button data-range="today" class="on">今日</button>
@@ -6953,6 +6971,11 @@ window.PROVIDER = "workbuddy";
 window.PROVIDER_REALMS = {workbuddy: "intl", qoder: "intl", trae: "cn", egg: "intl"};
 
 const PROVIDER_NAMES = {workbuddy: "WorkBuddy", qoder: "Qoder", trae: "Trae", egg: "鸡蛋"};
+/* 鸡蛋没有账号池：它的请求记在一个伪账号 uid 上（"egg"），日志里也只有这个
+ * uid。直接显示 "egg" 看不出是什么，按「免账号免密钥」说明它。
+ * 必须放在全局作用域（这里是看板主脚本）：最近请求表的账号列在主脚本里渲染，
+ * 数据看板页那个 IIFE 里的同名常量它取不到，会抛 "EGG_ACCT_UID is not defined"。 */
+const EGG_ACCT_UID = 'egg';
 function currentProvider(){
   const p = String(window.PROVIDER || "workbuddy").toLowerCase();
   return (p === "qoder" || p === "trae" || p === "egg") ? p : "workbuddy";
@@ -6986,7 +7009,7 @@ const TASKS_DESC_EGG = "鸡蛋免费白嫖：没有签到与成长任务，模�
 const MODELS_DESC_WB = "展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率";
 const MODELS_DESC_QODER = "展示 Qoder 的官方对话大模型、上下文容量、推理/视觉能力、思考控制与默认采样参数；倍率为 Credits 消耗参考系数";
 const MODELS_DESC_TRAE = "展示 Trae 的官方对话大模型、上下文容量、推理/视觉能力与默认采样参数；倍率为客户端选择器同款消耗倍率（Credits 消耗系数，含低谷折扣）";
-const MODELS_DESC_EGG = "展示鸡蛋当前可用的免费模型（OpenCode Zen 免费车道 + Kilo 免费池）、上下文容量、推理/视觉能力与工具支持；全部免账号、免密钥";
+const MODELS_DESC_EGG = "展示鸡蛋当前可用的免费模型（每行标注所属免费池：OpenCode Zen 免费车道 / Kilo 免费池）、上下文容量、推理/视觉能力与工具支持；全部免账号、免密钥";
 // 三个版本卡片上展示的上游主机名，跟着提供商换。
 const PROVIDER_HOSTS = {
   workbuddy: {intl: "www.workbuddy.ai", cn: "copilot.tencent.com"},
@@ -7453,7 +7476,7 @@ function renderModelsLoading(){
   const tb = document.querySelector('#modelsTable tbody');
   const countEm = document.getElementById('availModelCount');
   if(countEm) countEm.textContent = '(加载中…)';
-  if(tb) tb.innerHTML = '<tr><td colspan="8" class="empty">正在加载当前提供商 · 版本的模型清单…</td></tr>';
+  if(tb) tb.innerHTML = '<tr><td colspan="9" class="empty">正在加载当前提供商 · 版本的模型清单…</td></tr>';
   const src = document.getElementById('modelsSourceLine');
   if(src){
     src.style.cssText = CATALOG_BANNER_BASE + 'background:transparent;border:1px dashed var(--line);color:var(--dim)';
@@ -7479,7 +7502,7 @@ async function loadModels(){
     // 切换时表已经被清空：失败就明确说失败，别一直停在「加载中…」。
     if(!MODELS_DATA.length){
       const tb = document.querySelector('#modelsTable tbody');
-      if(tb) tb.innerHTML = '<tr><td colspan="8" class="empty">模型清单加载失败，点「刷新模型清单」重试</td></tr>';
+      if(tb) tb.innerHTML = '<tr><td colspan="9" class="empty">模型清单加载失败，点「刷新模型清单」重试</td></tr>';
       const countEm = document.getElementById('availModelCount');
       if(countEm) countEm.textContent = '(加载失败)';
     }
@@ -7632,7 +7655,7 @@ function renderAvailableModels(){
   const countEm = document.getElementById('availModelCount');
   if(countEm) countEm.textContent = '(共 ' + MODELS_DATA.length + ' 个)';
   if(!MODELS_DATA.length){
-    tb.innerHTML = '<tr><td colspan="8" class="empty">暂无可用模型</td></tr>';
+    tb.innerHTML = '<tr><td colspan="9" class="empty">暂无可用模型</td></tr>';
     return;
   }
   tb.innerHTML = MODELS_DATA.map(m => {
@@ -7771,7 +7794,26 @@ function renderAvailableModels(){
       + unavailBadge
       + '</td>';
 
-    // 7. 默认采样参数（上游对缺省请求生效的采样值；有的模型只给部分字段）
+    // 7. 免费池（鸡蛋才有这个维度）：Zen 免费车道 / Kilo 免费池。两路的限流、
+    //    地区门与提示词记录口径不同，看清单时就得知道这条模型走的是哪一路。
+    //    其它提供商没有池子概念，这一列留空（不占视觉重量）。
+    const poolSrc = String(m.egg_source || '').trim();
+    let poolCell;
+    if(poolSrc){
+      const poolLabel = String(m.egg_source_label || poolSrc).trim();
+      const poolTip = String(m.description || '').trim() || poolLabel;
+      const poolTone = poolSrc === 'kilo'
+        ? 'background:var(--accent2-soft);color:var(--accent2);border-color:rgba(94,140,79,.28)'
+        : 'background:rgba(124,58,237,.12);color:var(--think);border-color:rgba(124,58,237,.3)';
+      poolCell = '<td style="text-align:center" data-label="免费池">'
+        + '<span class="badge" style="font-size:11px;font-weight:600;' + poolTone + '"'
+        + ' title="' + esc(poolTip) + '">' + esc(poolLabel) + '</span></td>';
+    } else {
+      poolCell = '<td style="text-align:center" data-label="免费池">'
+        + '<span style="color:var(--dim)">—</span></td>';
+    }
+
+    // 8. 默认采样参数（上游对缺省请求生效的采样值；有的模型只给部分字段）
     const samples = [];
     if(m.temperature != null) samples.push('温度 ' + esc(String(m.temperature)));
     if(m.top_p != null) samples.push('top_p ' + esc(String(m.top_p)));
@@ -7784,6 +7826,7 @@ function renderAvailableModels(){
     return '<tr' + rowStyle + '>'
       + '<td style="text-align:left" class="mono" data-label="?? ID" title="' + esc(m.id) + '"><b>' + esc(m.id) + '</b></td>'
       + nameCell
+      + poolCell
       + '<td style="text-align:center" data-label="消费倍率">' + credBadge + '</td>'
       + '<td style="text-align:center" data-label="能力">' + capHtml + '</td>'
       + '<td style="text-align:center" data-label="上下文">' + ctx + '</td>'
@@ -8675,7 +8718,7 @@ const SORT_DENY_TABLES = new Set(['recent', 'desktopScanBody', 'creditsModalCont
    下标 = 表头列序号。'num' 取单元格里的数字，'text' 按文本比，null = 该列不排
    （下拉框、按钮、拼给人看的标签串）。 */
 const SORT_COL_KINDS = {
-  modelsTable:      ['text', 'text', 'num', 'text', 'num', 'num', 'text', 'text'],
+  modelsTable:      ['text', 'text', 'text', 'num', 'text', 'num', 'num', 'text', 'text'],
   growthTable:      ['text', 'text', 'num', 'num', 'text'],
   // 时间列是 ISO 串，字典序就是时间序，不必另给排序值。
   creditHistoryTable: ['text', 'text', 'text', 'num', 'num'],
@@ -11739,6 +11782,8 @@ async function refreshInner(gen){
   // 已删除/不存在的账号回退到 uid 前 8 位，避免留空。
   const acctName = (uid) => {
     if(!uid) return '—';
+    // 鸡蛋没有账号池：它的请求记在伪 uid "egg" 上，直接显示 uid 看不出是什么。
+    if(uid === EGG_ACCT_UID) return '鸡蛋（免账号）';
     const m = (t.accounts_map && t.accounts_map[uid]);
     return (m && m.nickname) ? m.nickname : String(uid).slice(0,8);
   };
@@ -17140,7 +17185,13 @@ function renderSeriesSrTable(){
 }
 function nicknameOf(uid){
   const acc = ((state.analytics || {}).accounts || []).find(x => x.uid === uid);
-  return acc ? (acc.nickname || acc.uid.slice(0, 8)) : (uid || '').slice(0, 8);
+  return acctNick(uid, acc ? acc.nickname : '');
+}
+/* EGG_ACCT_UID 定义在看板主脚本的全局作用域（不在这个 IIFE 里）：最近请求表
+ * 在主脚本里渲染，那边要拿同一个值。 */
+function acctNick(uid, nickname){
+  if(uid === EGG_ACCT_UID) return '鸡蛋（免账号）';
+  return (nickname || (uid || '').slice(0, 8));
 }
 async function loadRecent(){
   try{
@@ -18166,7 +18217,7 @@ const dimDefs = {
       const a = state.analytics; if (!a) return [];
       return (a.accounts || []).map(acc => ({
         key: acc.uid,
-        who: `<div class="who"><b>${acc.nickname || acc.uid.slice(0,8)} <span class="realm-tag ${acc.realm === 'intl' ? 'realm-intl' : 'realm-cn'}">${acc.realm === 'intl' ? '国际版' : '国内版'}</span></b><span data-tip="UID：${acc.uid}">${(acc.uid||'').slice(0,13)}…</span></div>`,
+        who: `<div class="who"><b>${acctNick(acc.uid, acc.nickname)} <span class="realm-tag ${acc.realm === 'intl' ? 'realm-intl' : 'realm-cn'}">${acc.realm === 'intl' ? '国际版' : '国内版'}</span></b><span data-tip="UID：${acc.uid}">${acc.uid === EGG_ACCT_UID ? '免费网关 · 免账号免密钥' : (acc.uid||'').slice(0,13)+'…'}</span></div>`,
         req: acc.window.requests,
         tok: acc.window.total_tokens,
         tokSub: `思考 ${fmtCompact(acc.window.reasoning_tokens)} · 缓存 ${fmtCompact(acc.window.cached_tokens)}`,
@@ -18306,7 +18357,7 @@ function modelByAccount(modelName){
     const wm = (acc.window_models || {})[modelName];
     if (wm && (wm.tokens || wm.requests)){
       out.push({
-        name: acc.nickname || acc.uid.slice(0, 8),
+        name: acctNick(acc.uid, acc.nickname),
         realm: acc.realm,
         tokens: wm.tokens || 0,
         requests: wm.requests || 0,
@@ -18566,7 +18617,9 @@ function wbaTick(){
    性能分位、工作回溯），再整套重取；wbaStarted 复位是为了让 loadStatic 也重跑。
    返回 true 表示口径真的变了（已触发重取），false 表示没变。 */
 function setAnalyticsProvider(v){
-  const next = (v === 'qoder' || v === 'trae' || v === 'workbuddy') ? v : 'all';
+  // 鸡蛋（egg）也是一等口径：它免账号、免密钥，请求照样记账（provider=egg），
+  // 看板要能单独看它的调用量——否则免费流量混在「全部提供商」里看不出来。
+  const next = (v === 'qoder' || v === 'trae' || v === 'workbuddy' || v === 'egg') ? v : 'all';
   const sel = document.getElementById('analyticsProvider');
   if (sel) sel.value = next;
   analyticsProviderReady = true;

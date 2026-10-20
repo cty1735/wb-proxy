@@ -184,6 +184,14 @@ KILO_FALLBACK_IDS = [
     "stealth/glyph-cluster", "xingchen-agi/xing4.0-29b-a4b:free",
 ]
 
+#: 免费池的短名：面板的模型清单要标出每个模型属于哪一路免费源，两者的限流、
+#: 地区门与提示词记录口径都不一样（Zen 车道要过官方客户端指纹校验，Kilo
+#: 池什么都不用但会记录提示词）。列宽有限，列里放短名，完整名与说明进悬停提示。
+_SOURCE_SHORT = {
+    "zen": "Zen 免费车道",
+    "kilo": "Kilo 免费池",
+}
+
 #: 只有 chat 线的免费模型才进鸡蛋目录：responses / messages 线需要另一套
 #: 请求与回程转换，硬塞进 chat 只会得到 500。
 _RESPONSES_ONLY = {"muse-spark-1.2-contributor-free",
@@ -817,18 +825,66 @@ def status():
         "kilo": by_source["kilo"],
         "sources": snap["sources"],
         "note": snap["note"],
+        "pools": pool_status(),
         "stale": bool(snap["at"] and time.time() - snap["at"] > CATALOG_TTL_SECONDS),
     }
 
 
+def pool_status():
+    """自建供应商池的状态（面板的池子卡片与概览计数用）。"""
+    try:
+        import wb_egg_pools
+    except Exception:
+        return []
+    try:
+        out = []
+        for pool in wb_egg_pools.pools():
+            out.append({
+                "id": pool.get("id"),
+                "name": pool.get("name"),
+                "protocol": pool.get("protocol"),
+                "base_url": pool.get("base_url"),
+                "enabled": bool(pool.get("enabled")),
+                "count": len(pool.get("models") or []),
+                "catalog_at": pool.get("catalog_at") or 0.0,
+            })
+        return out
+    except Exception:
+        return []
+
+
 def catalog(directory=None):
-    """给 /v1/models 用的当前目录（必要时刷新）。"""
-    return ensure(directory).get("models") or _static_models()
+    """给 /v1/models 用的当前目录（必要时刷新）。
+
+    自建供应商池的模型跟在内置免费源后面：同一个 id 已经被内置源占用时，
+    池子里的那条不重复出现（一个 id 只能有一个去处）。
+    """
+    models = ensure(directory).get("models") or _static_models()
+    seen = set(m.get("id") for m in models if isinstance(m, dict))
+    merged = list(models)
+    for model in pool_models():
+        mid = model.get("id")
+        if not mid or mid in seen:
+            continue
+        seen.add(mid)
+        merged.append(model)
+    return merged
 
 
 def model_entry_meta(model):
     """把目录条目转成 wb_proxy.model_entry() 认识的元数据。"""
     source = model.get("source") or "zen"
+    kind = model.get("sourceKind") or "builtin"
+    # 免费池归属：面板的模型清单按它标出每个模型来自 Zen 免费车道、Kilo
+    # 免费池，还是操作者自建的供应商池（两者限流与地区门口径不同，得一眼
+    # 能分）。自建池用池子的名字当标签。
+    label = (_SOURCE_SHORT.get(source)
+             or model.get("sourceLabel")
+             or source)
+    if kind == "pool":
+        credits_note = "自建供应商池「%s」的模型：用操作者自己的 Key，费用由该供应商结算" % label
+    else:
+        credits_note = "鸡蛋免费模型：无需账号或密钥（%s）" % (model.get("sourceLabel") or source)
     return {
         "name": model.get("name") or model.get("id"),
         "descriptionZh": model.get("blurb") or "",
@@ -839,7 +895,10 @@ def model_entry_meta(model):
         "maxInputTokens": model.get("context"),
         "maxOutputTokens": model.get("output"),
         "credits": "0.00",
-        "credits_note": "鸡蛋免费模型：无需账号或密钥（%s）" % (model.get("sourceLabel") or source),
+        "credits_note": credits_note,
+        "egg_source": source,
+        "egg_source_label": label,
+        "egg_source_kind": kind,
     }
 
 
@@ -855,11 +914,41 @@ def _find_model(model_id):
     return None
 
 
+def _pool_for_model(model_id):
+    """这个模型属于哪个自建供应商池（没有就 None）。
+
+    池子是操作者自己加的：优先级高于内置的免费源 —— 他显式挑过这个模型，
+    就该走他指定的那一家，而不是被同名的免费模型截胡。
+    """
+    try:
+        import wb_egg_pools
+    except Exception:
+        return None
+    try:
+        return wb_egg_pools.find_by_model(model_id)
+    except Exception:
+        return None
+
+
+def pool_models():
+    """自建供应商池提供的模型（与内置目录同形态）。"""
+    try:
+        import wb_egg_pools
+    except Exception:
+        return []
+    try:
+        return wb_egg_pools.catalog_entries()
+    except Exception:
+        return []
+
+
 def provider_hint(model):
     """没有显式 provider 时，这个模型是不是鸡蛋的。只看本地目录，不发网络。"""
     name = str(model or "").strip()
     if not name:
         return None
+    if _pool_for_model(name) is not None:
+        return "egg"
     if _find_model(name) is not None:
         return "egg"
     base = _base_model(name)
@@ -874,6 +963,10 @@ def resolve(model_id):
     if not name:
         return None
     base = _base_model(name)
+    pool = _pool_for_model(name)
+    if pool is not None:
+        # 自建池：source 是池子 id，模型 id 原样发给上游。
+        return pool["id"], name, name
     found = _find_model(base)
     if found is not None:
         return found.get("source"), name, base
@@ -910,9 +1003,17 @@ def _base_body(payload):
 
 
 def build_request(payload, session_key=""):
-    """构造一次免费上游请求；返回 (url, body, headers, rename, source, billed)。"""
+    """构造一次免费上游请求；返回 (url, body, headers, rename, source, billed)。
+
+    自建供应商池的模型走 wb_egg_pools：协议、Base URL 与 Key 都由池子自己
+    决定，Anthropic 协议还要把事件流翻成 OpenAI 形状（多一个 sse 转换器）。
+    """
     chat = dict(payload or {})
     model = str(chat.get("model") or "").strip()
+    pool = _pool_for_model(model)
+    if pool is not None:
+        url, body, headers, sse, source, billed = _pool_request(pool, chat)
+        return url, body, headers, {}, source, billed, sse
     resolved = resolve(model)
     if resolved is None:
         raise EggError(400, "模型 '%s' 不在鸡蛋免费目录里：先切到鸡蛋网关刷新白名单，"
@@ -929,16 +1030,35 @@ def build_request(payload, session_key=""):
         url = ZEN_BASE + "/inference/v1/chat/completions"
         headers = _zen_headers(session_for(session_key or "global"), stream=True)
         rename = apply_fingerprint(body)
-    return url, body, headers, rename, source, base
+    return url, body, headers, rename, source, base, None
+
+
+def _pool_request(pool, chat):
+    """把请求交给自建供应商池（wb_egg_pools）。"""
+    try:
+        import wb_egg_pools
+    except Exception as exc:
+        raise EggError(500, "自建供应商池不可用：%s" % exc)
+    try:
+        return wb_egg_pools.build_request(pool, chat)
+    except wb_egg_pools.PoolError as exc:
+        raise EggError(exc.status, exc.detail)
+    except Exception as exc:
+        raise EggError(502, "自建供应商池请求失败：%s" % exc)
 
 
 class EggUpstream(object):
-    """包住 urllib 响应：暴露 read1()，并在回程还原被改名的工具。"""
+    """包住 urllib 响应：暴露 read1()，并在回程还原被改名的工具。
 
-    def __init__(self, resp, source, billed_model, rename=None):
+    ``sse`` 是一个可选的行级转换器（Anthropic 协议用它把事件流翻成 OpenAI
+    形状）。转换器吃一整行、吐一整段字节；吐空串表示这行没有对应的输出。
+    """
+
+    def __init__(self, resp, source, billed_model, rename=None, sse=None):
         self._raw = resp
         self._source = source
         self._rename = rename or {}
+        self._sse = sse
         self._pending = b""
         self._done = False
         self._wb_provider = "egg"
@@ -947,6 +1067,11 @@ class EggUpstream(object):
         self.headers = getattr(resp, "headers", None)
 
     def _transform(self, line):
+        if self._sse is not None:
+            try:
+                return self._sse(line) or b""
+            except Exception:
+                return b""
         if not self._rename:
             return line
         text = line.decode("utf-8", "replace").strip()
@@ -992,6 +1117,15 @@ class EggUpstream(object):
             line = self._raw.readline()
             if not line:
                 self._done = True
+                # 上游没发收尾事件就断了：让转换器补一个收尾（Anthropic 少了
+                # message_stop 时，客户端会一直等不到 finish_reason）。
+                if self._sse is not None:
+                    closer = getattr(self._sse, "close", None)
+                    if closer is not None:
+                        try:
+                            self._pending = closer() or b""
+                        except Exception:
+                            self._pending = b""
                 break
             self._pending = self._transform(line)
         if not self._pending:
@@ -1050,7 +1184,8 @@ def _error_detail(status, raw):
 
 def open_stream(payload, session_key="", timeout=600):
     """打开一次免费上游流；返回 (EggUpstream, 元数据)。"""
-    url, body, headers, rename, source, base = build_request(payload, session_key)
+    url, body, headers, rename, source, base, sse = build_request(payload,
+                                                                  session_key)
     from wb_accounts import urlopen
     data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST", headers=headers)
@@ -1068,7 +1203,7 @@ def open_stream(payload, session_key="", timeout=600):
         raise
     except Exception as exc:
         raise EggError(502, "免费源不可达：%s" % exc)
-    return (EggUpstream(resp, source, base, rename=rename),
+    return (EggUpstream(resp, source, base, rename=rename, sse=sse),
             {"source": source, "model": base})
 
 
