@@ -11331,16 +11331,8 @@ def _fetch_egg_models(realm):
         except Exception as exc:
             log("egg catalog: %s failed (%s)" % (realm, exc))
             snap = wb_zen.snapshot()
-        models = [m for m in snap.get("models") or [] if m.get("id")]
-        # 自建供应商池的模型跟在内置免费源后面：同一个 id 只能有一个去处，
-        # 内置源先占。
-        seen = set(m["id"] for m in models)
-        for pool_model in wb_zen.pool_models():
-            mid = pool_model.get("id")
-            if not mid or mid in seen:
-                continue
-            seen.add(mid)
-            models.append(pool_model)
+        models = wb_zen.merge_models(
+            [m for m in snap.get("models") or [] if m.get("id")])
         entries = [(m["id"], wb_zen.model_entry_meta(m)) for m in models]
         sources = snap.get("sources") or {}
         live = any(isinstance(v, dict) and v.get("ok")
@@ -11599,6 +11591,10 @@ def model_entry(mid, meta):
         item["egg_source_label"] = meta.get("egg_source_label") or meta["egg_source"]
         if meta.get("egg_source_kind"):
             item["egg_source_kind"] = meta["egg_source_kind"]
+        if meta.get("egg_free"):
+            # 自建池里也有上游明确免费的模型（id 结尾 :free / /free）：
+            # 面板按它标「免费」而不是「按供应商计费」。
+            item["egg_free"] = True
     if meta.get("off_peak_rate"):
         item["off_peak_rate"] = meta["off_peak_rate"]
     if meta.get("available") is False:
@@ -11899,14 +11895,8 @@ def _refresh_egg_catalog():
         except Exception as exc:
             log("catalog refresh: egg failed (%s)" % exc)
             snap = wb_zen.snapshot()
-        models = [m for m in snap.get("models") or [] if m.get("id")]
-        seen = set(m["id"] for m in models)
-        for pool_model in wb_zen.pool_models():
-            mid = pool_model.get("id")
-            if not mid or mid in seen:
-                continue
-            seen.add(mid)
-            models.append(pool_model)
+        models = wb_zen.merge_models(
+            [m for m in snap.get("models") or [] if m.get("id")])
         entries = [(m["id"], wb_zen.model_entry_meta(m)) for m in models]
         sources = snap.get("sources") or {}
         live = [name for name, val in sources.items()

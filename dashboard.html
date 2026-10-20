@@ -528,6 +528,16 @@ body.provider-trae #btnFetchCredits{display:none !important}
   border:1px solid var(--line);border-radius:7px;padding:3px 8px;font-size:11px;cursor:pointer}
 .egg-pool-pick-item.on{border-color:var(--accent);background:var(--accent-selected-bg)}
 .egg-pool-pick-item input{accent-color:var(--accent);margin:0}
+.egg-pool-pick-free{color:var(--accent2);background:var(--accent2-soft);
+  border:1px solid rgba(94,140,79,.28);border-radius:5px;padding:0 4px;font-size:10px}
+.egg-pool-pick-filter{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:7px}
+.egg-pool-pick-filter input[type=search]{flex:1 1 190px;min-width:130px;max-width:320px;
+  font-size:12px;padding:4px 8px;border-radius:7px;border:1px solid var(--line);
+  background:var(--panel2);color:var(--text)}
+.egg-pool-pick-filter label{display:inline-flex;align-items:center;gap:5px;
+  font-size:12px;color:var(--dim);cursor:pointer;white-space:nowrap}
+.egg-pool-pick-filter label input{accent-color:var(--accent);margin:0}
+.egg-pool-pick-shown{font-size:11px;color:var(--dim)}
 
 .realm-card{
   background:var(--panel);border:1px solid var(--line);border-radius:12px;
@@ -1791,6 +1801,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '已停用': 'disabled',
     '未设置': 'not set',
     '个模型': ' models',
+    '只看免费': 'Free only',
+    '搜索模型 ID…': 'Search model ID…',
+    '显示 ': 'Showing ',
     '模型选择已保存': 'Model selection saved',
     '全部池子（': 'All pools (',
     '先填名称': 'Fill in the name first',
@@ -2591,6 +2604,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '消费倍率': 'Rate',
     '消费倍率 / 优惠': 'Rate / discount',
     '按额度计费': 'Billed in credits',
+    '按供应商计费': 'Billed by provider',
     '全部提供商': 'All providers',
     '按提供商筛选本页数据': 'Filter this page by provider',
     '该模型在上游目录里没有倍率字段；Qoder 按账号额度（credits）计费，实际扣减见「最近请求」的「积分」列。': 'This model has no rate field in the upstream catalog; Qoder bills in account credits, and the actual charge is in the Credits column of Recent requests.',
@@ -3326,6 +3340,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     "展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率": "展示目前檢視下官方對話大模型、上下文容量、推理/視覺能力、思考控制、預設取樣參數及在售倍率",
     "展示 Qoder 的官方对话大模型、上下文容量、推理/视觉能力、思考控制与默认采样参数；倍率为 Credits 消耗参考系数": "展示 Qoder 的官方對話大模型、上下文容量、推理/視覺能力、思考控制與預設取樣參數；倍率為 Credits 消耗參考係數",
     "按额度计费": "按額度計費",
+    "按供应商计费": "按供應商計費",
+    "只看免费": "只看免費",
+    "搜索模型 ID…": "搜尋模型 ID…",
+    "显示 ": "顯示 ",
     "该模型在上游目录里没有倍率字段；Qoder 按账号额度（credits）计费，实际扣减见「最近请求」的「积分」列。": "此模型在上游目錄中沒有倍率欄位；Qoder 依帳號額度（credits）計費，實際扣減請見「最近請求」的「積分」欄。",
     "官网文档参考值；实际倍率以账号模型清单（price_factor）为准": "官網文件參考值；實際倍率以帳號模型清單（price_factor）為準",
     "来自账号模型清单的 price_factor；活动折扣可能让实际倍率不同": "來自帳號模型清單的 price_factor；活動折扣可能讓實際倍率不同",
@@ -4385,24 +4403,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     </div>
   </div>
 </div>
-<!-- 全局主导航：页面页签 + 仓库入口。结构与 id 全部保留，只是换了位置——页签
-     显隐（navPageRows）、i18n 与切换逻辑都按 id / 类名取，不依赖 DOM 层级。
-     提供商切换与网关默认出口都在顶部 header 里（见 .header-left）：
-     前者切网关真实上游（提供商 + 该家记住的出口），后者只切默认出口版本。
-     .app-body 用两列栅格把「侧栏 + main」摆好，页面内容本身一字未动。 -->
-<div class="app-body">
-<aside class="app-sidebar" aria-label="主导航">
-  <nav class="main-nav">
-    <button class="main-nav-btn active" id="btnNavGateway" onclick="switchMainTab('gateway')">
-      <span id="navGatewayLabel">网关</span>
-    </button>
-    <button class="main-nav-btn" id="btnNavAccounts" onclick="switchMainTab('accounts')">
-      账号
-    </button>
-    <button class="main-nav-btn" id="btnNavTasks" onclick="switchMainTab('tasks')">
-      任务与福利
-    </button>
-    <button class="main-nav-btn" id="btnNavAnalytics" onclick="switchMainTab('analytics')">
 <script>
 /* 登录闸门的 3D 场景 + 鼠标跟随效果。
    · 自绘 WebGL（光线步进 SDF 场景），不引外部依赖——本面板是单文件 HTML，
@@ -4440,10 +4440,10 @@ float mapScene(vec3 p, out float mat){
   mat = 0.0;
   float d = p.y + 1.5;                                  // 地面
   vec3 q = p;
-  q.y -= 0.62 + 0.16*sin(uTime*0.7);
+  q.y -= 1.55 + 0.12*sin(uTime*0.7);
   q.xz *= rot(uTime*0.20);
   q.xy *= rot(sin(uTime*0.27)*0.40);
-  float core = sdOcta(q, 0.62) - 0.05;                 // 核心晶体
+  float core = sdOcta(q, 0.52) - 0.05;                 // 核心晶体（浮在卡片上方）
   if(core < d){ d = core; mat = 1.0; }
   vec3 r = p;
   r.xz *= rot(-uTime*0.42);
@@ -4536,6 +4536,7 @@ void main(){
     vec3 lit = base*(mix(0.34, 0.22, uDark) + 0.9*dif*sha)*ao;
     lit += vec3(1.0)*spe*sha*(mat < 1.5 ? 0.5 : 0.22);
     lit += uAccent*fres*0.5*mix(0.40, 1.0, uDark);
+    if(mat > 0.5 && mat < 1.5) lit += uAccent*0.20*mix(0.55, 1.0, uDark);   // 晶体自带一点荧光
     float fog = 1.0 - exp(-0.012*t*t);
     col = mix(lit, sky + uAccent*0.04, fog);
   }
@@ -4803,6 +4804,24 @@ void main(){
   };
 })();
 </script>
+<!-- 全局主导航：页面页签 + 仓库入口。结构与 id 全部保留，只是换了位置——页签
+     显隐（navPageRows）、i18n 与切换逻辑都按 id / 类名取，不依赖 DOM 层级。
+     提供商切换与网关默认出口都在顶部 header 里（见 .header-left）：
+     前者切网关真实上游（提供商 + 该家记住的出口），后者只切默认出口版本。
+     .app-body 用两列栅格把「侧栏 + main」摆好，页面内容本身一字未动。 -->
+<div class="app-body">
+<aside class="app-sidebar" aria-label="主导航">
+  <nav class="main-nav">
+    <button class="main-nav-btn active" id="btnNavGateway" onclick="switchMainTab('gateway')">
+      <span id="navGatewayLabel">网关</span>
+    </button>
+    <button class="main-nav-btn" id="btnNavAccounts" onclick="switchMainTab('accounts')">
+      账号
+    </button>
+    <button class="main-nav-btn" id="btnNavTasks" onclick="switchMainTab('tasks')">
+      任务与福利
+    </button>
+    <button class="main-nav-btn" id="btnNavAnalytics" onclick="switchMainTab('analytics')">
       数据看板
     </button>
     <button class="main-nav-btn" id="btnNavAgents" onclick="switchMainTab('agents')">
@@ -5007,9 +5026,11 @@ void main(){
       <h2 style="margin:0">网关模型清单<em id="modelsRealmTag" style="color:var(--dim);font-weight:500"></em><em id="availModelCount"></em></h2>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <!-- 池子筛选：只有鸡蛋有多池（Zen 免费车道 / Kilo 免费池 / 自建供应商
-             池），别的提供商没有这个维度，筛选框就藏起来。 -->
+             池），别的提供商没有这个维度，筛选框就藏起来。每一项带池子名、
+             模型数与模型名；选中后下面的说明行把该池的模型完整摊开。 -->
         <select id="eggPoolFilter" class="mini-select" onchange="onEggPoolFilterChange(this.value)"
                 style="display:none" title="按池子筛选模型清单"></select>
+        <span id="eggPoolFilterHint" style="font-size:12px;color:var(--dim);display:none;max-width:100%;overflow-wrap:anywhere"></span>
         <div style="font-size:12px;color:var(--dim)" id="modelsTableDesc">展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率</div>
         <!-- 手动刷新：强制走一次上游 /v3/config（只在当前视图的版本上，用该
              版本的账号），成功后本表立即重载。服务端同一版本 30s 冷却。 -->
@@ -8296,29 +8317,88 @@ function renderEggPoolFormPicker(models, picked){
   const sel = new Set(picked || []);
   box.style.display = 'block';
   box.innerHTML = eggPoolPickerHtml(models, sel, 'form');
+  eggPoolPickerFilter('form');
 }
 
+// 上游把「免费」标在模型 id 结尾：OpenRouter 用 :free（minimax/…:free），
+// 也有用 /free 的（kilo-auto/free、openrouter/free）。目录里若带 free 标记
+// （上游报 0 价）也一并算数。
+function eggModelIsFree(model){
+  if(model && typeof model === 'object'){
+    if(model.free === true) return true;
+    model = model.id;
+  }
+  const text = String(model == null ? '' : model).trim().toLowerCase();
+  return text.endsWith(':free') || text.endsWith('/free') || text === 'free';
+}
+
+// 每个选择器一份筛选状态（搜索词 + 只看免费），重画后照旧生效。
+let EGG_POOL_PICK_FILTER = {form: {q: '', free: false}, card: {q: '', free: false}};
+
 function eggPoolPickerHtml(models, sel, scope){
+  const f = EGG_POOL_PICK_FILTER[scope] || {q: '', free: false};
   return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
     + '<span style="font-size:12px"><b>挑选模型</b>（已选 '
-    + '<span class="egg-pool-pick-count">' + sel.size + '</span> / ' + models.length + '）</span>'
-    + '<a onclick="eggPoolSelectAll(true)">全选</a>'
-    + '<a onclick="eggPoolSelectAll(false)">全不选</a>'
+    + '<span class="egg-pool-pick-count" data-scope="' + scope + '">' + sel.size + '</span> / ' + models.length + '）</span>'
+    + '<a onclick="eggPoolSelectAll(true,\'' + scope + '\')">全选</a>'
+    + '<a onclick="eggPoolSelectAll(false,\'' + scope + '\')">全不选</a>'
     + (scope === 'card'
         ? '<button type="button" class="sec mini" onclick="saveEggPoolModels()">保存选择</button>'
         : '')
     + '</div>'
-    + '<div class="egg-pool-pick-list">'
+    // 筛选：按模型 id 搜，或只看免费（上游用 :free / /free 标免费模型）
+    + '<div class="egg-pool-pick-filter" data-scope="' + scope + '">'
+    + '<input type="search" class="egg-pool-pick-search" placeholder="搜索模型 ID…"'
+    + ' value="' + esc(f.q || '') + '"'
+    + ' oninput="eggPoolPickerFilter(\'' + scope + '\', this.value)">'
+    + '<label><input type="checkbox" ' + (f.free ? 'checked' : '')
+    + ' onchange="eggPoolPickerFilter(\'' + scope + '\', null, this.checked)"> 只看免费</label>'
+    + '<span class="egg-pool-pick-shown" data-scope="' + scope + '"></span>'
+    + '</div>'
+    + '<div class="egg-pool-pick-list" data-scope="' + scope + '">'
     + models.map(m => {
         const on = sel.has(m.id);
+        const free = eggModelIsFree(m);
         return '<label class="egg-pool-pick-item' + (on ? ' on' : '') + '"'
-          + ' data-mid="' + esc(m.id) + '">'
+          + ' data-mid="' + esc(m.id) + '"'
+          + (free ? ' data-free="1"' : '')
+          + '>'
           + '<input type="checkbox" ' + (on ? 'checked' : '')
           + ' data-scope="' + scope + '"'
           + ' onchange="toggleEggPoolModel(this)">'
-          + '<span class="mono" style="font-size:11px">' + esc(m.id) + '</span></label>';
+          + '<span class="mono" style="font-size:11px">' + esc(m.id) + '</span>'
+          + (free ? '<span class="egg-pool-pick-free">免费</span>' : '')
+          + '</label>';
       }).join('')
     + '</div>';
+}
+
+// 筛选：命中才显示（隐藏不取消勾选 —— 筛完再全选，别把藏着的也改掉）。
+function eggPoolPickerFilter(scope, q, onlyFree){
+  if(!EGG_POOL_PICK_FILTER[scope]) EGG_POOL_PICK_FILTER[scope] = {q: '', free: false};
+  const f = EGG_POOL_PICK_FILTER[scope];
+  if(typeof q === 'string') f.q = q;
+  if(typeof onlyFree === 'boolean') f.free = onlyFree;
+  const list = document.querySelector('.egg-pool-pick-list[data-scope="' + scope + '"]');
+  if(!list) return;
+  const items = list.querySelectorAll('.egg-pool-pick-item');
+  const needle = String(f.q || '').trim().toLowerCase();
+  let shown = 0;
+  let freeCount = 0;
+  items.forEach(item => {
+    const mid = item.getAttribute('data-mid') || '';
+    const free = item.getAttribute('data-free') === '1';
+    if(free) freeCount++;
+    const hit = (!needle || mid.toLowerCase().indexOf(needle) >= 0)
+      && (!f.free || free);
+    item.style.display = hit ? '' : 'none';
+    if(hit) shown++;
+  });
+  const hint = document.querySelector('.egg-pool-pick-shown[data-scope="' + scope + '"]');
+  if(hint){
+    hint.textContent = '显示 ' + shown + ' / ' + items.length
+      + ' · 免费 ' + freeCount;
+  }
 }
 
 function eggPoolPickerScope(){
@@ -8342,28 +8422,34 @@ function toggleEggPoolModel(input){
   }else{
     EGG_POOL_FORM.picked = ids;
   }
-  const counter = document.querySelector('.egg-pool-pick-count');
+  const counter = document.querySelector('.egg-pool-pick-count[data-scope="' + scope + '"]');
   if(counter) counter.textContent = String(ids.length);
 }
 
-function eggPoolSelectAll(on){
-  const inputs = Array.from(document.querySelectorAll('.egg-pool-pick-list input[type=checkbox]'));
+// 全选 / 全不选：只作用于**当前看得见**的那些。筛到「只看免费」再全选，
+// 就只勾免费模型；藏着的那些保持原样。
+function eggPoolSelectAll(on, scope){
+  scope = scope || 'form';
+  const list = document.querySelector('.egg-pool-pick-list[data-scope="' + scope + '"]');
+  if(!list) return;
+  const inputs = Array.from(list.querySelectorAll('input[type=checkbox]'));
   inputs.forEach(i => {
-    i.checked = !!on;
     const item = i.closest('.egg-pool-pick-item');
+    if(item && item.style.display === 'none') return;
+    i.checked = !!on;
     if(item) item.classList.toggle('on', !!on);
   });
-  const scope = inputs.length ? (inputs[0].getAttribute('data-scope') || 'form') : 'form';
-  const ids = on ? inputs.map(i => {
+  // 已选清单按整份列表算（藏着的也算，只是没显示）。
+  const ids = inputs.filter(i => i.checked).map(i => {
         const wrap = i.closest('.egg-pool-pick-item');
         return wrap ? (wrap.getAttribute('data-mid') || '') : '';
-      }).filter(Boolean) : [];
+      }).filter(Boolean);
   if(scope === 'card'){
     EGG_POOL_CARD.picked = ids;
   }else{
     EGG_POOL_FORM.picked = ids;
   }
-  const counter = document.querySelector('.egg-pool-pick-count');
+  const counter = document.querySelector('.egg-pool-pick-count[data-scope="' + scope + '"]');
   if(counter) counter.textContent = String(ids.length);
 }
 
@@ -8455,6 +8541,8 @@ function renderEggPoolList(){
       + picker
       + '</div>';
   }).join('');
+  // 卡片里摊开的选择器：把上次的筛选（搜索词 / 只看免费）照旧套上。
+  if(EGG_POOL_CARD.id) eggPoolPickerFilter('card');
 }
 
 function editEggPool(id){
@@ -8563,35 +8651,115 @@ async function deleteEggPool(id){
 // ===== 模型清单的池子筛选 =====
 // 选项直接从清单里长出来：每个 (egg_source, egg_source_label) 一项，
 // 所以新加的池子不用额外注册就出现在下拉里。
+// 每一项都带上「有几个模型」和「是哪几个」：下拉里一眼看清这个池子提供了
+// 什么，不用先筛一遍再数行数。
+const EGG_POOL_NAME_MAX = 44;   // 下拉里单个模型名最多显示多少字符
+const EGG_POOL_NAME_SHOW = 2;   // 下拉里最多列几个模型名（其余用「…」收尾）
+
+// 按池子分组清单里的模型：key 是 egg_source（内置源是 zen / kilo，自建池
+// 是 pool-xxx），value 是 {src, label, models}。
+function eggPoolGroups(){
+  const groups = new Map();
+  MODELS_DATA.forEach(m => {
+    const src = String((m && m.egg_source) || '').trim();
+    if(!src) return;
+    if(!groups.has(src)){
+      groups.set(src, {src: src,
+                       label: String((m && m.egg_source_label) || src).trim(),
+                       models: []});
+    }
+    groups.get(src).models.push(m);
+  });
+  return groups;
+}
+
+// 池子里的模型 id（清单里的顺序）。
+function eggPoolModelNames(models){
+  return (models || []).map(m => String((m && m.id) || '').trim()).filter(Boolean);
+}
+
+// 模型名太长时截断（模型 id 动辄四五十字符）。
+function eggPoolShortName(id){
+  const s = String(id || '');
+  return s.length > EGG_POOL_NAME_MAX ? (s.slice(0, EGG_POOL_NAME_MAX - 1) + '…') : s;
+}
+
+// 下拉里的一项：池子名 + 模型数 + 前几个模型名。
+function eggPoolOptionLabel(group){
+  const names = eggPoolModelNames(group.models);
+  const head = group.label + '（' + names.length + ' 个模型';
+  if(!names.length) return head + '）';
+  const shown = names.slice(0, EGG_POOL_NAME_SHOW).map(eggPoolShortName);
+  const tail = names.length > shown.length ? '…' : '';
+  return head + '：' + shown.join('、') + tail + '）';
+}
+
+// 选中池子后的说明行：把「是哪些模型」摊开（下拉里只列前几个）。
+function renderEggPoolFilterHint(groups){
+  const el = document.getElementById('eggPoolFilterHint');
+  if(!el) return;
+  if(!groups || currentProvider() !== 'egg'){
+    el.textContent = '';
+    el.style.display = 'none';
+    return;
+  }
+  el.style.display = '';
+  if(!EGG_POOL_FILTER){
+    // 全部池子：按池子给个摘要
+    const parts = [];
+    const titles = [];
+    groups.forEach(group => {
+      const names = eggPoolModelNames(group.models);
+      parts.push(group.label + ' ' + names.length);
+      titles.push(group.label + '（' + names.length + '）：' + names.join('\n'));
+    });
+    el.textContent = '全部池子（' + MODELS_DATA.length + ' 个模型）：'
+      + parts.join(' · ');
+    el.title = titles.join('\n\n');
+    return;
+  }
+  const group = groups.get(EGG_POOL_FILTER);
+  if(!group){
+    el.textContent = '';
+    el.title = '';
+    return;
+  }
+  const names = eggPoolModelNames(group.models);
+  const shown = names.slice(0, 12);
+  el.textContent = group.label + '（' + names.length + ' 个模型）：'
+    + shown.join('、') + (names.length > shown.length ? '…' : '');
+  el.title = names.join('\n');
+}
+
 function buildEggPoolFilter(){
   const sel = document.getElementById('eggPoolFilter');
   if(!sel) return;
   if(currentProvider() !== 'egg'){
     sel.style.display = 'none';
     EGG_POOL_FILTER = '';
+    renderEggPoolFilterHint(null);
     return;
   }
-  const seen = new Map();
-  MODELS_DATA.forEach(m => {
-    const src = String((m && m.egg_source) || '').trim();
-    if(!src) return;
-    if(!seen.has(src)) seen.set(src, String((m && m.egg_source_label) || src).trim());
-  });
-  if(seen.size < 2){
+  const groups = eggPoolGroups();
+  if(groups.size < 2){
     // 只有一个池子时筛选没有意义，藏起来别占地方。
     sel.style.display = 'none';
     EGG_POOL_FILTER = '';
+    renderEggPoolFilterHint(null);
     return;
   }
-  const opts = ['<option value="">全部池子（' + MODELS_DATA.length + '）</option>'];
-  seen.forEach((label, src) => {
-    const n = MODELS_DATA.filter(m => String(m.egg_source || '') === src).length;
-    opts.push('<option value="' + esc(src) + '">' + esc(label) + '（' + n + '）</option>');
+  const opts = ['<option value="">全部池子（' + MODELS_DATA.length + ' 个模型）</option>'];
+  groups.forEach(group => {
+    const names = eggPoolModelNames(group.models);
+    opts.push('<option value="' + esc(group.src) + '"'
+      + ' title="' + esc(names.join('\n')) + '">'
+      + esc(eggPoolOptionLabel(group)) + '</option>');
   });
   sel.innerHTML = opts.join('');
-  if(EGG_POOL_FILTER && !seen.has(EGG_POOL_FILTER)) EGG_POOL_FILTER = '';
+  if(EGG_POOL_FILTER && !groups.has(EGG_POOL_FILTER)) EGG_POOL_FILTER = '';
   sel.value = EGG_POOL_FILTER;
   sel.style.display = 'inline-block';
+  renderEggPoolFilterHint(groups);
 }
 
 function onEggPoolFilterChange(value){
@@ -8718,7 +8886,18 @@ function renderAvailableModels(){
     const c = credText.toLowerCase().replace('x', '');
     const credNote = String(m.credits_note || '').trim();
     const credTitle = credNote ? ' title="' + esc(credNote) + '"' : '';
-    if(currentProvider() === 'egg' && (c === '0.00' || c === '0' || !credText)){
+    if(currentProvider() === 'egg' && String(m.egg_source_kind || '') === 'pool'){
+      // 自建供应商池：用的是操作者自己的 Key。但上游明确标成免费的模型
+      // （id 结尾 :free / /free，或上游报 0 价）确实不消耗额度 —— 那种标
+      // 「免费」，别把免费模型说成要付费。
+      if(m.egg_free === true || eggModelIsFree(m.id)){
+        credBadge = '<span class="badge ok" style="background:var(--accent2-soft);color:var(--accent2)"'
+          + credTitle + '>免费</span>';
+      } else {
+        credBadge = '<span class="badge s" style="background:var(--warn-soft);color:var(--warn);border-color:rgba(183,121,31,.35)"'
+          + credTitle + '>按供应商计费</span>';
+      }
+    } else if(currentProvider() === 'egg' && (c === '0.00' || c === '0' || !credText)){
       // 鸡蛋的全部模型都是免费额度：显示「免费」比「限时免费 0.00x」准确。
       credBadge = '<span class="badge ok" style="background:var(--accent2-soft);color:var(--accent2)"' + credTitle + '>免费</span>';
     } else if(c === '0.00' || c === '0'){
@@ -13004,6 +13183,8 @@ function panelNeedsLogin(){
   if(gate) gate.style.display = 'flex';
   const input = document.getElementById('panelPwdInput');
   if(input){ input.focus(); }
+  // 闸门一开就把 3D 场景点着（关掉时 stopGateScene 会停表，见 gate 脚本）。
+  if(typeof startGateScene === 'function') startGateScene();
 }
 
 function panelSessionLost(){
@@ -13030,6 +13211,8 @@ function panelSessionLost(){
 function panelHideGate(){
   const gate = document.getElementById('panelGate');
   if(gate) gate.style.display = 'none';
+  // 闸门关了就停掉 3D 场景的动画循环，别在看不见的时候白烧 CPU。
+  if(typeof stopGateScene === 'function') stopGateScene();
 }
 
 async function submitPanelLogin(){
@@ -13182,8 +13365,6 @@ function liveBadgeTick(){
   // 只在状态跃迁时播报：例行轮询不播报，否则读屏每 5 秒响一次。
   if(state !== LIVE_STATE){
     const first = !LIVE_STATE;
-  // 闸门一开就把 3D 场景点着（关掉时 stopGateScene 会停表，见 gate 脚本）。
-  if(typeof startGateScene === 'function') startGateScene();
     LIVE_STATE = state;
     if(!first){
       announce(state === 'paused' ? '已暂停自动刷新'
@@ -13210,8 +13391,6 @@ function setPollFrequency(v){
   POLL_FACTOR = ms / POLL_BASE_MS;
   try{ localStorage.setItem(POLL_FREQ_KEY, String(ms)); }catch(e){}
   startPollTimers();
-  // 闸门关了就停掉 3D 场景的动画循环，别在看不见的时候白烧 CPU。
-  if(typeof stopGateScene === 'function') stopGateScene();
   liveBadgeTick();
   announce('自动刷新频率已改为 ' + Math.round(ms / 1000) + ' 秒');
 }
@@ -19927,3 +20106,4 @@ if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TAB
 </script>
 </body>
 </html>
+

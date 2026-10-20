@@ -266,6 +266,16 @@ def _normalize(entry):
     }
 
 
+def _is_free_id(model_id):
+    """这个模型 id 是不是「免费」标记。
+
+    上游把免费标在 id 结尾：OpenRouter 用 ``:free``（minimax/…:free），
+    也有用 ``/free`` 的（kilo-auto/free、openrouter/free）。
+    """
+    text = str(model_id or "").strip().lower()
+    return text.endswith(":free") or text.endswith("/free") or text == "free"
+
+
 def _clean_model(model_id, row=None):
     """把上游的模型行收拾成清单条目（字段缺失就留空，不猜）。"""
     row = row if isinstance(row, dict) else {}
@@ -295,6 +305,20 @@ def _clean_model(model_id, row=None):
                         for p in params)
     if row.get("reasoning") is True:
         reasoning = True
+    # 免费与否：id 结尾的 :free / /free 是一手标记；上游直接报 0 价也算
+    # （OpenRouter 的免费模型就是这样标的）。标错了会让面板把免费模型
+    # 说成「按供应商计费」，或者反之。
+    free = _is_free_id(model_id)
+    pricing = row.get("pricing")
+    if isinstance(pricing, dict) and pricing:
+        pin = pricing.get("prompt")
+        pout = pricing.get("completion")
+        if pin is not None or pout is not None:
+            try:
+                if float(pin or 0) == 0 and float(pout or 0) == 0:
+                    free = True
+            except (TypeError, ValueError):
+                pass
     return {
         "id": model_id,
         "name": name,
@@ -303,6 +327,7 @@ def _clean_model(model_id, row=None):
         "vision": vision,
         "reasoning": reasoning,
         "tools": True,
+        "free": free,
     }
 
 
@@ -447,6 +472,9 @@ def catalog_entries():
                 "vision": bool(meta.get("vision")),
                 "reasoning": bool(meta.get("reasoning")),
                 "tools": True,
+                # 免费与否：目录里存的是上次拉的结果（可能没有 free 字段），
+                # 兜底看 id 结尾的 :free / /free。
+                "free": bool(meta.get("free")) or _is_free_id(mid),
                 "blurb": "自建供应商「%s」的模型（%s）：%s"
                          % (pool["name"], PROTOCOL_LABELS.get(pool["protocol"],
                                                             pool["protocol"]),

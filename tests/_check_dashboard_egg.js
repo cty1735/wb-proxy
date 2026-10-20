@@ -40,8 +40,19 @@ const document = {
     if (!els[id]) els[id] = makeEl(id);
     return els[id];
   },
-  querySelector() { return null; },
-  querySelectorAll() { return []; },
+  querySelector(sel) {
+    // 池子选择器的筛选要真的操作 DOM：把下面那几个桩接上。
+    if (sel && sel.indexOf('.egg-pool-pick-list') >= 0) return PICK_LIST;
+    if (sel && sel.indexOf('.egg-pool-pick-shown') >= 0) return PICK_HINT;
+    if (sel && sel.indexOf('.egg-pool-pick-count') >= 0) return PICK_COUNT;
+    return null;
+  },
+  querySelectorAll(sel) {
+    if (sel && sel.indexOf('input[data-scope=') >= 0 && PICK_LIST) {
+      return PICK_LIST.querySelectorAll('input[type=checkbox]');
+    }
+    return [];
+  },
   createElement() {
     const el = makeEl('');
     el.appendChild = function() {};
@@ -53,6 +64,38 @@ const document = {
   documentElement: makeEl('html'),
   addEventListener() {},
 };
+// 选择器筛选用的 DOM 桩（下面第 10 组用例会填内容）。
+let PICK_LIST = null;
+let PICK_HINT = makeEl('eggPoolPickHint');
+let PICK_COUNT = makeEl('eggPoolPickCount');
+// 造一份「模型条目列表」：每条有 data-mid / data-free 与一个复选框。
+function makePickList(items) {
+  const rows = items.map(it => {
+    const input = {
+      checked: !!it.checked,
+      getAttribute(n) { return n === 'data-scope' ? 'card' : null; },
+    };
+    const label = {
+      style: {},
+      getAttribute(n) {
+        if (n === 'data-mid') return it.mid;
+        if (n === 'data-free') return it.free ? '1' : null;
+        return null;
+      },
+      classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+      querySelectorAll(sel) { return sel === 'input[type=checkbox]' ? [input] : []; },
+    };
+    input.closest = sel => (sel === '.egg-pool-pick-item' ? label : null);
+    return { label, input };
+  });
+  return {
+    querySelectorAll(sel) {
+      if (sel === '.egg-pool-pick-item') return rows.map(r => r.label);
+      if (sel === 'input[type=checkbox]') return rows.map(r => r.input);
+      return [];
+    },
+  };
+}
 const window = {
   document,
   localStorage: { getItem() { return null; }, setItem() {} },
@@ -89,11 +132,11 @@ const want = [
   'renderEggPresets', 'applyEggPreset', 'resetEggPoolForm',
   'renderEggPoolFormPicker', 'eggPoolPickerHtml', 'toggleEggPoolModel',
   'eggPoolSelectAll', 'onEggPoolFilterChange', 'editEggPool',
-  'openEggPoolPicker',
+  'openEggPoolPicker', 'eggPoolPickerFilter', 'eggModelIsFree',
 ];
 const setters = [
   'MODELS_DATA', 'EGG_POOLS', 'EGG_POOL_PRESETS', 'EGG_POOL_FORM',
-  'EGG_POOL_CARD', 'EGG_POOL_FILTER', 'currentProvider', 'esc',
+  'EGG_POOL_CARD', 'EGG_POOL_FILTER', 'EGG_POOL_PICK_FILTER', 'currentProvider', 'esc',
   'fmtCatalogStamp', 'toast', 'getJSON', 'postJSON', 'loadModels',
 ].map(n => "  try{ if(o." + n + " !== undefined) " + n + " = o." + n + "; }catch(e){}");
 const exportSrc = want.map(n => n + ': ' + n).join(',');
@@ -153,14 +196,30 @@ api.__set({
   loadModels: function () { return Promise.resolve(); },
 });
 
-// 1. 池子筛选下拉：三个池子各一项，带模型数
+// 1. 池子筛选下拉：三个池子各一项，带模型数与模型名
 api.buildEggPoolFilter();
 const sel = document.getElementById('eggPoolFilter');
 check('筛选框显示', sel.style.display === 'inline-block', sel.style.display);
 check('筛选框有三个池子 + 全部',
   (sel.innerHTML.match(/<option/g) || []).length === 4, sel.innerHTML);
 check('筛选框含池子名', sel.innerHTML.indexOf('NVIDIA NIM') >= 0, sel.innerHTML);
-check('筛选框含模型数', sel.innerHTML.indexOf('（2）') >= 0, sel.innerHTML);
+check('筛选框含模型数', sel.innerHTML.indexOf('（2 个模型') >= 0, sel.innerHTML);
+// 下拉里要能看出「是哪些模型」，不只是个数
+check('筛选框含模型名', sel.innerHTML.indexOf('m3、m4') >= 0, sel.innerHTML);
+check('筛选框含全部池子', sel.innerHTML.indexOf('全部池子（4 个模型）') >= 0, sel.innerHTML);
+
+// 1b. 说明行：选中池子后把该池的模型摊开
+const hint = document.getElementById('eggPoolFilterHint');
+check('说明行默认显示全部摘要',
+  hint.textContent.indexOf('全部池子（4 个模型）') >= 0, hint.textContent);
+api.__set({ EGG_POOL_FILTER: 'pool-abc' });
+api.buildEggPoolFilter();
+check('说明行摊开选中池子的模型',
+  hint.textContent.indexOf('NVIDIA NIM（2 个模型）：m3、m4') >= 0, hint.textContent);
+check('说明行带完整模型清单', hint.title.indexOf('m3') >= 0 && hint.title.indexOf('m4') >= 0,
+  hint.title);
+api.__set({ EGG_POOL_FILTER: '' });
+api.buildEggPoolFilter();
 
 // 2. 过滤生效
 api.__set({ EGG_POOL_FILTER: 'pool-abc' });
@@ -231,6 +290,56 @@ api.__set({ currentProvider: function () { return 'workbuddy'; } });
 api.buildEggPoolFilter();
 check('非鸡蛋视图藏起筛选框', sel.style.display === 'none', sel.style.display);
 check('非鸡蛋视图不过滤', api.eggFilteredModels().length === 4);
+
+// 10. 挑选模型：按 id 搜 + 只看免费
+api.__set({ currentProvider: function () { return 'egg'; } });
+check('免费判定：:free 后缀',
+  api.eggModelIsFree('minimax/minimax-m3.1-flash:free') === true);
+check('免费判定：/free 后缀', api.eggModelIsFree('kilo-auto/free') === true);
+check('免费判定：普通付费模型',
+  api.eggModelIsFree('anthropic/claude-sonnet-4-5') === false);
+check('免费判定：上游标 free 的',
+  api.eggModelIsFree({ id: 'x/y', free: true }) === true);
+
+const pickItems = [
+  { mid: 'minimax/minimax-m3.1-flash:free', free: true, checked: true },
+  { mid: 'anthropic/claude-sonnet-4-5', free: false, checked: false },
+  { mid: 'nvidia/nemotron-3.5-super-vl:free', free: true, checked: false },
+  { mid: 'kilo-auto/free', free: true, checked: false },
+];
+PICK_LIST = makePickList(pickItems);
+PICK_HINT = makeEl('eggPoolPickHint');
+PICK_COUNT = makeEl('eggPoolPickCount');
+api.__set({
+  EGG_POOL_PICK_FILTER: { form: { q: '', free: false }, card: { q: '', free: false } },
+  EGG_POOL_CARD: { id: 'pool-abc', picked: ['minimax/minimax-m3.1-flash:free'] },
+});
+api.eggPoolPickerFilter('card', '', true);
+check('只看免费：显示数对',
+  PICK_HINT.textContent.indexOf('显示 3 / 4') >= 0, PICK_HINT.textContent);
+check('只看免费：免费计数对',
+  PICK_HINT.textContent.indexOf('免费 3') >= 0, PICK_HINT.textContent);
+const hidden = PICK_LIST.querySelectorAll('.egg-pool-pick-item')
+  .filter(i => i.style.display === 'none');
+check('只看免费：付费的藏起来',
+  hidden.length === 1
+  && hidden[0].getAttribute('data-mid') === 'anthropic/claude-sonnet-4-5', hidden.length);
+check('藏起来的勾选没被动',
+  PICK_LIST.querySelectorAll('input[type=checkbox]')[0].checked === true);
+
+// 全选：只作用于当前看得见的（筛到只看免费再全选 = 只勾免费）
+api.eggPoolSelectAll(true, 'card');
+const picked = api.__state().EGG_POOL_CARD.picked;
+check('全选只选看得见的', picked.length === 3, picked);
+check('全选含原来勾着的免费模型',
+  picked.indexOf('minimax/minimax-m3.1-flash:free') >= 0, picked);
+check('全选不含藏起来的付费模型',
+  picked.indexOf('anthropic/claude-sonnet-4-5') < 0, picked);
+
+// 按 id 搜索
+api.eggPoolPickerFilter('card', 'nemotron', false);
+check('按 id 搜索',
+  PICK_HINT.textContent.indexOf('显示 1 / 4') >= 0, PICK_HINT.textContent);
 
 console.log('');
 if (FAIL) { console.log('FAILED: ' + FAIL); process.exit(1); }

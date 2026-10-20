@@ -843,20 +843,37 @@ def pool_status():
 
 
 def catalog(directory=None):
-    """给 /v1/models 用的当前目录（必要时刷新）。
-
-    自建供应商池的模型跟在内置免费源后面：同一个 id 已经被内置源占用时，
-    池子里的那条不重复出现（一个 id 只能有一个去处）。
-    """
+    """给 /v1/models 用的当前目录（必要时刷新）。"""
     models = ensure(directory).get("models") or _static_models()
-    seen = set(m.get("id") for m in models if isinstance(m, dict))
-    merged = list(models)
-    for model in pool_models():
-        mid = model.get("id")
-        if not mid or mid in seen:
+    return merge_models(models)
+
+
+def merge_models(builtin_models):
+    """把自建供应商池的模型并进清单：**自建池优先**。
+
+    同名 id 只能有一个去处，请求也是按「自建池优先」发的（见 resolve），
+    清单必须跟请求走同一条路：内置免费源里有同名模型时（例如 Kilo 免费池
+    也有 minimax/minimax-m3.1-flash:free），让位给自建池。
+
+    不这样的话，面板会把这模型标成「Kilo 免费池」—— 看着像走免费池，实际
+    流量去了自建池；而自建池那一行因为 id 撞了被丢掉，池子就永远不出现在
+    「池子」下拉里（操作者会以为池子没生效）。
+    """
+    pools = pool_models()
+    if not pools:
+        return list(builtin_models or [])
+    claimed = set()
+    for model in pools:
+        mid = model.get("id") if isinstance(model, dict) else None
+        if mid:
+            claimed.add(mid)
+    merged = []
+    for model in builtin_models or []:
+        mid = model.get("id") if isinstance(model, dict) else None
+        if mid and mid in claimed:
             continue
-        seen.add(mid)
         merged.append(model)
+    merged.extend(pools)
     return merged
 
 
@@ -870,11 +887,19 @@ def model_entry_meta(model):
     label = (_SOURCE_SHORT.get(source)
              or model.get("sourceLabel")
              or source)
+    # 免费与否：自建池里也有上游明确免费的模型（id 结尾 :free / /free，或
+    # 上游报 0 价）。这类模型不消耗额度，别说成「按供应商计费」。
+    free = bool(model.get("free"))
     if kind == "pool":
-        credits_note = "自建供应商池「%s」的模型：用操作者自己的 Key，费用由该供应商结算" % label
+        if free:
+            credits_note = ("自建供应商池「%s」里的免费模型（上游标 :free）："
+                            "不消耗额度" % label)
+        else:
+            credits_note = ("自建供应商池「%s」的模型：用操作者自己的 Key，"
+                            "费用由该供应商结算" % label)
     else:
         credits_note = "鸡蛋免费模型：无需账号或密钥（%s）" % (model.get("sourceLabel") or source)
-    return {
+    meta = {
         "name": model.get("name") or model.get("id"),
         "descriptionZh": model.get("blurb") or "",
         "ownedBy": source,
@@ -889,6 +914,9 @@ def model_entry_meta(model):
         "egg_source_label": label,
         "egg_source_kind": kind,
     }
+    if free:
+        meta["egg_free"] = True
+    return meta
 
 
 def _find_model(model_id):
