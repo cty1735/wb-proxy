@@ -107,6 +107,7 @@ try:
         "api_key": "sk-or-key",
         "models": ["minimax/minimax-m3.1-flash:free"],
     })
+    or_pool_id = [p for p in P.pools() if p["name"] == "OpenRouter"][0]["id"]
     builtin = wb_zen._static_models()
     check("内置源本来有同名模型",
           any(m["id"] == "minimax/minimax-m3.1-flash:free"
@@ -163,6 +164,20 @@ try:
     check("自建池免费模型限流带额度提示", "每天 50 次" in free_detail, free_detail)
     builtin = wb_zen._error_detail(401, raw, None, "x")
     check("内置免费源仍是老口径", "免费源拒绝访问" in builtin, builtin)
+
+    # 顶掉内置免费源：池子选中的 id 若与内置源撞了，面板要能提醒
+    orig_snapshot = wb_zen.snapshot
+    try:
+        wb_zen.snapshot = lambda: {"models": [
+            {"id": "minimax/minimax-m3.1-flash:free", "source": "kilo"},
+            {"id": "deepseek-v4.1-flash-free", "source": "zen"},
+        ]}
+        sh = P.shadowed_ids(P.get(or_pool_id))
+        check("撞上内置的 id 算出来",
+              "minimax/minimax-m3.1-flash:free" in sh, sh)
+        check("没撞的不算", "claude-sonnet-4-5" not in sh, sh)
+    finally:
+        wb_zen.snapshot = orig_snapshot
 
     # 未知模型仍然报原来的错
     try:

@@ -538,6 +538,8 @@ body.provider-trae #btnFetchCredits{display:none !important}
 .egg-pool-pick-item input{accent-color:var(--accent);margin:0}
 .egg-pool-pick-free{color:var(--accent2);background:var(--accent2-soft);
   border:1px solid rgba(94,140,79,.28);border-radius:5px;padding:0 4px;font-size:10px}
+.egg-pool-pick-shadow{color:var(--warn);background:var(--warn-soft);
+  border:1px solid rgba(183,121,31,.35);border-radius:5px;padding:0 4px;font-size:10px}
 .egg-pool-pick-filter{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:7px}
 .egg-pool-pick-filter input[type=search]{flex:1 1 190px;min-width:130px;max-width:320px;
   font-size:12px;padding:4px 8px;border-radius:7px;border:1px solid var(--line);
@@ -2604,6 +2606,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '流式': 'Streaming',
     '浅色': 'Light',
     '测试': 'Test',
+    '顶掉内置': 'shadows builtin',
+    '顶掉内置免费源 ': 'Shadows ',
+    ' 个模型（改走本池）：': ' builtin free models (they now go through this pool): ',
+    '⚠ 顶掉内置免费源 ': '⚠ Shadows ',
+    ' 等': ' etc.',
     '测试中...': 'Testing...',
     '测试失败:': 'Test failed:',
     '测试请求失败:': 'Test request failed:',
@@ -3357,6 +3364,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     "搜索模型 ID…": "搜尋模型 ID…",
     "显示 ": "顯示 ",
     "测试": "測試",
+    "顶掉内置": "頂掉內置",
+    "顶掉内置免费源 ": "頂掉內置免費源 ",
+    " 个模型（改走本池）：": " 個模型（改走本池）：",
+    "⚠ 顶掉内置免费源 ": "⚠ 頂掉內置免費源 ",
+    " 等": " 等",
     "正在测试「": "正在測試「",
     "」可用：": "」可用：",
     "」不可用：": "」不可用：",
@@ -8086,7 +8098,7 @@ function renderEggPoolFormPicker(models, picked){
   }
   const sel = new Set(picked || []);
   box.style.display = 'block';
-  box.innerHTML = eggPoolPickerHtml(models, sel, 'form');
+  box.innerHTML = eggPoolPickerHtml(models, sel, 'form', EGG_POOL_FORM.editingId);
   eggPoolPickerFilter('form');
 }
 
@@ -8105,8 +8117,12 @@ function eggModelIsFree(model){
 // 每个选择器一份筛选状态（搜索词 + 只看免费），重画后照旧生效。
 let EGG_POOL_PICK_FILTER = {form: {q: '', free: false}, card: {q: '', free: false}};
 
-function eggPoolPickerHtml(models, sel, scope){
+function eggPoolPickerHtml(models, sel, scope, poolId){
   const f = EGG_POOL_PICK_FILTER[scope] || {q: '', free: false};
+  // 这个池子选中的 id 若与内置免费源（Kilo / Zen）撞了，请求就改走本池 ——
+  // 内置那条等于被顶掉。挑模型时标出来，免得把还能用的免费模型弄没了。
+  const pool = EGG_POOLS.find(p => p.id === poolId);
+  const shadowed = new Set((pool && pool.shadowed) || []);
   return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
     + '<span style="font-size:12px"><b>挑选模型</b>（已选 '
     + '<span class="egg-pool-pick-count" data-scope="' + scope + '">' + sel.size + '</span> / ' + models.length + '）</span>'
@@ -8129,15 +8145,19 @@ function eggPoolPickerHtml(models, sel, scope){
     + models.map(m => {
         const on = sel.has(m.id);
         const free = eggModelIsFree(m);
+        const shadow = shadowed.has(m.id);
         return '<label class="egg-pool-pick-item' + (on ? ' on' : '') + '"'
           + ' data-mid="' + esc(m.id) + '"'
           + (free ? ' data-free="1"' : '')
+          + (shadow ? ' data-shadow="1"' : '')
+          + (shadow ? ' title="内置免费源里也有这个 id：勾上它，这条模型就改走本池，内置那条（不用 Key）不再接它"' : '')
           + '>'
           + '<input type="checkbox" ' + (on ? 'checked' : '')
           + ' data-scope="' + scope + '"'
           + ' onchange="toggleEggPoolModel(this)">'
           + '<span class="mono" style="font-size:11px">' + esc(m.id) + '</span>'
           + (free ? '<span class="egg-pool-pick-free">免费</span>' : '')
+          + (shadow ? '<span class="egg-pool-pick-shadow">顶掉内置</span>' : '')
           + '</label>';
       }).join('')
     + '</div>';
@@ -8275,7 +8295,7 @@ function renderEggPoolList(){
     // 正在挑模型的那张卡片：把选择器直接摊在卡片里，不用弹窗。
     const picker = (EGG_POOL_CARD.id === p.id && p.catalog && p.catalog.length)
       ? '<div class="egg-pool-pick">'
-        + eggPoolPickerHtml(p.catalog, new Set(EGG_POOL_CARD.picked), 'card')
+        + eggPoolPickerHtml(p.catalog, new Set(EGG_POOL_CARD.picked), 'card', p.id)
         + '</div>'
       : '';
     return '<div class="egg-pool-card' + (p.enabled ? '' : ' off') + '">'
@@ -8300,6 +8320,15 @@ function renderEggPoolList(){
         + '<span class="badge off" style="flex:0 0 auto">' + models.length + ' 模型</span>'
         + '<div class="egg-pool-models" style="flex:1 1 auto">' + chips + '</div>'
       + '</div>'
+      // 顶掉内置免费源的模型：这些 id 改走本池，内置那条（不用 Key）不再接它
+      + ((p.shadowed && p.shadowed.length)
+          ? '<div style="font-size:11px;color:var(--warn);margin-top:6px"'
+            + ' title="这 ' + p.shadowed.length + ' 个 id 内置免费源（Kilo / Zen）里也有：'
+            + '勾在本池就改走本池，内置那条不再接它们（取消勾选即可还给内置源）">'
+            + '⚠ 顶掉内置免费源 ' + p.shadowed.length + ' 个模型（改走本池）：'
+            + esc(p.shadowed.slice(0, 3).join('、'))
+            + (p.shadowed.length > 3 ? ' 等' : '') + '</div>'
+          : '')
       + '<div class="egg-pool-foot">'
         + '<span class="mono" style="flex:1 1 220px;min-width:0;overflow:hidden;text-overflow:ellipsis"'
           + ' title="' + esc(p.base_url || '') + '">' + esc(p.base_url || '') + '</span>'

@@ -434,6 +434,33 @@ def enabled_pools():
         return [dict(p) for p in _state["pools"] if p["enabled"]]
 
 
+def _builtin_free_ids():
+    """内置免费源（Zen / Kilo）里的模型 id。
+
+    池子选中的 id 若与内置免费源撞了，请求就改走本池（一个 id 只能有一个
+    去处，见 wb_zen.merge_models）—— 内置那条等于被顶掉了。面板要能提醒
+    操作者「选它就顶掉了 Kilo 的那条」，免得把还能用的免费模型弄没了。
+    """
+    try:
+        import wb_zen
+    except Exception:
+        return set()
+    try:
+        snap = wb_zen.snapshot()
+    except Exception:
+        return set()
+    return set(m.get("id") for m in (snap.get("models") or [])
+               if isinstance(m, dict) and m.get("source") in ("zen", "kilo"))
+
+
+def shadowed_ids(pool):
+    """这个池子顶掉了内置免费源的哪些模型 id。"""
+    builtin = _builtin_free_ids()
+    if not builtin:
+        return []
+    return sorted(mid for mid in (pool.get("models") or []) if mid in builtin)
+
+
 def pool_summaries():
     """池子的概要（不含 catalog 副本）：概览卡片与状态接口用。
 
@@ -450,6 +477,7 @@ def pool_summaries():
             "count": len(p["models"]),
             "catalog_count": len(p["catalog"]),
             "catalog_at": p["catalog_at"],
+            "shadowed": shadowed_ids(p),
         } for p in _state["pools"]]
 
 
@@ -471,6 +499,8 @@ def public_pools():
         pool["protocol_label"] = PROTOCOL_LABELS.get(pool["protocol"], pool["protocol"])
         pool["model_count"] = len(pool.get("models") or [])
         pool["catalog_count"] = len(pool.get("catalog") or [])
+        # 顶掉了内置免费源的模型 id（面板要提醒：选它就改走本池）
+        pool["shadowed"] = shadowed_ids(pool)
         out.append(pool)
     return out
 
