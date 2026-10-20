@@ -94,6 +94,36 @@ PRESETS = [
 #: 池子 id 的形态（面板自己生成的短 id，不给用户看）。
 _POOL_ID_RE = re.compile(r"^pool-[0-9a-f]{8,32}$")
 
+#: 上游报错时给一句「能照着做」的提示。原文往往没头没尾 —— OpenRouter 对
+#: 拿错类型的 Key 直接回 "User not found"，光看这句没人知道该换哪把 Key。
+_AUTH_HINTS = {
+    "openrouter.ai": (
+        "OpenRouter 推理要用「API Keys」页里的普通 Key；"
+        "管理（Management）/置备（Provisioning）Key 只能用来管 Key，"
+        "拿去做推理上游就会回 User not found"),
+}
+
+#: 免费模型被限流时的提示（免费模型都有每日额度）。
+_FREE_QUOTA_HINTS = {
+    "openrouter.ai": "OpenRouter 免费档的免费模型每天 50 次，用完要等隔天重置",
+}
+
+
+def error_hint(base_url, status, model=""):
+    """这个上游报错时该怎么排查；没有提示就返回空串。"""
+    host = str(base_url or "").strip().lower()
+    text = str(model or "").strip().lower()
+    if status in (401, 403):
+        for suffix, hint in _AUTH_HINTS.items():
+            if suffix in host:
+                return hint
+        return ""
+    if status == 429 and (text.endswith(":free") or text.endswith("/free")):
+        for suffix, hint in _FREE_QUOTA_HINTS.items():
+            if suffix in host:
+                return hint
+    return ""
+
 #: 一个池子最多记多少个模型（拉回来的清单可能几百条，全记下来文件会很大）。
 MAX_CATALOG_MODELS = 2000
 #: 一个池子最多对外暴露多少个模型。

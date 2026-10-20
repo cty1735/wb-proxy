@@ -146,6 +146,24 @@ try:
     priced = P._clean_model("some/model", {"pricing": {"prompt": "0.001", "completion": "0"}})
     check("有价不算免费", priced.get("free") is False, priced)
 
+    # 报错文案：自建池被拒要说清是谁拒的 + 怎么换 Key（不是「免费源拒绝访问」）
+    or_pool = {"id": "pool-1", "name": "OpenRouter",
+               "base_url": "https://openrouter.ai/api/v1"}
+    raw = b'{"error":{"message":"User not found.","code":401}}'
+    detail = wb_zen._error_detail(401, raw, or_pool,
+                                  "minimax/minimax-m3.1-flash:free")
+    check("自建池 401 说清是哪个池子",
+          "OpenRouter" in detail and "拒绝访问" in detail, detail)
+    check("自建池 401 不说免费源", "免费源" not in detail, detail)
+    check("自建池 401 带换 Key 提示", "API Keys" in detail, detail)
+    free_detail = wb_zen._error_detail(429, b'{"error":{"message":"rate limit"}}',
+                                       or_pool, "some/model:free")
+    check("自建池 429 限流文案", "OpenRouter" in free_detail and "限流" in free_detail,
+          free_detail)
+    check("自建池免费模型限流带额度提示", "每天 50 次" in free_detail, free_detail)
+    builtin = wb_zen._error_detail(401, raw, None, "x")
+    check("内置免费源仍是老口径", "免费源拒绝访问" in builtin, builtin)
+
     # 未知模型仍然报原来的错
     try:
         wb_zen.build_request({"model": "totally-unknown-model-xyz",

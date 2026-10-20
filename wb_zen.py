@@ -1177,7 +1177,7 @@ class EggUpstream(object):
         return False
 
 
-def _error_detail(status, raw):
+def _error_detail(status, raw, pool=None, model=""):
     text = ""
     try:
         text = raw.decode("utf-8", "replace")
@@ -1195,6 +1195,27 @@ def _error_detail(status, raw):
             message = str(obj.get("message") or "")
     except Exception:
         message = text[:300]
+    if pool:
+        # 自建供应商池：是自己 的 Key 对着 自己的上游 —— 报错要说清楚是谁拒的，
+        # 别写成「免费源拒绝访问」（那是内置免费源的口径，操作者会以为要去
+        # 换出口或换免费模型）。
+        name = str(pool.get("name") or pool.get("id") or "自建池")
+        if status == 402:
+            out = "自建供应商池「%s」余额不足：%s" % (name, message or "HTTP 402")
+        elif status == 429:
+            out = "自建供应商池「%s」限流：%s" % (name, message or "HTTP 429")
+        elif status in (401, 403):
+            out = "自建供应商池「%s」拒绝访问：%s" % (
+                name, message or ("HTTP %d" % status))
+        else:
+            out = message or ("HTTP %d" % status)
+        hint = ""
+        try:
+            import wb_egg_pools
+            hint = wb_egg_pools.error_hint(pool.get("base_url"), status, model)
+        except Exception:
+            hint = ""
+        return out + (("（%s）" % hint) if hint else "")
     if status == 403 and ("FreeTierError" in text or "free" in message.lower()):
         return ("免费车道拒绝了本机出口（上游判定该 IP 有滥用流量）。"
                 "换一个出口网络，或改用 Kilo 免费池里的模型。")
@@ -1218,7 +1239,9 @@ def open_stream(payload, session_key="", timeout=600):
     except urllib.error.HTTPError as exc:
         detail = ""
         try:
-            detail = _error_detail(exc.code, exc.read(4 << 10))
+            detail = _error_detail(exc.code, exc.read(4 << 10),
+                                    _pool_of(payload),
+                                    str((payload or {}).get("model") or ""))
         except Exception:
             detail = "HTTP %d" % exc.code
         raise EggError(exc.code, detail,
@@ -1226,9 +1249,25 @@ def open_stream(payload, session_key="", timeout=600):
     except EggError:
         raise
     except Exception as exc:
+        pool = _pool_of(payload)
+        if pool:
+            raise EggError(502, "自建供应商池「%s」不可达：%s"
+                           % (pool.get("name") or pool.get("id") or "自建池", exc))
         raise EggError(502, "免费源不可达：%s" % exc)
     return (EggUpstream(resp, source, base, rename=rename, sse=sse),
             {"source": source, "model": base})
+
+
+def _pool_of(payload):
+    """这个请求要发给哪个自建池（不是自建池就 None）。
+
+    报错文案要分清「内置免费源」与「自建供应商池」：后者是操作者自己的
+    Key 对着自己的上游，被拒了要说的是「池子拒绝访问 + 怎么换 Key」。
+    """
+    model = str((payload or {}).get("model") or "")
+    if not model:
+        return None
+    return _pool_for_model(model)
 
 
 def _retry_after(headers):
