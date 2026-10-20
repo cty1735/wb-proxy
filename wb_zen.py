@@ -1212,7 +1212,10 @@ def _error_detail(status, raw, pool=None, model=""):
         hint = ""
         try:
             import wb_egg_pools
-            hint = wb_egg_pools.error_hint(pool.get("base_url"), status, model)
+            # 原文要一起给：403 有几种不同含义（Key 类型不对 / 地区不开放 /
+            # 只给 agentic harness 用），光看状态码分不出来。
+            hint = wb_egg_pools.error_hint(pool.get("base_url"), status, model,
+                                           text)
         except Exception:
             hint = ""
         return out + (("（%s）" % hint) if hint else "")

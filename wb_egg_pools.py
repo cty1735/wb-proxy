@@ -106,22 +106,46 @@ _AUTH_HINTS = {
         "拿去做推理上游就会回 User not found"),
 }
 
-#: 免费模型被限流时的提示（免费模型都有每日额度）。
+#: 免费模型被限流时的提示（免费模型都有每日额度）。实测（2026-10-20，
+#: 同一把 Key 同一天）：15 个免费模型里有 14 个报「今日额度用完」，另一个照常
+#: 能用 —— 每日 50 次是**每个模型各算各的**，不是整个账号共用一份。
+#: 额度在 UTC 0 点重置（东八区是早上 8 点）。
 _FREE_QUOTA_HINTS = {
-    "openrouter.ai": "OpenRouter 免费档的免费模型每天 50 次，用完要等隔天重置",
+    "openrouter.ai": (
+        "OpenRouter 免费档每个免费模型每天各 50 次（UTC 0 点重置），"
+        "这个模型的今日额度已用完；等隔天恢复，或在池子里取消勾选它、"
+        "改走内置的免费源（往账号充 $10 可把额度提到 1000 次/天）"),
 }
 
+#: 403 还有两种跟 Key 无关的含义，得看原文才分得开：
+#: 一是模型在出口所在地区不开放，二是模型只开放给 agentic harness。
+_REGION_MARKERS = ("your region",)
+_HARNESS_MARKERS = ("agentic harness",)
 
-def error_hint(base_url, status, model=""):
-    """这个上游报错时该怎么排查；没有提示就返回空串。"""
+
+def error_hint(base_url, status, model="", raw=""):
+    """这个上游报错时该怎么排查；没有提示就返回空串。
+
+    ``raw`` 是上游回的原文 —— 403 有好几种含义（Key 类型不对 / 地区不开放 /
+    只给 agentic harness 用），光看状态码分不出来。
+    """
     host = str(base_url or "").strip().lower()
     text = str(model or "").strip().lower()
+    body = str(raw or "").strip().lower()
     if status in (401, 403):
+        if any(mark in body for mark in _REGION_MARKERS):
+            return ("这个模型在出口所在的地区不开放"
+                    "（上游按出口 IP 判地区）：换一个模型，"
+                    "或把出口换到开放地区")
+        if any(mark in body for mark in _HARNESS_MARKERS):
+            return ("这个模型只开放给 agentic harness（编程助手一类）用，"
+                    "普通聊天接口调不动；换一个普通聊天模型")
         for suffix, hint in _AUTH_HINTS.items():
             if suffix in host:
                 return hint
         return ""
-    if status == 429 and (text.endswith(":free") or text.endswith("/free")):
+    if status == 429 and (text.endswith(":free") or text.endswith("/free")
+                          or "free-models-per-day" in body):
         for suffix, hint in _FREE_QUOTA_HINTS.items():
             if suffix in host:
                 return hint

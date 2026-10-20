@@ -161,7 +161,25 @@ try:
                                        or_pool, "some/model:free")
     check("自建池 429 限流文案", "OpenRouter" in free_detail and "限流" in free_detail,
           free_detail)
-    check("自建池免费模型限流带额度提示", "每天 50 次" in free_detail, free_detail)
+    check("自建池免费模型限流带额度提示", "50 次" in free_detail, free_detail)
+    check("额度提示说清是每个模型各算",
+          "每个免费模型" in free_detail, free_detail)
+
+    # 403 有三种含义，要按原文分：Key 不对 / 地区不开放 / 只给 agentic harness
+    region = wb_zen._error_detail(
+        403, b'{"error":{"message":"This model is not available in your region.",'
+              b'"code":403}}', or_pool, "google/lyria-3-pro-preview")
+    check("403 地区限制说人话", "地区" in region and "API Keys" not in region, region)
+    harness = wb_zen._error_detail(
+        403, b'{"error":{"message":"thinkingmachines/inkling:free is only available '
+              b'on agentic harnesses."}}', or_pool, "thinkingmachines/inkling:free")
+    check("403 仅 agentic harness 说人话",
+          "agentic harness" in harness and "API Keys" not in harness, harness)
+    plain403 = wb_zen._error_detail(403, b'{"error":{"message":"forbidden"}}',
+                                     or_pool, "some/model")
+    check("看不出所以然的 403 仍给换 Key 提示",
+          "API Keys" in plain403, plain403)
+
     builtin = wb_zen._error_detail(401, raw, None, "x")
     check("内置免费源仍是老口径", "免费源拒绝访问" in builtin, builtin)
 
