@@ -80,6 +80,7 @@ import wb_qoder
 import wb_qoder_chat
 import wb_trae
 import wb_trae_chat
+import wb_zen
 import wb_probes
 import wb_updates
 import wb_update_request
@@ -867,7 +868,7 @@ def _best_cached_tokens(usage):
 
 def record_usage(model, usage, stream=None, elapsed_ms=None, ttft_ms=None, gen_ms=None, fp=None,
                 account=None, outcome="completed", key=None, effort=None,
-                requested_model=None):
+                requested_model=None, provider=None):
     """Record one finished request as exactly one JSONL row.
 
     A request without a usage block still gets a row (flagged usage_missing):
@@ -915,7 +916,11 @@ def record_usage(model, usage, stream=None, elapsed_ms=None, ttft_ms=None, gen_m
     # Provider: only non-WorkBuddy rows write the field, so a WorkBuddy log
     # stays byte-identical to the format that predates the dimension (a
     # missing field reads as WorkBuddy everywhere, see row_provider).
-    if acc is not None and acc.provider != wb_accounts.DEFAULT_PROVIDER:
+    # 鸡蛋没有账号可查（account 是伪 uid），所以允许调用方显式点名。
+    explicit_provider = wb_accounts.provider_filter(provider)
+    if explicit_provider and explicit_provider != wb_accounts.DEFAULT_PROVIDER:
+        row["provider"] = explicit_provider
+    elif acc is not None and acc.provider != wb_accounts.DEFAULT_PROVIDER:
         row["provider"] = acc.provider
     # The refresher visits one account per tick, so on a large pool the cached
     # balance can be hours old; subtract this request's real cost at once so
@@ -960,6 +965,12 @@ def record_usage(model, usage, stream=None, elapsed_ms=None, ttft_ms=None, gen_m
 def record_upstream_usage(upstream, requested_model, usage, **kwargs):
     """Record the model actually billed upstream, preserving the client alias."""
     billed_model = getattr(upstream, "_wb_billed_model", requested_model)
+    # 鸡蛋这类没有池账号的上游自己带着 provider 标记（wb_zen.EggUpstream）。
+    # 调用方显式给了就以调用方为准。
+    if not kwargs.get("provider"):
+        provider = getattr(upstream, "_wb_provider", None)
+        if provider:
+            kwargs["provider"] = provider
     record_usage(billed_model, usage, requested_model=requested_model, **kwargs)
 
 
@@ -1029,14 +1040,15 @@ def record_error(model, status, message, elapsed_ms=None, account=None,
         row["account"] = account
         acc = POOL.get(account) if POOL else None
         row["realm"] = acc.realm if acc else CURRENT_REALM
-        if acc is not None and acc.provider != wb_accounts.DEFAULT_PROVIDER:
-            row["provider"] = acc.provider
-    elif provider:
-        # 显式点名的非 workbuddy 提供商（如空池 / 未知模型的 Qoder 失败）：没有
-        # 账号可查时按调用方给的值归属；workbuddy 不缺省写字段（旧格式逐字不变）。
-        prov = wb_accounts.normalize_provider(provider)
-        if prov != wb_accounts.DEFAULT_PROVIDER:
-            row["provider"] = prov
+    else:
+        acc = None
+    # 显式点名的非 workbuddy 提供商优先（如空池 / 未知模型的 Qoder 失败，以及
+    # 鸡蛋这种没有池账号、只有伪 uid 的上游）；没点名才按账号归属。
+    prov = wb_accounts.provider_filter(provider)
+    if prov is None and acc is not None:
+        prov = acc.provider
+    if prov and prov != wb_accounts.DEFAULT_PROVIDER:
+        row["provider"] = prov
     row["key"] = key or ""
     _persist_usage(row, "error persist failed")
     dur = f" {elapsed_ms:.0f}ms" if elapsed_ms is not None else ""
@@ -11287,8 +11299,45 @@ def _fetch_trae_models(realm):
         return entries
 
 
+def _fetch_egg_models(realm):
+    """鸡蛋目录：OpenCode Zen 免费车道 + Kilo 免费池（无需任何账号）。
+
+    目录由 wb_zen 自己维护（TTL 180s + 落盘 accounts/zen-catalog.json），这里只
+    做「转成 /v1/models 条目 + 5 分钟内存缓存」的适配。失败时保留上一次可用
+    清单：免费名单偶尔抽风不该让客户端整页模型消失。
+    """
+    key = _catalog_cache_key(realm, "egg")
+    with _lock:
+        c = _models_cache.get(key) or {"at": 0.0, "data": None}
+        if c["data"] and time.time() - c["at"] < 300:
+            return c["data"]
+    with _catalog_lock:
+        with _lock:
+            c = _models_cache.get(key) or {"at": 0.0, "data": None}
+            if c["data"] and time.time() - c["at"] < 300:
+                return c["data"]
+        try:
+            snap = wb_zen.ensure(ACCOUNTS_DIR, timeout=wb_zen.LIST_TIMEOUT_SECONDS)
+        except Exception as exc:
+            log("egg catalog: %s failed (%s)" % (realm, exc))
+            snap = wb_zen.snapshot()
+        models = [m for m in snap.get("models") or [] if m.get("id")]
+        entries = [(m["id"], wb_zen.model_entry_meta(m)) for m in models]
+        sources = snap.get("sources") or {}
+        live = any(isinstance(v, dict) and v.get("ok")
+                   for v in sources.values())
+        source = "remote" if live else "bundled"
+        with _lock:
+            _models_cache[key] = {"at": time.time(), "data": entries}
+            _catalog_meta[key] = {"source": source, "fetched_at": time.time(),
+                                  "file_mtime": None}
+        return entries
+
+
 def fetch_models(realm=None, provider=None):
-    """模型清单：按提供商分账（WorkBuddy = 旧路径，Qoder / Trae = 各自目录）。"""
+    """模型清单：按提供商分账（WorkBuddy = 旧路径，Qoder / Trae / 鸡蛋 = 各自目录）。"""
+    if wb_accounts.provider_filter(provider) == "egg":
+        return _fetch_egg_models(realm)
     if wb_accounts.provider_filter(provider) == "qoder":
         return _fetch_qoder_models(realm)
     if wb_accounts.provider_filter(provider) == "trae":
@@ -11798,6 +11847,70 @@ CATALOG_REFRESH_COOLDOWN = 30.0
 _catalog_refresh_at = {}
 
 
+def _refresh_egg_catalog():
+    """鸡蛋的手动刷新：强制重拉两个免费源（不需要任何账号）。
+
+    与另外几家共用冷却表（冷却键带 provider 前缀）与 _catalog_lock；拉不到就
+    保留旧清单，并把每个源的真实状态回给面板。
+    """
+    realm = CURRENT_REALM
+    key = _catalog_cache_key(realm, "egg")
+    now = time.time()
+    with _lock:
+        wait = CATALOG_REFRESH_COOLDOWN - (now - _catalog_refresh_at.get(key, 0.0))
+        if wait > 0:
+            return {"ok": False, "realm": realm, "source": None, "count": 0,
+                    "cooldown": True, "retry_after": round(wait, 1),
+                    "msg": "刷新太频繁：约 %d 秒后可再试" % max(1, int(wait + 0.5))}
+        _catalog_refresh_at[key] = now
+    with _catalog_lock:
+        try:
+            snap = wb_zen.refresh(force=True)
+        except Exception as exc:
+            log("catalog refresh: egg failed (%s)" % exc)
+            snap = wb_zen.snapshot()
+        models = [m for m in snap.get("models") or [] if m.get("id")]
+        entries = [(m["id"], wb_zen.model_entry_meta(m)) for m in models]
+        sources = snap.get("sources") or {}
+        live = [name for name, val in sources.items()
+                if isinstance(val, dict) and val.get("ok")]
+        source = "remote" if live else "bundled"
+        if entries:
+            with _lock:
+                _models_cache[key] = {"at": time.time(), "data": entries}
+                _catalog_meta[key] = {"source": source,
+                                      "fetched_at": time.time(),
+                                      "file_mtime": None}
+    counts = {name: (val.get("count") or 0)
+              for name, val in sources.items() if isinstance(val, dict)}
+    if live and entries:
+        msg = ("已刷新鸡蛋免费模型：共 %d 个（Zen %d / Kilo %d）"
+               % (len(entries), counts.get("zen", 0), counts.get("kilo", 0)))
+        log("catalog refresh: egg updated %d free models (zen=%d kilo=%d)"
+            % (len(entries), counts.get("zen", 0), counts.get("kilo", 0)))
+        return {"ok": True, "realm": realm, "source": source,
+                "count": len(entries), "sources": sources, "msg": msg}
+    note = str(snap.get("note") or "").strip()
+    msg = "免费源暂时不可达，已保留现有清单"
+    if note:
+        msg += "（%s）" % note[:160]
+    log("catalog refresh: egg kept the previous list (%s)" % (note or "no source"))
+    return {"ok": False, "realm": realm, "source": None,
+            "count": len(entries), "sources": sources, "msg": msg}
+
+
+def _warm_egg_catalog():
+    """切到鸡蛋时在后台预热免费目录。
+
+    force=False：目录在 TTL 内就复用（切来切去不会每切一次都打上游）；为空
+    或过期才真的拉一次。失败只写日志，面板的下一次刷新还能再来。
+    """
+    try:
+        wb_zen.refresh(force=False)
+    except Exception as exc:
+        log("egg catalog: warm-up failed (%s)" % exc)
+
+
 def _refresh_qoder_catalog(realm, provider="qoder"):
     """Qoder 的手动刷新：用该 realm 的代表账号拉一次模型清单（COSY 签名）。
 
@@ -11919,6 +12032,8 @@ def refresh_catalog(realm, provider=None):
        "count": int, "cooldown": bool?, "retry_after": float?, "msg": str}
     """
     p = wb_accounts.provider_filter(provider)
+    if p == "egg":
+        return _refresh_egg_catalog()
     if p and p != wb_accounts.DEFAULT_PROVIDER:
         return _refresh_qoder_catalog(realm, p)
     if realm not in ("intl", "cn"):
@@ -14808,6 +14923,45 @@ def open_trae_upstream(payload, session_key=None, target_realm=None):
     raise RuntimeError(
         "no usable account for realm '%s': no enabled Trae account is ready%s"
         % (realm, pool_unavailable_detail(realm, model, provider="trae")))
+
+
+class _EggAccount(object):
+    """鸡蛋上游的伪账号：没有凭证、不进池，只提供响应管线要的字段。
+
+    record_usage / record_error 会去池里查 account（查不到就按 CURRENT_REALM
+    记账），provider 由调用方显式点名 "egg"，所以这里不需要真的账号。
+    """
+
+    provider = "egg"
+    enabled = True
+
+    def __init__(self, realm=None):
+        self.uid = "egg"
+        self.realm = realm or CURRENT_REALM
+        self.nickname = "鸡蛋"
+
+    def note_success(self, model=None):
+        return None
+
+    def note_failure(self, message=""):
+        return None
+
+
+def open_egg_upstream(payload, session_key=None, target_realm=None):
+    """鸡蛋版的 open_upstream：把请求交给 wb_zen 的免费源。
+
+    返回 (upstream, 伪账号, effort)。免费源没有账号池、没有换号可用，限流与
+    地区拦截统一抛 wb_zen.EggError（带上游状态码），由调用方如实回给客户端。
+    """
+    realm = target_realm or CURRENT_REALM
+    model = str(payload.get("model") or "")
+    if not model:
+        raise wb_zen.EggError(400, "缺少 model：从 /v1/models?provider=egg 里挑一个")
+    header_timeout, idle_timeout = upstream_timeouts()
+    upstream, _meta = wb_zen.open_stream(payload, session_key=session_key,
+                                         timeout=header_timeout)
+    _apply_stream_idle_timeout(upstream, idle_timeout)
+    return upstream, _EggAccount(realm), None
 
 
 def schedule_window_probe(account, model, reset_at):
@@ -17783,7 +17937,7 @@ def stream_responses_events(upstream, model, holder):
     if not holder.get("suppress_lifecycle"):
         yield ev("response.created", {"response": resp_obj("in_progress")})
         yield ev("response.in_progress", {"response": resp_obj("in_progress")})
-    for raw in upstream:
+    for raw in iter_sse_lines(upstream):
         data = strip_data_prefix(raw.decode("utf-8", "replace"))
         if not data or data == "[DONE]":
             if data == "[DONE]":
@@ -18628,8 +18782,16 @@ class Handler(BaseHTTPRequestHandler):
         if explicit:
             return explicit
         model = payload.get("model") if isinstance(payload, dict) else None
-        return (qoder_provider_hint_for_model(model)
-                or wb_accounts.DEFAULT_PROVIDER)
+        hint = qoder_provider_hint_for_model(model)
+        if hint:
+            return hint
+        # 鸡蛋的模型名（*-free / Kilo 的 vendor/model:free）不在另外两家目录里：
+        # 目录认识就走鸡蛋，老客户端不带 ?provider= 也不会跑错上游。
+        try:
+            egg = wb_zen.provider_hint(model)
+        except Exception:
+            egg = None
+        return egg or wb_accounts.DEFAULT_PROVIDER
 
     def _authorized(self):
         if self._key_ok():
@@ -18955,6 +19117,12 @@ class Handler(BaseHTTPRequestHandler):
         payload = {"object": "list", "data": data,
                    "realm": req_realm or CURRENT_REALM,
                    "provider": req_provider}
+        if req_provider == "egg":
+            # 面板的鸡蛋卡片要用：每个免费源的条数、最近刷新时间与源状态。
+            try:
+                payload["egg"] = wb_zen.status()
+            except Exception:
+                payload["egg"] = None
         # 来源说明（面板展示用）：这批清单是上游 API 实时取的，还是读的
         # 本机桌面缓存文件/内置快照，以及各自的时间戳。
         meta = catalog_meta(req_realm, req_provider)
@@ -20204,6 +20372,12 @@ class Handler(BaseHTTPRequestHandler):
                     for item in wb_trae.static_models(realm)
                     if isinstance(item, dict)
                 )
+            elif provider == "egg":
+                sources = (
+                    (item.get("id"), wb_zen.model_entry_meta(item))
+                    for item in wb_zen.catalog()
+                    if isinstance(item, dict)
+                )
             else:
                 statics = (list(getattr(wb_catalog, "STATIC_CN_MODELS", []))
                            if realm == "cn"
@@ -20967,6 +21141,10 @@ class Handler(BaseHTTPRequestHandler):
                 # 倒灌回去（它按 PROVIDER_REALMS[CURRENT_PROVIDER] 取真源）。
                 realm = CURRENT_REALM
             save_persisted_realm(realm, provider)
+            if provider == "egg":
+                # 切到鸡蛋 = 开始白嫖：后台立刻预热一次免费目录（不阻塞切换）。
+                threading.Thread(target=_warm_egg_catalog, daemon=True,
+                                 name="egg-catalog-warm").start()
         return self._json(200, {
             "ok": True,
             "current": CURRENT_REALM,
@@ -21902,6 +22080,9 @@ class Handler(BaseHTTPRequestHandler):
             elif provider == "trae":
                 upstream, account, effort = open_trae_upstream(
                     chat_req, session_key=session_key, target_realm=req_realm)
+            elif provider == "egg":
+                upstream, account, effort = open_egg_upstream(
+                    chat_req, session_key=session_key, target_realm=req_realm)
             else:
                 upstream, account, effort = open_upstream(
                     chat_req, session_key=session_key, target_realm=req_realm)
@@ -21910,6 +22091,11 @@ class Handler(BaseHTTPRequestHandler):
                          elapsed_ms=int((time.time() - t_start) * 1000),
                          account=exc.account_uid, key=self._key_id())
             return self._error(exc.status, exc.message, "invalid_request_error")
+        except wb_zen.EggError as exc:
+            record_error(model, exc.status, exc.detail[:200],
+                         elapsed_ms=int((time.time() - t_start) * 1000),
+                         key=self._key_id(), provider=provider)
+            return self._error(exc.status, exc.detail, "invalid_request_error")
         except ContentRejected as exc:
             record_error(model, 403, exc.detail[:200],
                          elapsed_ms=int((time.time() - t_start) * 1000),
@@ -22150,6 +22336,9 @@ class Handler(BaseHTTPRequestHandler):
             elif provider == "trae":
                 upstream, account, effort = open_trae_upstream(
                     chat_req, session_key=session_key, target_realm=req_realm)
+            elif provider == "egg":
+                upstream, account, effort = open_egg_upstream(
+                    chat_req, session_key=session_key, target_realm=req_realm)
             else:
                 upstream, account, effort = open_upstream(
                     chat_req, session_key=session_key, target_realm=req_realm)
@@ -22158,6 +22347,12 @@ class Handler(BaseHTTPRequestHandler):
                          elapsed_ms=int((time.time() - t_start) * 1000),
                          account=exc.account_uid, key=self._key_id())
             return self._anthropic_error(exc.status, exc.message)
+        except wb_zen.EggError as exc:
+            record_error(model, exc.status, exc.detail[:200],
+                         elapsed_ms=int((time.time() - t_start) * 1000),
+                         key=self._key_id(), provider=provider)
+            return self._anthropic_error(exc.status, exc.detail,
+                                         "api_error")
         except ContentRejected as exc:
             record_error(model, 403, exc.detail[:200],
                          elapsed_ms=int((time.time() - t_start) * 1000),
@@ -22233,7 +22428,8 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             wall = int((time.time() - t_start) * 1000)
             record_error(model, 502, "messages upstream error: %s" % exc,
-                         elapsed_ms=wall, account=account.uid, key=self._key_id())
+                         elapsed_ms=wall, account=account.uid, key=self._key_id(),
+                         provider=getattr(upstream, "_wb_provider", None))
             return self._anthropic_error(502, "upstream stream error: %s" % exc)
         finally:
             try:
@@ -22273,7 +22469,8 @@ class Handler(BaseHTTPRequestHandler):
                          elapsed_ms=wall, account=account.uid,
                          usage=holder.get("usage"), stream=True,
                          ttft_ms=first_ms, fp=fp, outcome="upstream_aborted",
-                         key=self._key_id())
+                         key=self._key_id(),
+                         provider=getattr(upstream, "_wb_provider", None))
             try:
                 self.wfile.write(anthropic_sse_frame("error", {
                     "error": {"type": "api_error", "message": str(exc)}}))
@@ -22449,7 +22646,8 @@ class Handler(BaseHTTPRequestHandler):
                                  stream=payload.get("stream"), key=self._key_id())
                     return self._anthropic_error(503, message, "overloaded_error")
                 try:
-                    return self._handle_messages(payload)
+                    return self._handle_messages(
+                        payload, provider=self._chat_provider(payload))
                 finally:
                     _chat_slots.release()
             # Both OpenAI-shaped routes below can hold a thread for up to 600s.
@@ -22459,8 +22657,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(503, "gateway is at its concurrent chat limit "
                                         "(%d in flight); retry shortly" % MAX_CONCURRENT_CHAT)
             try:
-                return self._handle_messages(
-                    payload, provider=self._chat_provider(payload))
+                return self._dispatch_chat_post(path, payload)
             finally:
                 _chat_slots.release()
         finally:
@@ -22486,6 +22683,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._dispatch_qoder_chat_post(payload)
         if provider == "trae":
             return self._dispatch_trae_chat_post(payload)
+        if provider == "egg":
+            return self._dispatch_egg_chat_post(payload)
         # Diagnostics: what the client actually asked for, and what we forward.
         # Only the knobs that change behaviour are logged - never message text.
         forwarded = build_upstream_body(payload)
@@ -22695,6 +22894,44 @@ class Handler(BaseHTTPRequestHandler):
             return self._chat_nonstream_response(
                 upstream, model, fp, account, t_start, effort=effort)
 
+    def _dispatch_egg_chat_post(self, payload):
+        """鸡蛋版 /v1/chat/completions（含 /v1/completions 别名）。
+
+        免费源没有账号池：不做选号/换号，直接交给 wb_zen；下游响应管线与其它
+        提供商完全共用。按 key 的模型白名单照常生效。
+        """
+        chat_req = qoder_chat_request(payload)
+        session_key = extract_session_key(self.headers, chat_req)
+        fp = prompt_fingerprint(chat_req.get("messages"))
+        want_stream = bool(chat_req.get("stream"))
+        model = chat_req.get("model") or "unknown"
+        t_start = time.time()
+        log("chat: provider=egg model=%s stream=%s msgs=%d"
+            % (model, want_stream, len(chat_req.get("messages") or [])))
+        try:
+            key_blocked = self._key_model_error(model)
+            if key_blocked:
+                return self._error(400, key_blocked, "invalid_request_error")
+            req_realm = self._request_realm() or CURRENT_REALM
+            upstream, account, effort = open_egg_upstream(
+                chat_req, session_key=session_key, target_realm=req_realm)
+        except wb_zen.EggError as exc:
+            record_error(model, exc.status, exc.detail[:200],
+                         elapsed_ms=int((time.time() - t_start) * 1000),
+                         key=self._key_id(), provider="egg")
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        except Exception as exc:
+            record_error(model, 502, str(exc),
+                         elapsed_ms=int((time.time() - t_start) * 1000),
+                         key=self._key_id(), provider="egg")
+            return self._error(502, "upstream unreachable: %s" % exc)
+        with upstream:
+            if want_stream:
+                return self._chat_stream_response(
+                    upstream, model, fp, account, t_start, effort=effort)
+            return self._chat_nonstream_response(
+                upstream, model, fp, account, t_start, effort=effort)
+
     def _chat_stream_response(self, upstream, model, fp, account, t_start, effort=None):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -22804,7 +23041,8 @@ class Handler(BaseHTTPRequestHandler):
                              elapsed_ms=wall, account=account.uid,
                             usage=last_usage, stream=True, ttft_ms=first_ms,
                             gen_ms=(wall - first_ms) if first_ms is not None else None,
-                             fp=fp, outcome="upstream_aborted", key=self._key_id())
+                             fp=fp, outcome="upstream_aborted", key=self._key_id(),
+                             provider=getattr(upstream, "_wb_provider", None))
                 try:
                     flush_out()
                     # 上游在流中途报错（Trae 的 event:error、限流等）：状态码已经
@@ -22841,7 +23079,8 @@ class Handler(BaseHTTPRequestHandler):
                              elapsed_ms=wall, account=account.uid,
                              usage=last_usage, stream=True, ttft_ms=first_ms,
                              gen_ms=(wall - first_ms) if first_ms is not None else None,
-                             fp=fp, outcome="failed", key=self._key_id())
+                             fp=fp, outcome="failed", key=self._key_id(),
+                             provider=getattr(upstream, "_wb_provider", None))
             else:
                 record_upstream_usage(upstream, model, last_usage, stream=True,
                              elapsed_ms=wall, ttft_ms=first_ms,
@@ -22854,7 +23093,8 @@ class Handler(BaseHTTPRequestHandler):
             result = aggregate_stream(upstream, model, None)
         except Exception as exc:
             record_error(model, 502, str(exc), elapsed_ms=int((time.time() - t_start) * 1000),
-                         account=account.uid, key=self._key_id())
+                         account=account.uid, key=self._key_id(),
+                         provider=getattr(upstream, "_wb_provider", None))
             return self._error(502, f"upstream stream error: {exc}")
         wall = int((time.time() - t_start) * 1000)
         first_at = result.get("first_chunk_at")
@@ -23024,6 +23264,9 @@ def _bootstrap_runtime(args):
     resize_chat_slots(POOL.count_ready())
     apply_daily_guards()
     load_persisted_realm()
+    # 鸡蛋的免费目录落在 accounts 目录里（zen-catalog.json），启动时读回来：
+    # 冷启动后第一屏就能看到上次的清单，不必等一次网络往返。
+    wb_zen.configure(ACCOUNTS_DIR, log=log)
     global SCHEDULER
     from wb_scheduler import Scheduler
     SCHEDULER = Scheduler(POOL)

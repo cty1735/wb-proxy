@@ -285,8 +285,8 @@ def get_realm_config(realm):
 #: 账号的提供商维度。workbuddy = 原有的 WorkBuddy 账号（缺省，旧凭证档没有
 #: 这个字段，加载时补上）；qoder = Qoder 账号（国际 qoder.sh / 国内
 #: qoder.com.cn，协议见 wb_qoder）；trae = Trae 账号（国际 trae.ai / 国内
-#: trae.cn，协议见 wb_trae）。
-PROVIDERS = ("workbuddy", "qoder", "trae")
+#: trae.cn，协议见 wb_trae）；egg = 鸡蛋免费网关（不需要账号，见 wb_zen）。
+PROVIDERS = ("workbuddy", "qoder", "trae", "egg")
 DEFAULT_PROVIDER = "workbuddy"
 
 
@@ -308,11 +308,16 @@ def provider_display_name(provider):
         return "Qoder"
     if provider == "trae":
         return "Trae"
+    if provider == "egg":
+        return "鸡蛋"
     return "WorkBuddy"
 
 
 def provider_default_domain(provider, realm):
     """该「提供商 × 区域」的规范域名（凭证档缺 domain 时的兜底）。"""
+    if normalize_provider(provider) == "egg":
+        # 鸡蛋没有账号，这个值只用于品牌位/健康检查的展示。
+        return "api.kilo.ai"
     if normalize_provider(provider) == "qoder":
         return urllib.parse.urlsplit(wb_qoder.realm_config(realm)["site_url"]).netloc
     if normalize_provider(provider) == "trae":
@@ -3344,8 +3349,9 @@ NON_ACCOUNT_FILES = ("settings.json", "active_realm.json")
 # 和账号凭证放在同一个目录、但本身不是账号的文件。跳过它们，免得每次启动
 # 都被当成「损坏的账号」解析并打一条 error 日志（settings.json 是面板设置，
 # active_realm.json 是区域开关，model_windows.json 是额度窗口记录，
-# quota_scan.json 是主动额度查询记录）。
-NON_ACCOUNT_FILES = ("settings.json", "active_realm.json", "model_windows.json", "quota_scan.json")
+# quota_scan.json 是主动额度查询记录，zen-catalog.json 是鸡蛋的免费模型目录）。
+NON_ACCOUNT_FILES = ("settings.json", "active_realm.json", "model_windows.json",
+                     "quota_scan.json", "zen-catalog.json")
 
 
 class AccountPool(object):
