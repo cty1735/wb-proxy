@@ -28,6 +28,9 @@ POOLS_FILENAME = "egg-pools.json"
 #: 拉模型清单的超时。自建供应商大多在公网上，给得比免费源宽一点。
 LIST_TIMEOUT_SECONDS = 20
 
+#: 「测试这个池子能不能用」的超时：只发一个 token 的最小请求。
+TEST_TIMEOUT_SECONDS = 30
+
 PROTOCOL_OPENAI = "openai"
 PROTOCOL_ANTHROPIC = "anthropic"
 PROTOCOLS = (PROTOCOL_OPENAI, PROTOCOL_ANTHROPIC)
@@ -752,6 +755,63 @@ def refresh_pool(pool_id, timeout=LIST_TIMEOUT_SECONDS):
                 _save()
                 return dict(item)
     raise PoolError(404, "供应商不存在")
+
+
+def _pool_error_detail(status, raw, pool, model=""):
+    """上游报错时那句话（复用 wb_zen 的口径：说清是谁拒的、该怎么改）。"""
+    try:
+        import wb_zen
+        return wb_zen._error_detail(status, raw, pool, model)
+    except Exception:
+        return "HTTP %d" % status
+
+
+def test_pool(pool_id, model=None, timeout=TEST_TIMEOUT_SECONDS):
+    """拿池子的 Key 打一次最小请求，确认「这个池子真能推理」。
+
+    拉模型清单（GET /models）证明不了 Key 能不能推理：OpenRouter 的模型
+    目录是公开的，垃圾 Key 也能拉到 470 个模型 —— 面板上「刷新」一片绿，
+    第一次对话却被拒（User not found）。所以这里真的发一次请求（1 个 token）。
+
+    返回 (ok, status, message)。
+    """
+    pool = get(pool_id)
+    if pool is None:
+        raise PoolError(404, "供应商不存在")
+    mid = str(model or "").strip()
+    if not mid:
+        models = pool.get("models") or []
+        if not models:
+            raise PoolError(400, "这个池子还没挑模型：先挑一个再测试")
+        mid = models[0]
+    chat = {"model": mid, "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1}
+    url, body, headers, _sse, _source, _billed = build_request(pool, chat)
+    data = json.dumps(body, ensure_ascii=False,
+                      separators=(",", ":")).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+    from wb_accounts import urlopen
+    try:
+        resp = urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        raw = b""
+        try:
+            raw = exc.read(4 << 10)
+        except Exception:
+            pass
+        return False, exc.code, _pool_error_detail(exc.code, raw, pool, mid)
+    except Exception as exc:
+        return False, 502, "连不上上游：%s" % exc
+    try:
+        resp.read(1)   # 读一点，确认连接真的通了
+    except Exception:
+        pass
+    finally:
+        try:
+            resp.close()
+        except Exception:
+            pass
+    return True, 200, "%s 回了一个正常响应" % mid
 
 
 # ---------------------------------------------------------------------------

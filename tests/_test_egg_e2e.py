@@ -229,6 +229,18 @@ try:
         check("上游带 Key", got["auth"] == "Bearer sk-test", got.get("auth"))
         check("上游模型名", got["body"].get("model") == "vendor/model-a", got["body"])
 
+    # 5b. 「测试」这个池子：真发一次最小请求（拉得到目录 ≠ Key 能推理）
+    UPSTREAM_REQUESTS.clear()
+    status, r = http("POST", base + "/egg/pools/test", {"id": pool["id"]}, panel)
+    check("测试池子返回 ok", status == 200 and r.get("ok") is True, (status, r))
+    check("测试池子真发了请求", len(UPSTREAM_REQUESTS) == 1, UPSTREAM_REQUESTS)
+    if UPSTREAM_REQUESTS:
+        got = UPSTREAM_REQUESTS[0]
+        check("测试用的是池子的 Key", got["auth"] == "Bearer sk-test", got.get("auth"))
+        check("测试请求很小", (got["body"].get("max_tokens") or 0) <= 8, got["body"])
+    status, r = http("POST", base + "/egg/pools/test", {"id": "pool-nope"}, panel)
+    check("测试不存在的池子报 404", status == 404, (status, r))
+
     # 6. 停用后不再接流量
     status, r = http("POST", base + "/egg/pools/toggle",
                      {"id": pool["id"], "enabled": False}, panel)

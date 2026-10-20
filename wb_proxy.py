@@ -21276,6 +21276,26 @@ class Handler(BaseHTTPRequestHandler):
                                 "pools": wb_egg_pools.public_pools(),
                                 "msg": "已刷新：%d 个模型" % len(pool.get("models") or [])})
 
+    def _route_egg_pool_test(self, payload):
+        """真发一次最小请求：这个池子的 Key 到底能不能推理。
+
+        「刷新」只证明拉得到目录（OpenRouter 的目录是公开的，垃圾 Key 也
+        拉得到 470 个模型），证明不了 Key 能用。真打一次才知道。
+        """
+        payload = payload or {}
+        pool_id = str(payload.get("id") or "").strip()
+        if not pool_id:
+            return self._error(400, "缺少供应商 id", "invalid_request_error")
+        try:
+            ok, status, msg = wb_egg_pools.test_pool(
+                pool_id, str(payload.get("model") or "").strip())
+        except wb_egg_pools.PoolError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        except Exception as exc:
+            return self._error(500, "测试失败：%s" % exc)
+        return self._json(200, {"ok": bool(ok), "status": int(status),
+                                "msg": msg})
+
     def _route_pricing_mapping(self, payload):
         """面板手填一条「hub 模型 → OpenRouter id」映射。
 
@@ -22773,6 +22793,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._route_egg_pool_models(payload)
             if path == "/egg/pools/refresh":
                 return self._route_egg_pool_refresh(payload)
+            if path == "/egg/pools/test":
+                return self._route_egg_pool_test(payload)
             return self._route_egg_pools(payload)
         if path.startswith("/proxy/"):
             if not self._panel_ok():

@@ -1810,6 +1810,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '只看免费': 'Free only',
     '搜索模型 ID…': 'Search model ID…',
     '显示 ': 'Showing ',
+    '正在测试「': 'Testing 「',
+    '」可用：': '」 is usable: ',
+    '」不可用：': '」 is not usable: ',
+    '」测试失败：': '」 test failed: ',
+    '用这个池子的 Key 真发一次最小请求：光「刷新」只能证明拉得到模型目录，证明不了 Key 能推理（OpenRouter 的目录是公开的，垃圾 Key 也拉得到）':
+      'Sends one real minimal request with this pool’s key: "Refresh" only proves the model list can be fetched, not that the key can run inference (OpenRouter’s catalogue is public — even a garbage key fetches it)',
     '模型选择已保存': 'Model selection saved',
     '全部池子（': 'All pools (',
     '先填名称': 'Fill in the name first',
@@ -3350,6 +3356,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     "只看免费": "只看免費",
     "搜索模型 ID…": "搜尋模型 ID…",
     "显示 ": "顯示 ",
+    "测试": "測試",
+    "正在测试「": "正在測試「",
+    "」可用：": "」可用：",
+    "」不可用：": "」不可用：",
+    "」测试失败：": "」測試失敗：",
+    "用这个池子的 Key 真发一次最小请求：光「刷新」只能证明拉得到模型目录，证明不了 Key 能推理（OpenRouter 的目录是公开的，垃圾 Key 也拉得到）":
+      "用這個池子的 Key 真發一次最小請求：光「刷新」只能證明拉得到模型目錄，證明不了 Key 能推理（OpenRouter 的目錄是公開的，垃圾 Key 也拉得到）",
     "该模型在上游目录里没有倍率字段；Qoder 按账号额度（credits）计费，实际扣减见「最近请求」的「积分」列。": "此模型在上游目錄中沒有倍率欄位；Qoder 依帳號額度（credits）計費，實際扣減請見「最近請求」的「積分」欄。",
     "官网文档参考值；实际倍率以账号模型清单（price_factor）为准": "官網文件參考值；實際倍率以帳號模型清單（price_factor）為準",
     "来自账号模型清单的 price_factor；活动折扣可能让实际倍率不同": "來自帳號模型清單的 price_factor；活動折扣可能讓實際倍率不同",
@@ -8290,6 +8303,8 @@ function renderEggPoolList(){
           + ' title="' + esc(p.base_url || '') + '">' + esc(p.base_url || '') + '</span>'
         + '<a onclick="openEggPoolPicker(\'' + esc(p.id) + '\')">挑选模型</a>'
         + '<a onclick="editEggPool(\'' + esc(p.id) + '\')">编辑</a>'
+        + '<a onclick="testEggPool(\'' + esc(p.id) + '\')"'
+        + ' title="用这个池子的 Key 真发一次最小请求：光「刷新」只能证明拉得到模型目录，证明不了 Key 能推理（OpenRouter 的目录是公开的，垃圾 Key 也拉得到）">测试</a>'
         + '<a onclick="refreshEggPool(\'' + esc(p.id) + '\')">刷新</a>'
         + '<a onclick="deleteEggPool(\'' + esc(p.id) + '\')">删除</a>'
       + '</div>'
@@ -8335,6 +8350,24 @@ function openEggPoolPicker(id){
   }
   EGG_POOL_CARD = {id: id, picked: (p.models || []).slice()};
   renderEggPoolList();
+}
+
+// 测试池子：真发一次最小请求。拉得到目录 ≠ Key 能推理（OpenRouter 的目录
+// 是公开的，垃圾 Key 也拉得到 470 个模型），所以这里打一发真的。
+async function testEggPool(id){
+  const p = EGG_POOLS.find(x => x.id === id);
+  const label = (p && p.name) || id;
+  toast('正在测试「' + label + '」…');
+  try{
+    const r = await postJSON('/egg/pools/test', {id: id});
+    if(r && r.ok){
+      toast('「' + label + '」可用：' + ((r && r.msg) || '连接正常'), 'ok');
+    }else{
+      toast('「' + label + '」不可用：' + ((r && r.msg) || ('HTTP ' + ((r && r.status) || '?'))), 'bad');
+    }
+  }catch(e){
+    toast('「' + label + '」测试失败：' + eggPoolErrorText(e), 'bad');
+  }
 }
 
 async function saveEggPoolModels(){
