@@ -4404,8 +4404,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
 @keyframes gateFloatB{from{transform:translateY(-70%) rotate(-45deg) scale(1)}to{transform:translateY(-64%) rotate(-38deg) scale(1.1)}}
 @keyframes gateFloatC{from{transform:translateY(-70%) rotate(-45deg) scale(1.06)}to{transform:translateY(-78%) rotate(-52deg) scale(.96)}}
 @keyframes gateFloatD{from{transform:translateY(-70%) rotate(-45deg) scale(1)}to{transform:translateY(-78%) rotate(-40deg) scale(1.14)}}
-[data-theme="light"] .gate-glow{opacity:.20;mix-blend-mode:multiply;filter:blur(80px)}
-[data-theme="light"] .gate-glow-d{opacity:.16;mix-blend-mode:multiply}
+[data-theme="light"] .gate-glow{opacity:.14;mix-blend-mode:multiply;filter:blur(80px)}
+[data-theme="light"] .gate-glow-d{opacity:.12;mix-blend-mode:multiply}
 
 /* 网点纹理：GitHub 营销页那套细点阵，缓慢漂移 */
 .gate-dots{position:absolute;inset:-80px;z-index:1;pointer-events:none;opacity:.9;
@@ -4431,14 +4431,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
 /* 卡片外围那圈缓慢自转的光环 */
 .gate-halo{position:absolute;left:50%;top:50%;z-index:1;pointer-events:none;
   width:min(760px,94vw);aspect-ratio:1;margin:calc(min(760px,94vw) / -2) 0 0 calc(min(760px,94vw) / -2);
-  border-radius:50%;opacity:.6;filter:blur(2px);
-  background:conic-gradient(from 0deg, transparent 0deg 18deg,
-    color-mix(in srgb,var(--accent) 75%,transparent) 66deg,
-    color-mix(in srgb,var(--blue) 65%,transparent) 156deg,
-    transparent 236deg 360deg);
-  -webkit-mask-image:radial-gradient(circle, transparent 0 54%, #000 57% 67%, transparent 70%);
-  mask-image:radial-gradient(circle, transparent 0 54%, #000 57% 67%, transparent 70%);
+  border-radius:50%;opacity:.45;filter:blur(3px);
+  background:conic-gradient(from 0deg,
+    color-mix(in srgb,var(--accent,#2cb044) 60%,transparent) 0deg,
+    color-mix(in srgb,var(--blue,#6a9bcc) 55%,transparent) 120deg,
+    color-mix(in srgb,var(--accent,#2cb044) 44%,transparent) 240deg,
+    color-mix(in srgb,var(--accent,#2cb044) 60%,transparent) 360deg);
+  -webkit-mask-image:radial-gradient(circle, transparent 0 55%, #000 58% 66%, transparent 69%);
+  mask-image:radial-gradient(circle, transparent 0 55%, #000 58% 66%, transparent 69%);
   animation:gateSpin 26s linear infinite}
+[data-theme="light"] .gate-halo{opacity:.15;filter:blur(7px)}
 @keyframes gateSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 
 /* 跟鼠标走的那团光 */
