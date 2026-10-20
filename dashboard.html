@@ -493,6 +493,41 @@ body:not(.provider-qoder) .qoder-only{display:none !important}
 body:not(.provider-trae) .trae-only{display:none !important}
 /* Trae 没有可刷新的积分余额：这个按钮留在页面上只会报错。 */
 body.provider-trae #btnFetchCredits{display:none !important}
+/* ===== 鸡蛋的供应商池：预设项 / 添加表单 / 池子卡片 / 模型挑选 ===== */
+.egg-pool-presets{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}
+.egg-preset{display:flex;flex-direction:column;align-items:flex-start;gap:1px;
+  padding:6px 10px;border-radius:9px;background:var(--panel2);border:1px solid var(--line);
+  color:var(--fg);font-size:12px;font-weight:500;line-height:1.35;text-align:left;
+  box-shadow:none;transition:all .15s ease}
+.egg-preset:hover{background:var(--panel);border-color:var(--accent);color:var(--fg);
+  box-shadow:var(--shadow-sm);transform:none}
+.egg-preset .mono{font-size:10.5px;font-weight:400;color:var(--dim)}
+.egg-pool-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));
+  gap:10px 12px;margin-top:2px}
+.egg-pool-form label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--dim)}
+.egg-pool-form input,.egg-pool-form select{width:100%;background:var(--panel);
+  border:1px solid var(--line);border-radius:8px;padding:7px 10px;color:var(--fg);
+  font:inherit;font-size:13px}
+.egg-pool-form input:focus,.egg-pool-form select:focus{outline:none;border-color:var(--accent)}
+.egg-pool-card{border:1px solid var(--line);border-radius:10px;background:var(--panel);
+  padding:11px 13px;box-shadow:var(--shadow-sm)}
+.egg-pool-card.off{opacity:.6}
+.egg-pool-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.egg-pool-title{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:13px}
+.egg-pool-sub{font-size:11px;color:var(--dim);margin-top:3px}
+.egg-pool-models{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+.egg-pool-model{background:var(--panel2);border:1px solid var(--line);border-radius:6px;
+  padding:2px 7px;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.egg-pool-foot{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:9px;
+  padding-top:8px;border-top:1px solid var(--line);font-size:11px;color:var(--dim)}
+.egg-pool-foot a{color:var(--dim);cursor:pointer;text-decoration:none}
+.egg-pool-foot a:hover{color:var(--accent);text-decoration:underline}
+.egg-pool-pick{margin-top:9px;padding-top:8px;border-top:1px dashed var(--line)}
+.egg-pool-pick-list{display:flex;flex-wrap:wrap;gap:6px;max-height:200px;overflow:auto;margin-top:6px}
+.egg-pool-pick-item{display:inline-flex;align-items:center;gap:5px;background:var(--panel2);
+  border:1px solid var(--line);border-radius:7px;padding:3px 8px;font-size:11px;cursor:pointer}
+.egg-pool-pick-item.on{border-color:var(--accent);background:var(--accent-selected-bg)}
+.egg-pool-pick-item input{accent-color:var(--accent);margin:0}
 
 .realm-card{
   background:var(--panel);border:1px solid var(--line);border-radius:12px;
@@ -1739,6 +1774,43 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '免账号、免密钥聚合 OpenCode Zen 免费车道与 Kilo 免费池；切到鸡蛋会自动刷新免费模型清单。': 'Aggregates the OpenCode Zen free lane and the Kilo free pool with no account and no key; switching to Egg refreshes the free model list.',
     '鸡蛋免费白嫖：没有签到与成长任务，模型清单在「网关」页刷新。': 'Egg is free for all: no check-in and no growth tasks; refresh the model list on the Gateway page.',
     '展示鸡蛋当前可用的免费模型（每行标注所属免费池：OpenCode Zen 免费车道 / Kilo 免费池）、上下文容量、推理/视觉能力与工具支持；全部免账号、免密钥': 'The free models the Egg gateway currently serves (each row is tagged with its free pool: OpenCode Zen free lane / Kilo free pool), context size, reasoning/vision support and tool support; no account and no key required',
+    // ===== 鸡蛋的供应商池 =====
+    '供应商池': 'Provider pools',
+    '免费模型预设': 'Free model presets',
+    '添加供应商': 'Add a provider',
+    '自建供应商池': 'Self-hosted provider pools',
+    '挑选模型': 'Pick models',
+    '拉取模型列表': 'Fetch model list',
+    '保存选择': 'Save selection',
+    '全选': 'Select all',
+    '全不选': 'Clear all',
+    '协议': 'Protocol',
+    '还没挑模型': 'No model picked yet',
+    '上游目录': 'upstream list',
+    '最近拉取': 'last fetched',
+    '已停用': 'disabled',
+    '未设置': 'not set',
+    '个模型': ' models',
+    '模型选择已保存': 'Model selection saved',
+    '全部池子（': 'All pools (',
+    '先填名称': 'Fill in the name first',
+    '先填 Base URL': 'Fill in the Base URL first',
+    '拉到 ': 'Fetched ',
+    ' 个模型：勾掉不要的，再点「保存」': ' models: untick the ones you do not want, then click "Save"',
+    '保存失败：': 'Save failed: ',
+    '拉取失败：': 'Fetch failed: ',
+    '切换失败：': 'Toggle failed: ',
+    '删除失败：': 'Delete failed: ',
+    '已删除「': 'Deleted "',
+    '这个池子还没有上游目录：点「刷新」先拉一次': 'This pool has no upstream list yet: click "Refresh" to fetch one first',
+    '还没有自建供应商。上面的预设点一下就能填好地址，填上 Key 拉一次模型清单即可。': 'No self-hosted provider yet. Click a preset above to fill in the address, add a key and fetch the model list.',
+    '点击填入表单；Key 需要自己去对应平台申请': 'Click to fill the form; get the key from the provider yourself',
+    '自己的 Key；本地服务可留空': 'Your own key; may be empty for a local service',
+    '每个供应商是一个池子：模型清单按池子筛选，请求按池子分发': 'Each provider is a pool: the model list is filtered by pool and requests are routed by pool',
+    '正在向 ': 'Fetching the model list from ',
+    ' 拉取模型清单…': ' ...',
+    '正在编辑「': 'Editing "',
+    '」：Key 留空表示不改': '": leave the key empty to keep it',
     'Token 消耗与推理指标透视': 'Token usage and reasoning metrics',
     'WorkBuddy 独立桌面客户端 (WB)': 'WorkBuddy standalone desktop client (WB)',
     'WorkBuddy 用量看板': 'WorkBuddy Usage Dashboard',
@@ -2750,8 +2822,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '请填写当前密码和新密码': 'Enter the current and the new password',
     '请求': 'Requests',
     '请求成功率': 'Request success rate',
-    '请求成功率（国内版）': 'Request success rate (China)',
-    '请求成功率（国际版）': 'Request success rate (Global)',
     '请求数': 'Requests',
     '请求次数': 'Requests',
     '请确认 WorkBuddy 桌面客户端正在运行并已登录；': 'Make sure the WorkBuddy desktop client is running and signed in;',
@@ -4316,7 +4386,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       <div>
         <h2 style="margin:0">鸡蛋 · 免费白嫖</h2>
         <div style="font-size:12px;color:var(--dim);margin-top:4px">
-          不需要账号、不需要密钥：聚合 OpenCode Zen 免费车道与 Kilo 免费池。切到鸡蛋会自动刷新免费模型清单。
+          不需要账号、不需要密钥：聚合 OpenCode Zen 免费车道与 Kilo 免费池，也可以自己加供应商（每个供应商是一个池子）。切到鸡蛋会自动刷新免费模型清单。
         </div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -4336,12 +4406,59 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
         <div class="k">Kilo 免费池</div>
         <div class="v" id="eggKiloCount">-</div>
       </div>
+      <div class="card">
+        <div class="k">自建供应商池</div>
+        <div class="v" id="eggPoolCount">-</div>
+      </div>
       <div class="card warn">
         <div class="k">最近刷新</div>
         <div class="v" id="eggCatalogAt" style="color:var(--warn);font-size:15px">-</div>
       </div>
     </div>
     <div id="eggSourceLine" class="hint" style="margin:0"></div>
+
+    <!-- ===== 供应商池：每个供应商是一个池子，模型清单按池子筛选 ===== -->
+    <div id="eggPoolsBlock" style="margin-top:18px">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+        <h3 style="margin:0;font-size:14px">供应商池</h3>
+        <div style="font-size:11px;color:var(--dim)">每个供应商是一个池子：模型清单按池子筛选，请求按池子分发</div>
+      </div>
+      <div style="font-size:12px;color:var(--fg);margin-bottom:2px">
+        <b>免费模型预设</b>
+        <span style="color:var(--dim)">点击填入表单；Key 需要自己去对应平台申请</span>
+      </div>
+      <div id="eggPresetList" class="egg-pool-presets"></div>
+
+      <div style="margin-top:14px;padding:12px 13px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)">
+        <div style="font-size:12px;margin-bottom:9px"><b id="eggPoolFormTitle">添加供应商</b></div>
+        <div class="egg-pool-form">
+          <label>名称
+            <input id="eggPoolName" type="text" placeholder="NVIDIA NIM" autocomplete="off">
+          </label>
+          <label>协议
+            <select id="eggPoolProtocol">
+              <option value="openai">OpenAI 兼容</option>
+              <option value="anthropic">Anthropic 兼容</option>
+            </select>
+          </label>
+          <label>Base URL
+            <input id="eggPoolBaseUrl" type="text" placeholder="https://integrate.api.nvidia.com/v1" autocomplete="off">
+          </label>
+          <label>API Key
+            <input id="eggPoolKey" type="password" placeholder="自己的 Key；本地服务可留空" autocomplete="off">
+          </label>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:11px;align-items:center">
+          <button class="sec" id="eggPoolFetchBtn" onclick="fetchEggPoolModels(this)">拉取模型列表</button>
+          <button class="sec" onclick="resetEggPoolForm()">清空</button>
+          <button id="eggPoolSaveBtn" onclick="saveEggPool(this)">保存</button>
+          <span id="eggPoolFormMsg" class="hint" style="margin:0"></span>
+        </div>
+        <div id="eggPoolPickBox" class="egg-pool-pick" style="display:none"></div>
+      </div>
+
+      <div id="eggPoolList" style="margin-top:12px;display:flex;flex-direction:column;gap:10px"></div>
+    </div>
   </section>
   <!-- 版本中枢控制栏 (三列等高对齐网格) -->
   <div class="realm-cards-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:18px">
@@ -4438,6 +4555,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
       <h2 style="margin:0">网关模型清单<em id="modelsRealmTag" style="color:var(--dim);font-weight:500"></em><em id="availModelCount"></em></h2>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <!-- 池子筛选：只有鸡蛋有多池（Zen 免费车道 / Kilo 免费池 / 自建供应商
+             池），别的提供商没有这个维度，筛选框就藏起来。 -->
+        <select id="eggPoolFilter" class="mini-select" onchange="onEggPoolFilterChange(this.value)"
+                style="display:none" title="按池子筛选模型清单"></select>
         <div style="font-size:12px;color:var(--dim)" id="modelsTableDesc">展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率</div>
         <!-- 手动刷新：强制走一次上游 /v3/config（只在当前视图的版本上，用该
              版本的账号），成功后本表立即重载。服务端同一版本 30s 冷却。 -->
@@ -7009,7 +7130,7 @@ const TASKS_DESC_EGG = "鸡蛋免费白嫖：没有签到与成长任务，模�
 const MODELS_DESC_WB = "展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率";
 const MODELS_DESC_QODER = "展示 Qoder 的官方对话大模型、上下文容量、推理/视觉能力、思考控制与默认采样参数；倍率为 Credits 消耗参考系数";
 const MODELS_DESC_TRAE = "展示 Trae 的官方对话大模型、上下文容量、推理/视觉能力与默认采样参数；倍率为客户端选择器同款消耗倍率（Credits 消耗系数，含低谷折扣）";
-const MODELS_DESC_EGG = "展示鸡蛋当前可用的免费模型（每行标注所属免费池：OpenCode Zen 免费车道 / Kilo 免费池）、上下文容量、推理/视觉能力与工具支持；全部免账号、免密钥";
+const MODELS_DESC_EGG = "展示鸡蛋当前可用的模型（每行标注所属池子：OpenCode Zen 免费车道 / Kilo 免费池 / 自建供应商池）、上下文容量、推理/视觉能力与工具支持；内置的两路免费源免账号免密钥，自建池用你自己的 Key";
 // 三个版本卡片上展示的上游主机名，跟着提供商换。
 const PROVIDER_HOSTS = {
   workbuddy: {intl: "www.workbuddy.ai", cn: "copilot.tencent.com"},
@@ -7165,6 +7286,8 @@ async function switchProvider(p){
       }catch(e){ window.__EGG_SWITCH_REFRESH__ = 'bad'; }
     }
     await Promise.all([loadAccounts(), loadModels(), loadSchedulerStatus(), refresh()]);
+    // 自建供应商池只在鸡蛋视图下有意义：切过去就把池子与预设拉回来。
+    if(window.PROVIDER === 'egg') await loadEggPools();
     // 当前页签的内容跟着换提供商重拉一遍：这些页面只在切页签或轮询时取数，
     // 光等下一轮会停在旧提供商的数字上。
     if(currentMainTab === 'analytics'){
@@ -7522,6 +7645,10 @@ function renderEggOverview(){
   set('eggZenCount', zenCount ? String(zenCount) : '0');
   set('eggKiloCount', kiloCount ? String(kiloCount) : '0');
   set('eggCatalogAt', fmtCatalogStamp(st && st.at) || '—');
+  // 自建池：池子个数 + 它们提供的模型数（池子数是本地的，清单数是上游的）。
+  const pools = (st && st.pools) || EGG_POOLS || [];
+  const poolModels = pools.reduce((acc, p) => acc + ((p && p.count) || 0), 0);
+  set('eggPoolCount', pools.length ? (pools.length + ' 个 / ' + poolModels + ' 模型') : '0');
   const el = document.getElementById('eggSourceLine');
   if(!el) return;
   if(!st){
@@ -7537,10 +7664,15 @@ function renderEggOverview(){
     return label + '：⚠ 本次不可用' + (item.error ? '（' + item.error + '）' : '');
   };
   const note = st.note ? ' · ' + st.note : '';
+  const poolLine = pools.length
+    ? '自建池：' + pools.map(p => (p.name || '') + '（' + ((p.count) || 0) + ' 模型'
+        + (p.enabled ? '' : ' · 已停用') + '）').join('、')
+    : '自建池：还没有添加供应商';
   el.style.cssText = 'flex-direction:column;align-items:flex-start;gap:2px';
   el.innerHTML = '<b>免费源状态</b>'
     + '<span style="color:var(--dim)">' + esc(describe('zen') + ' · ' + describe('kilo'))
     + esc(note) + '</span>'
+    + '<span style="color:var(--dim)">' + esc(poolLine) + '</span>'
     + '<span style="color:var(--dim)">免费名单轮换很快：切到鸡蛋会自动刷新，清单 180 秒过期；失败的源会保留上一次可用结果。</span>';
 }
 
@@ -7566,7 +7698,462 @@ async function refreshEggCatalog(btn){
   }
 }
 
-// 清单来源横幅：把「通过 API 获取的最新数据」和「项目默认/缓存文件数据」在
+// ===== 鸡蛋：自建供应商池 =====
+// 每个供应商是一个池子：面板上能增删改、能挑模型，下面的模型清单按池子筛选。
+// 池子数据来自 GET /egg/pools（含 Key 掩码、协议、已挑模型与上游目录）。
+let EGG_POOLS = [];
+let EGG_POOL_PRESETS = [];
+// 添加/编辑表单的状态：editingId 为空就是新建；picked 是「对外提供哪些模型」；
+// fetched 是最近一次「拉取模型列表」拿回来的上游目录。
+let EGG_POOL_FORM = {editingId: '', picked: [], fetched: []};
+// 卡片上的「挑选模型」是另一份状态：它改的是已存池子的模型选择。
+let EGG_POOL_CARD = {id: '', picked: []};
+// 模型清单的池子筛选：'' = 全部。
+let EGG_POOL_FILTER = '';
+// 面板更新了但网关没重启时，这些端点是 404，错误体只有一句 "not found"。
+// 直接说「重启网关」，别让人对着一句英文猜。
+function eggPoolErrorText(e){
+  const msg = String((e && e.message) || e || '').trim();
+  if(msg === 'not found' || msg === '404'){
+    return '网关还没启用供应商池：请重启网关（restart-wb-proxy.bat）后再试';
+  }
+  return msg;
+}
+
+async function loadEggPools(){
+  if(currentProvider() !== 'egg') return;
+  try{
+    const r = await getJSON('/egg/pools');
+    EGG_POOLS = (r && r.pools) || [];
+    EGG_POOL_PRESETS = (r && r.presets) || [];
+    window.EGG_POOLS_LOAD_ERROR = '';
+  }catch(e){
+    console.error('loadEggPools error:', e);
+    EGG_POOLS = [];
+    EGG_POOL_PRESETS = [];
+    window.EGG_POOLS_LOAD_ERROR = eggPoolErrorText(e);
+  }
+  renderEggPresets();
+  renderEggPoolList();
+  renderEggOverview();
+}
+
+function renderEggPresets(){
+  const box = document.getElementById('eggPresetList');
+  if(!box) return;
+  if(window.EGG_POOLS_LOAD_ERROR){
+    box.innerHTML = '<span style="color:var(--warn);font-size:12px">'
+      + esc(window.EGG_POOLS_LOAD_ERROR) + '</span>';
+    return;
+  }
+  if(!EGG_POOL_PRESETS.length){
+    box.innerHTML = '<span style="color:var(--dim);font-size:12px">预设加载中…</span>';
+    return;
+  }
+  box.innerHTML = EGG_POOL_PRESETS.map((p, i) => {
+    return '<button type="button" class="egg-preset" onclick="applyEggPreset(' + i + ')">'
+      + '<span>' + esc(p.name) + '</span>'
+      + '<span class="mono">' + esc(p.host || '') + '</span></button>';
+  }).join('');
+}
+
+function applyEggPreset(index){
+  const p = EGG_POOL_PRESETS[index];
+  if(!p) return;
+  const set = (id, v) => { const el = document.getElementById(id); if(el) el.value = v; };
+  set('eggPoolName', p.name || '');
+  set('eggPoolBaseUrl', p.base_url || '');
+  set('eggPoolProtocol', p.protocol || 'openai');
+  // 预设是「新建」的动作：先把编辑中的那个放掉，免得半路改到别的池子上。
+  EGG_POOL_FORM.editingId = '';
+  EGG_POOL_FORM.picked = [];
+  EGG_POOL_FORM.fetched = [];
+  const title = document.getElementById('eggPoolFormTitle');
+  if(title) title.textContent = '添加供应商';
+  const msg = document.getElementById('eggPoolFormMsg');
+  if(msg){ msg.textContent = '已填入「' + (p.name || '') + '」的地址，填上 Key 后点「拉取模型列表」'; }
+  const box = document.getElementById('eggPoolPickBox');
+  if(box){ box.style.display = 'none'; box.innerHTML = ''; }
+}
+
+function resetEggPoolForm(){
+  EGG_POOL_FORM = {editingId: '', picked: [], fetched: []};
+  ['eggPoolName', 'eggPoolBaseUrl', 'eggPoolKey'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.value = '';
+  });
+  const proto = document.getElementById('eggPoolProtocol');
+  if(proto) proto.value = 'openai';
+  const title = document.getElementById('eggPoolFormTitle');
+  if(title) title.textContent = '添加供应商';
+  const msg = document.getElementById('eggPoolFormMsg');
+  if(msg){ msg.textContent = ''; }
+  const box = document.getElementById('eggPoolPickBox');
+  if(box){ box.style.display = 'none'; box.innerHTML = ''; }
+}
+
+function eggPoolFormMsg(text, kind){
+  const el = document.getElementById('eggPoolFormMsg');
+  if(!el) return;
+  el.textContent = text || '';
+  el.style.color = kind === 'bad' ? 'var(--bad)' : (kind === 'warn' ? 'var(--warn)' : 'var(--dim)');
+}
+
+// 表单里「拉取模型列表」：不落盘，只把上游的目录拿回来给操作者挑。
+async function fetchEggPoolModels(btn){
+  const baseUrl = (document.getElementById('eggPoolBaseUrl') || {}).value || '';
+  const apiKey = (document.getElementById('eggPoolKey') || {}).value || '';
+  const protocol = (document.getElementById('eggPoolProtocol') || {}).value || 'openai';
+  if(!baseUrl.trim()){
+    eggPoolFormMsg('先填 Base URL', 'warn');
+    return;
+  }
+  const prev = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = '拉取中…'; }
+  eggPoolFormMsg('正在向 ' + baseUrl.trim() + ' 拉取模型清单…');
+  try{
+    const r = await postJSON('/egg/pools', {
+      base_url: baseUrl.trim(), api_key: apiKey.trim(), protocol: protocol});
+    if(!r || !r.ok){
+      eggPoolFormMsg((r && r.msg) || '拉取失败', 'bad');
+      renderEggPoolPicker([], []);
+      return;
+    }
+    const models = r.models || [];
+    // 拉回来的清单默认全选：省一次「全选」操作，操作者再取消不要的。
+    EGG_POOL_FORM.fetched = models;
+    EGG_POOL_FORM.picked = models.map(m => m.id);
+    eggPoolFormMsg('拉到 ' + models.length + ' 个模型：勾掉不要的，再点「保存」');
+    renderEggPoolFormPicker(models, EGG_POOL_FORM.picked);
+  }catch(e){
+    eggPoolFormMsg('拉取失败：' + eggPoolErrorText(e), 'bad');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = prev || '拉取模型列表'; }
+  }
+}
+
+// 勾选模型：既用于添加表单（保存前），也用于卡片上的「挑选模型」。
+// 两处各有一份状态：表单用 EGG_POOL_FORM.picked，卡片用 EGG_POOL_CARD.picked。
+function renderEggPoolFormPicker(models, picked){
+  const box = document.getElementById('eggPoolPickBox');
+  if(!box) return;
+  if(!models || !models.length){
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  const sel = new Set(picked || []);
+  box.style.display = 'block';
+  box.innerHTML = eggPoolPickerHtml(models, sel, 'form');
+}
+
+function eggPoolPickerHtml(models, sel, scope){
+  return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+    + '<span style="font-size:12px"><b>挑选模型</b>（已选 '
+    + '<span class="egg-pool-pick-count">' + sel.size + '</span> / ' + models.length + '）</span>'
+    + '<a onclick="eggPoolSelectAll(true)">全选</a>'
+    + '<a onclick="eggPoolSelectAll(false)">全不选</a>'
+    + (scope === 'card'
+        ? '<button type="button" class="sec mini" onclick="saveEggPoolModels()">保存选择</button>'
+        : '')
+    + '</div>'
+    + '<div class="egg-pool-pick-list">'
+    + models.map(m => {
+        const on = sel.has(m.id);
+        return '<label class="egg-pool-pick-item' + (on ? ' on' : '') + '"'
+          + ' data-mid="' + esc(m.id) + '">'
+          + '<input type="checkbox" ' + (on ? 'checked' : '')
+          + ' data-scope="' + scope + '"'
+          + ' onchange="toggleEggPoolModel(this)">'
+          + '<span class="mono" style="font-size:11px">' + esc(m.id) + '</span></label>';
+      }).join('')
+    + '</div>';
+}
+
+function eggPoolPickerScope(){
+  return 'form';
+}
+
+function toggleEggPoolModel(input){
+  const item = input.closest('.egg-pool-pick-item');
+  if(item) item.classList.toggle('on', !!input.checked);
+  const scope = input.getAttribute('data-scope') || 'form';
+  const ids = Array.from(document.querySelectorAll(
+      'input[data-scope="' + scope + '"][type=checkbox]'))
+    .filter(i => i.checked)
+    .map(i => {
+      const wrap = i.closest('.egg-pool-pick-item');
+      return wrap ? (wrap.getAttribute('data-mid') || '') : '';
+    })
+    .filter(Boolean);
+  if(scope === 'card'){
+    EGG_POOL_CARD.picked = ids;
+  }else{
+    EGG_POOL_FORM.picked = ids;
+  }
+  const counter = document.querySelector('.egg-pool-pick-count');
+  if(counter) counter.textContent = String(ids.length);
+}
+
+function eggPoolSelectAll(on){
+  const inputs = Array.from(document.querySelectorAll('.egg-pool-pick-list input[type=checkbox]'));
+  inputs.forEach(i => {
+    i.checked = !!on;
+    const item = i.closest('.egg-pool-pick-item');
+    if(item) item.classList.toggle('on', !!on);
+  });
+  const scope = inputs.length ? (inputs[0].getAttribute('data-scope') || 'form') : 'form';
+  const ids = on ? inputs.map(i => {
+        const wrap = i.closest('.egg-pool-pick-item');
+        return wrap ? (wrap.getAttribute('data-mid') || '') : '';
+      }).filter(Boolean) : [];
+  if(scope === 'card'){
+    EGG_POOL_CARD.picked = ids;
+  }else{
+    EGG_POOL_FORM.picked = ids;
+  }
+  const counter = document.querySelector('.egg-pool-pick-count');
+  if(counter) counter.textContent = String(ids.length);
+}
+
+async function saveEggPool(btn){
+  const name = ((document.getElementById('eggPoolName') || {}).value || '').trim();
+  const baseUrl = ((document.getElementById('eggPoolBaseUrl') || {}).value || '').trim();
+  const apiKey = ((document.getElementById('eggPoolKey') || {}).value || '').trim();
+  const protocol = ((document.getElementById('eggPoolProtocol') || {}).value || 'openai').trim();
+  if(!name){ eggPoolFormMsg('先填名称', 'warn'); return; }
+  if(!baseUrl){ eggPoolFormMsg('先填 Base URL', 'warn'); return; }
+  const prev = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = '保存中…'; }
+  try{
+    const body = {
+      id: EGG_POOL_FORM.editingId || '',
+      name: name, protocol: protocol, base_url: baseUrl, models: EGG_POOL_FORM.picked
+    };
+    if(apiKey) body.api_key = apiKey;
+    if(EGG_POOL_FORM.fetched && EGG_POOL_FORM.fetched.length){
+      body.catalog = EGG_POOL_FORM.fetched;
+    }
+    const r = await postJSON('/egg/pools/save', body);
+    if(r && r.ok){
+      EGG_POOLS = r.pools || EGG_POOLS;
+      renderEggPoolList();
+      resetEggPoolForm();
+      toast('供应商「' + name + '」已保存', 'ok');
+      await loadModels();
+    }else{
+      eggPoolFormMsg((r && r.msg) || '保存失败', 'bad');
+    }
+  }catch(e){
+    eggPoolFormMsg('保存失败：' + eggPoolErrorText(e), 'bad');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = prev || '保存'; }
+  }
+}
+
+function renderEggPoolList(){
+  const box = document.getElementById('eggPoolList');
+  if(!box) return;
+  if(!EGG_POOLS.length){
+    box.innerHTML = '<div style="font-size:12px;color:var(--dim);padding:10px 2px">'
+      + '还没有自建供应商。上面的预设点一下就能填好地址，填上 Key 拉一次模型清单即可。'
+      + '</div>';
+    return;
+  }
+  box.innerHTML = EGG_POOLS.map(p => {
+    const models = p.models || [];
+    const chips = models.length
+      ? models.map(m => '<span class="egg-pool-model">' + esc(m) + '</span>').join('')
+      : '<span style="font-size:11px;color:var(--dim)">还没挑模型</span>';
+    // 正在挑模型的那张卡片：把选择器直接摊在卡片里，不用弹窗。
+    const picker = (EGG_POOL_CARD.id === p.id && p.catalog && p.catalog.length)
+      ? '<div class="egg-pool-pick">'
+        + eggPoolPickerHtml(p.catalog, new Set(EGG_POOL_CARD.picked), 'card')
+        + '</div>'
+      : '';
+    return '<div class="egg-pool-card' + (p.enabled ? '' : ' off') + '">'
+      + '<div class="egg-pool-head">'
+        + '<div style="min-width:0">'
+          + '<div class="egg-pool-title">'
+            + '<span class="dot" style="background:' + (p.enabled ? 'var(--accent2)' : 'var(--dim)') + '"></span>'
+            + '<b>' + esc(p.name || '') + '</b>'
+            + '<span class="badge s mini">' + esc(p.protocol_label || p.protocol || '') + '</span>'
+          + '</div>'
+          + '<div class="egg-pool-sub">Key ' + esc(p.api_key_masked || '（未设置）')
+            + ' · 上游目录 ' + (p.catalog_count || 0) + ' 个'
+            + (p.catalog_at ? ' · 最近拉取 ' + esc(fmtCatalogStamp(p.catalog_at) || '') : '')
+            + '</div>'
+        + '</div>'
+        + '<label class="switch" title="启用/停用这个池子">'
+          + '<input type="checkbox" ' + (p.enabled ? 'checked' : '')
+          + ' onchange="toggleEggPool(\'' + esc(p.id) + '\', this.checked)">'
+          + '<span class="switch-track"></span></label>'
+      + '</div>'
+      + '<div style="display:flex;gap:8px;align-items:flex-start;margin-top:9px">'
+        + '<span class="badge off" style="flex:0 0 auto">' + models.length + ' 模型</span>'
+        + '<div class="egg-pool-models" style="flex:1 1 auto">' + chips + '</div>'
+      + '</div>'
+      + '<div class="egg-pool-foot">'
+        + '<span class="mono" style="flex:1 1 220px;min-width:0;overflow:hidden;text-overflow:ellipsis"'
+          + ' title="' + esc(p.base_url || '') + '">' + esc(p.base_url || '') + '</span>'
+        + '<a onclick="openEggPoolPicker(\'' + esc(p.id) + '\')">挑选模型</a>'
+        + '<a onclick="editEggPool(\'' + esc(p.id) + '\')">编辑</a>'
+        + '<a onclick="refreshEggPool(\'' + esc(p.id) + '\')">刷新</a>'
+        + '<a onclick="deleteEggPool(\'' + esc(p.id) + '\')">删除</a>'
+      + '</div>'
+      + picker
+      + '</div>';
+  }).join('');
+}
+
+function editEggPool(id){
+  const p = EGG_POOLS.find(x => x.id === id);
+  if(!p) return;
+  const set = (id2, v) => { const el = document.getElementById(id2); if(el) el.value = v; };
+  set('eggPoolName', p.name || '');
+  set('eggPoolBaseUrl', p.base_url || '');
+  set('eggPoolProtocol', p.protocol || 'openai');
+  // Key 不回显：留空表示沿用已存的那把。
+  set('eggPoolKey', '');
+  EGG_POOL_FORM.editingId = p.id;
+  EGG_POOL_FORM.picked = (p.models || []).slice();
+  EGG_POOL_FORM.fetched = (p.catalog || []).slice();
+  const title = document.getElementById('eggPoolFormTitle');
+  if(title) title.textContent = '编辑供应商：' + (p.name || '');
+  eggPoolFormMsg('正在编辑「' + (p.name || '') + '」：Key 留空表示不改');
+  const box = document.getElementById('eggPoolPickBox');
+  if(box && p.catalog && p.catalog.length){
+    renderEggPoolFormPicker(p.catalog, EGG_POOL_FORM.picked);
+  }else if(box){
+    box.style.display = 'none';
+    box.innerHTML = '';
+  }
+  const form = document.getElementById('eggPoolsBlock');
+  if(form) form.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+function openEggPoolPicker(id){
+  const p = EGG_POOLS.find(x => x.id === id);
+  if(!p) return;
+  if(!p.catalog || !p.catalog.length){
+    toast('这个池子还没有上游目录：点「刷新」先拉一次', 'warn');
+    return;
+  }
+  EGG_POOL_CARD = {id: id, picked: (p.models || []).slice()};
+  renderEggPoolList();
+}
+
+async function saveEggPoolModels(){
+  const id = EGG_POOL_CARD.id;
+  if(!id) return;
+  try{
+    const r = await postJSON('/egg/pools/models', {id: id, models: EGG_POOL_CARD.picked});
+    if(r && r.ok){
+      EGG_POOLS = r.pools || EGG_POOLS;
+      EGG_POOL_CARD = {id: '', picked: []};
+      renderEggPoolList();
+      toast('模型选择已保存', 'ok');
+      await loadModels();
+    }else{
+      toast((r && r.msg) || '保存失败', 'warn');
+    }
+  }catch(e){
+    toast('保存失败：' + eggPoolErrorText(e), 'bad');
+  }
+}
+
+async function toggleEggPool(id, enabled){
+  try{
+    const r = await postJSON('/egg/pools/toggle', {id: id, enabled: !!enabled});
+    if(r && r.ok){
+      EGG_POOLS = r.pools || EGG_POOLS;
+      renderEggPoolList();
+      await loadModels();
+    }
+  }catch(e){
+    toast('切换失败：' + eggPoolErrorText(e), 'bad');
+    await loadEggPools();
+  }
+}
+
+async function refreshEggPool(id){
+  try{
+    const r = await postJSON('/egg/pools/refresh', {id: id});
+    if(r && r.ok){
+      EGG_POOLS = r.pools || EGG_POOLS;
+      renderEggPoolList();
+      toast((r && r.msg) || '已刷新', 'ok');
+      await loadModels();
+    }else{
+      toast((r && r.msg) || '刷新失败', 'warn');
+    }
+  }catch(e){
+    toast('刷新失败：' + eggPoolErrorText(e), 'bad');
+  }
+}
+
+async function deleteEggPool(id){
+  const p = EGG_POOLS.find(x => x.id === id);
+  const label = (p && p.name) || id;
+  if(!confirm('删除供应商「' + label + '」？该池子的模型会从清单里消失。')) return;
+  try{
+    const r = await postJSON('/egg/pools/delete', {id: id});
+    if(r && r.ok){
+      EGG_POOLS = r.pools || [];
+      renderEggPoolList();
+      toast('已删除「' + label + '」', 'ok');
+      await loadModels();
+    }
+  }catch(e){
+    toast('删除失败：' + eggPoolErrorText(e), 'bad');
+  }
+}
+
+// ===== 模型清单的池子筛选 =====
+// 选项直接从清单里长出来：每个 (egg_source, egg_source_label) 一项，
+// 所以新加的池子不用额外注册就出现在下拉里。
+function buildEggPoolFilter(){
+  const sel = document.getElementById('eggPoolFilter');
+  if(!sel) return;
+  if(currentProvider() !== 'egg'){
+    sel.style.display = 'none';
+    EGG_POOL_FILTER = '';
+    return;
+  }
+  const seen = new Map();
+  MODELS_DATA.forEach(m => {
+    const src = String((m && m.egg_source) || '').trim();
+    if(!src) return;
+    if(!seen.has(src)) seen.set(src, String((m && m.egg_source_label) || src).trim());
+  });
+  if(seen.size < 2){
+    // 只有一个池子时筛选没有意义，藏起来别占地方。
+    sel.style.display = 'none';
+    EGG_POOL_FILTER = '';
+    return;
+  }
+  const opts = ['<option value="">全部池子（' + MODELS_DATA.length + '）</option>'];
+  seen.forEach((label, src) => {
+    const n = MODELS_DATA.filter(m => String(m.egg_source || '') === src).length;
+    opts.push('<option value="' + esc(src) + '">' + esc(label) + '（' + n + '）</option>');
+  });
+  sel.innerHTML = opts.join('');
+  if(EGG_POOL_FILTER && !seen.has(EGG_POOL_FILTER)) EGG_POOL_FILTER = '';
+  sel.value = EGG_POOL_FILTER;
+  sel.style.display = 'inline-block';
+}
+
+function onEggPoolFilterChange(value){
+  EGG_POOL_FILTER = value || '';
+  renderAvailableModels();
+}
+
+// 池子筛选后的模型行：非鸡蛋视图不筛选。
+function eggFilteredModels(){
+  if(currentProvider() !== 'egg' || !EGG_POOL_FILTER) return MODELS_DATA;
+  return MODELS_DATA.filter(m => String((m && m.egg_source) || '') === EGG_POOL_FILTER);
+}
+
 // 视觉上分清楚——非 API 来源给黄色警示（模型、倍率数据可能不一致），API 来源
 // 给绿色状态条并附刷新时间。数据由 /v1/models 响应的 catalog 字段驱动（见
 // wb_proxy.catalog_meta）；旧版服务端没有该字段时如实提示。
@@ -7652,13 +8239,24 @@ function renderModelsSourceLine(meta){
 function renderAvailableModels(){
   const tb = document.querySelector('#modelsTable tbody');
   if(!tb) return;
+  // 池子筛选的下拉要先建好（选项从清单里长出来），再按它过滤行。
+  buildEggPoolFilter();
+  const rows = eggFilteredModels();
   const countEm = document.getElementById('availModelCount');
-  if(countEm) countEm.textContent = '(共 ' + MODELS_DATA.length + ' 个)';
+  if(countEm){
+    countEm.textContent = EGG_POOL_FILTER
+      ? '(共 ' + rows.length + ' / ' + MODELS_DATA.length + ' 个)'
+      : '(共 ' + MODELS_DATA.length + ' 个)';
+  }
   if(!MODELS_DATA.length){
     tb.innerHTML = '<tr><td colspan="9" class="empty">暂无可用模型</td></tr>';
     return;
   }
-  tb.innerHTML = MODELS_DATA.map(m => {
+  if(!rows.length){
+    tb.innerHTML = '<tr><td colspan="9" class="empty">这个池子当前没有模型</td></tr>';
+    return;
+  }
+  tb.innerHTML = rows.map(m => {
     // 1. 倍率与折扣 —— 一律以 /v1/models 取回的 credits 为准（活目录优先、
     //    内置快照兜底）。以前这里还按模型 id 写死了 hy3 / hy4-preview-f /
     //    国际版 deepseek-v4.1-flash 三个"限时免费"，与 credits 值是 OR 关系，
@@ -7794,17 +8392,20 @@ function renderAvailableModels(){
       + unavailBadge
       + '</td>';
 
-    // 7. 免费池（鸡蛋才有这个维度）：Zen 免费车道 / Kilo 免费池。两路的限流、
-    //    地区门与提示词记录口径不同，看清单时就得知道这条模型走的是哪一路。
-    //    其它提供商没有池子概念，这一列留空（不占视觉重量）。
+    // 7. 免费池（鸡蛋才有这个维度）：Zen 免费车道 / Kilo 免费池 / 自建供应商池。
+    //    各路的限流、地区门与提示词记录口径不同，看清单时就得知道这条模型走的是
+    //    哪一路。其它提供商没有池子概念，这一列留空（不占视觉重量）。
     const poolSrc = String(m.egg_source || '').trim();
+    const poolKind = String(m.egg_source_kind || 'builtin').trim();
     let poolCell;
     if(poolSrc){
       const poolLabel = String(m.egg_source_label || poolSrc).trim();
       const poolTip = String(m.description || '').trim() || poolLabel;
-      const poolTone = poolSrc === 'kilo'
-        ? 'background:var(--accent2-soft);color:var(--accent2);border-color:rgba(94,140,79,.28)'
-        : 'background:rgba(124,58,237,.12);color:var(--think);border-color:rgba(124,58,237,.3)';
+      const poolTone = poolKind === 'pool'
+        ? 'background:var(--warn-soft);color:var(--warn);border-color:rgba(183,121,31,.35)'
+        : (poolSrc === 'kilo'
+            ? 'background:var(--accent2-soft);color:var(--accent2);border-color:rgba(94,140,79,.28)'
+            : 'background:rgba(124,58,237,.12);color:var(--think);border-color:rgba(124,58,237,.3)');
       poolCell = '<td style="text-align:center" data-label="免费池">'
         + '<span class="badge" style="font-size:11px;font-weight:600;' + poolTone + '"'
         + ' title="' + esc(poolTip) + '">' + esc(poolLabel) + '</span></td>';
@@ -11731,9 +12332,12 @@ async function refreshInner(gen){
 
   // 这三张卡的数字都按当前视图区域取（/usage 等接口带 realm + provider），标题
   // 带上区域，免得把国际版的用量看成全局的。Qoder 视图再带提供商前缀。
-  const realmTag = '（' + (currentProvider() === 'qoder' ? 'Qoder · '
+  // 例外：选中鸡蛋（免费白嫖）时它的出口恒为国际版，标题里再挂一个
+  // 「（国际版）」纯属重复噪音，直接省掉；其他提供商照旧标出区域。
+  const realmTag = (currentProvider() === 'egg') ? ''
+                 : '（' + (currentProvider() === 'qoder' ? 'Qoder · '
                         : currentProvider() === 'trae' ? 'Trae · ' : '')
-                 + (window.VIEW_REALM === 'cn' ? '国内版' : '国际版') + '）';
+                   + (window.VIEW_REALM === 'cn' ? '国内版' : '国际版') + '）';
   document.getElementById('cards').innerHTML =
     card('网关调用量' + realmTag, fmt(t.requests) + ' <span style="font-size:13px;font-weight:500;color:var(--dim);margin-left:4px">次</span>', '', '') +
     card('积分消耗' + realmTag, (t.credit != null ? Number(t.credit).toFixed(2) : '0.00') + ' <span style="font-size:13px;font-weight:500;color:var(--dim);margin-left:4px">积分</span>', ((PRICING_ON && t.cost_cny != null) ? ('估算价值: ' + fmtCostBoth(t.cost_cny, 12)) : ''), 'warn') +
@@ -12177,6 +12781,8 @@ async function startDashboard(){
   loadGrowthTasks().catch(() => {});
   await Promise.all([loadAccounts(), loadModels(),
                      loadSchedulerStatus(), refresh(), loadAgentsAvailability()]);
+  // 自建供应商池只在鸡蛋视图下有意义：开局就在鸡蛋视图时把池子拉回来。
+  if(currentProvider() === 'egg') await loadEggPools();
   updateRecentLimitButtons();
   // The head script already resolved this before first paint; re-apply it
   // here so the data loaders for the active page actually run.
@@ -18215,9 +18821,12 @@ const dimDefs = {
     ],
     rows(){
       const a = state.analytics; if (!a) return [];
+      // 区域标签（国际版 / 国内版）：只有在选的不是鸡蛋时才标——鸡蛋的出口恒为
+      // 国际版，账号名旁边再挂一个「国际版」纯属重复噪音。
+      const showRealm = (analyticsProvider || 'all') !== 'egg';
       return (a.accounts || []).map(acc => ({
         key: acc.uid,
-        who: `<div class="who"><b>${acctNick(acc.uid, acc.nickname)} <span class="realm-tag ${acc.realm === 'intl' ? 'realm-intl' : 'realm-cn'}">${acc.realm === 'intl' ? '国际版' : '国内版'}</span></b><span data-tip="UID：${acc.uid}">${acc.uid === EGG_ACCT_UID ? '免费网关 · 免账号免密钥' : (acc.uid||'').slice(0,13)+'…'}</span></div>`,
+        who: `<div class="who"><b>${acctNick(acc.uid, acc.nickname)}${showRealm ? ` <span class="realm-tag ${acc.realm === 'intl' ? 'realm-intl' : 'realm-cn'}">${acc.realm === 'intl' ? '国际版' : '国内版'}</span>` : ''}</b><span data-tip="UID：${acc.uid}">${acc.uid === EGG_ACCT_UID ? '免费网关 · 免账号免密钥' : (acc.uid||'').slice(0,13)+'…'}</span></div>`,
         req: acc.window.requests,
         tok: acc.window.total_tokens,
         tokSub: `思考 ${fmtCompact(acc.window.reasoning_tokens)} · 缓存 ${fmtCompact(acc.window.cached_tokens)}`,

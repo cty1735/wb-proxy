@@ -113,6 +113,10 @@ class PoolError(Exception):
 
 _lock = threading.RLock()
 _state = {"pools": []}
+#: 模型 id → 池子 id 的索引。聊天请求的每一条都要查「这个模型属于哪个池子」，
+#: 逐池逐模型地扫是 O(池数×模型数)，请求多了就白烧 CPU。索引在每次写入后重建
+#: （_save 只在增删改时调），读的时候不加锁也不拷贝。
+_index = {"map": {}}
 _data_dir = ""
 _log = lambda msg: None
 _loaded = False
@@ -159,10 +163,26 @@ def _load():
             pools.append(entry)
     with _lock:
         _state["pools"] = pools
+    _rebuild_index()
+
+
+def _rebuild_index():
+    """重建「模型 id → 池子 id」索引（每次写入后调一次）。"""
+    mapping = {}
+    for pool in _state["pools"]:
+        if not pool["enabled"]:
+            continue
+        for mid in pool["models"]:
+            # 同一个 id 被两个池子挑走时，先登记的赢：清单里一个 id 只能有一个
+            # 去处，客户端按 id 挑模型不能随机命中。
+            if mid not in mapping:
+                mapping[mid] = pool["id"]
+    _index["map"] = mapping
 
 
 def _save():
     path = _pools_path()
+    _rebuild_index()
     if not path:
         return
     try:
@@ -298,10 +318,29 @@ def _int(value):
 # ---------------------------------------------------------------------------
 
 def pools():
-    """全部池子（含明文 Key，给服务端自己用）。"""
+    """全部池子（含明文 Key 与上游目录，给服务端自己用）。"""
     with _lock:
         return [dict(p, catalog=[dict(m) for m in p["catalog"]])
                 for p in _state["pools"]]
+
+
+def _record(pool):
+    """池子的浅副本：不含上游目录。
+
+    请求热路径上要读池子（Base URL / Key / 协议），而上游目录可能有上千行，
+    每个请求都拷一遍纯属白烧 CPU —— 目录只有面板的「挑选模型」与刷新要用。
+    """
+    return {
+        "id": pool["id"],
+        "name": pool["name"],
+        "protocol": pool["protocol"],
+        "base_url": pool["base_url"],
+        "api_key": pool["api_key"],
+        "enabled": pool["enabled"],
+        "models": list(pool["models"]),
+        "catalog": [],
+        "catalog_at": pool["catalog_at"],
+    }
 
 
 def get(pool_id):
@@ -322,18 +361,38 @@ def find_by_model(model_id):
     mid = str(model_id or "").strip()
     if not mid:
         return None
+    pool_id = _index["map"].get(mid)
+    if not pool_id:
+        return None
     with _lock:
         for pool in _state["pools"]:
-            if not pool["enabled"]:
-                continue
-            if mid in pool["models"]:
-                return dict(pool, catalog=[dict(m) for m in pool["catalog"]])
+            if pool["id"] == pool_id:
+                return _record(pool)
     return None
 
 
 def enabled_pools():
     with _lock:
         return [dict(p) for p in _state["pools"] if p["enabled"]]
+
+
+def pool_summaries():
+    """池子的概要（不含 catalog 副本）：概览卡片与状态接口用。
+
+    pools() 会把每条池子的上游目录整个拷一遍；概览只要名字、地址与条数，
+    不值得为它拷那些模型行。
+    """
+    with _lock:
+        return [{
+            "id": p["id"],
+            "name": p["name"],
+            "protocol": p["protocol"],
+            "base_url": p["base_url"],
+            "enabled": p["enabled"],
+            "count": len(p["models"]),
+            "catalog_count": len(p["catalog"]),
+            "catalog_at": p["catalog_at"],
+        } for p in _state["pools"]]
 
 
 def mask_key(key):
@@ -431,8 +490,11 @@ def upsert(payload):
         api_key = str(payload.get("api_key") or "").strip()
         if not api_key and existing is not None:
             api_key = existing.get("api_key") or ""
-        enabled = payload.get("enabled", True) is not False \
-            if "enabled" in payload else (existing["enabled"] if existing else True)
+        # 启用状态：payload 给了才算数；没给就沿用已存的（新建则默认开）。
+        if "enabled" in payload:
+            enabled = payload.get("enabled", True) is not False
+        else:
+            enabled = existing["enabled"] if existing else True
         catalog = existing["catalog"] if existing else []
         catalog_at = existing["catalog_at"] if existing else 0.0
         if isinstance(payload.get("catalog"), list):

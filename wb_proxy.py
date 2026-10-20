@@ -11592,10 +11592,13 @@ def model_entry(mid, meta):
     if meta.get("credits_note"):
         item["credits_note"] = meta["credits_note"]
     if meta.get("egg_source"):
-        # 鸡蛋的免费池归属（zen = OpenCode Zen 免费车道 / kilo = Kilo 免费池）：
-        # 面板的模型清单按它给每行标出这条模型走的是哪一路免费源。
+        # 鸡蛋的免费池归属（zen = OpenCode Zen 免费车道 / kilo = Kilo 免费池 /
+        # pool-xxx = 操作者自建的供应商池）：面板的模型清单按它给每行标出这条
+        # 模型走的是哪一路。
         item["egg_source"] = meta["egg_source"]
         item["egg_source_label"] = meta.get("egg_source_label") or meta["egg_source"]
+        if meta.get("egg_source_kind"):
+            item["egg_source_kind"] = meta["egg_source_kind"]
     if meta.get("off_peak_rate"):
         item["off_peak_rate"] = meta["off_peak_rate"]
     if meta.get("available") is False:
@@ -16038,6 +16041,18 @@ def local_ip_addresses():
         except Exception:
             pass
     return found
+def url_display_host(host):
+    """The host to put in a URL we print for the user to click.
+
+    A wildcard bind (0.0.0.0 / ::) is not a destination - a browser or an
+    API client cannot connect to it, so printing it makes the link dead on
+    arrival. Show "localhost" for those; the LAN addresses other devices
+    need are printed separately next to it.
+    """
+    h = str(host or "").strip()
+    if h in ("0.0.0.0", "::", ""):
+        return "localhost"
+    return h
 def _new_id(prefix):
     return prefix + uuid.uuid4().hex
 def _flatten_content(content):
@@ -18916,6 +18931,9 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if path.startswith("/agents"):
             return True
+        # 鸡蛋的自建供应商池：里面有 Base URL 与 API Key，只给面板会话看。
+        if path.startswith("/egg"):
+            return True
         return False
     def _strip_pinned_prefix_only(self):
         """Strip /u/<ref> from self.path; returns False for a malformed ref."""
@@ -20504,6 +20522,19 @@ class Handler(BaseHTTPRequestHandler):
                 name = meta.get("name")
                 if name:
                     entry["name"] = name
+                # 来源标记：客户端（OpenCode 等）把模型名后面挂一个短标签，
+                # 搜索时按来源过滤——WorkBuddy / Qoder / Trae 挂提供商名，
+                # 鸡蛋挂免费源（kilo / zen）或自建池的名字（见
+                # wb_agents.model_source_tag）。
+                source = str(meta.get("egg_source") or "").strip()
+                if source:
+                    entry["source"] = source
+                    entry["source_label"] = (str(meta.get("egg_source_label")
+                                                or source).strip() or source)
+                elif provider:
+                    entry["source"] = provider
+                    entry["source_label"] = wb_accounts.provider_display_name(
+                        provider)
                 # Vision support flag (DSH and clients use this)
                 vision = bool(meta.get("supportsImages")) and not meta.get("disabledMultimodal")
                 if mid == "glm-5.3-flash":
@@ -20651,9 +20682,13 @@ class Handler(BaseHTTPRequestHandler):
         # （上下文窗口、输出上限、思考档位）。这里按 id 把网关自己的目录规格
         # 补上（见 enrich_agent_models），显式带来的字段优先——否则一键配置
         # 写出来的模型列表只有 id，客户端就只能吃自己的内置默认值。
+        # 规格必须按**这次 apply 的提供商**取：来源标记（鸡蛋的 kilo / zen
+        # 免费源、自建池）也在这份规格里，按当前提供商取才不会串台。
         try:
             specs = {}
-            for spec in self._agents_models():
+            for spec in self._agents_models(
+                    provider=prov,
+                    realm=payload.get("realm") or None):
                 if isinstance(spec, dict) and spec.get("id"):
                     specs[str(spec["id"])] = spec
         except Exception:
@@ -22731,6 +22766,24 @@ class Handler(BaseHTTPRequestHandler):
             if not self._panel_ok():
                 return self._error(401, "panel password required", "invalid_request_error")
             return self._route_quota_scan_run()
+        if path.startswith("/egg/pools"):
+            # 面板的「供应商池」：写入只认面板会话（里面有 API Key）。
+            if not self._panel_ok():
+                return self._error(401, "panel password required", "invalid_request_error")
+            payload = self._payload_or_error()
+            if payload is None:
+                return
+            if path == "/egg/pools/save":
+                return self._route_egg_pool_save(payload)
+            if path == "/egg/pools/delete":
+                return self._route_egg_pool_delete(payload)
+            if path == "/egg/pools/toggle":
+                return self._route_egg_pool_toggle(payload)
+            if path == "/egg/pools/models":
+                return self._route_egg_pool_models(payload)
+            if path == "/egg/pools/refresh":
+                return self._route_egg_pool_refresh(payload)
+            return self._route_egg_pools(payload)
         if path.startswith("/proxy/"):
             if not self._panel_ok():
                 return self._error(
@@ -23390,7 +23443,7 @@ def _probe_running_instance(args):
         print()
         print(f"  [已有一个反代在 {args.port} 端口运行，无需重复启动]")
         print(f"  账号: {existing.get('uid', '?')} @ {existing.get('domain', '?')}")
-        print(f"  看板: http://127.0.0.1:{args.port}/")
+        print(f"  看板: http://localhost:{args.port}/")
         print()
         print("  如果要重启: 先把原来那个窗口关掉（或结束 python 进程），再运行本程序。")
         print()
@@ -23547,6 +23600,14 @@ def _log_startup_summary(args, api_key_generated):
     log("user-agent : %s" % wb_accounts.USER_AGENT)
     if args.host == "0.0.0.0":
         ips = local_ip_addresses() or ["<this-pc-ip>"]
+        # The LAN addresses go through log() as well as print(): under
+        # pythonw there is no console, so print() lands in the void and the
+        # live viewer (which reads the log buffer) would never show them.
+        log("lan mode   : reachable from other devices on this network")
+        log("  local    : http://localhost:%s/" % args.port)
+        for ip in ips:
+            log("  lan api  : http://%s:%s/v1" % (ip, args.port))
+            log("  lan panel: http://%s:%s/" % (ip, args.port))
         print()
         print("  " + "=" * 62)
         print("  LAN MODE - reachable from other devices")
@@ -23582,12 +23643,16 @@ def _log_startup_summary(args, api_key_generated):
         print()
         sys.stdout.flush()
     if not POOL.accounts:
+        # log() as well as print(): under pythonw there is no console, so the
+        # hint would otherwise never reach the live viewer.
+        log("no accounts yet - open the dashboard and click [Login new account]:")
+        log("  http://localhost:%s/" % args.port)
         print()
         print("  " + "=" * 62)
         print("  NO ACCOUNTS YET")
         print()
         print("  Open the dashboard and click [Login new account]:")
-        print("      http://127.0.0.1:%s/" % args.port)
+        print("      http://localhost:%s/" % args.port)
         print()
         print("  The browser flow adds the account automatically.")
         print("  This window must stay open.")
@@ -23633,8 +23698,12 @@ def _serve_forever(args):
         _key_state = ("on (%d key(s) from the panel)" % len(_panel_keys)) if _panel_keys else "on (--api-key)"
     else:
         _key_state = "off"
-    log(f"listening  : http://{args.host}:{args.port}/v1  (api key: {_key_state})")
-    log(f"dashboard  : http://{args.host}:{args.port}/")
+    # A 0.0.0.0 bind is not an address the user can open: browsers and API
+    # clients both refuse it. Print localhost so the link actually works;
+    # the LAN addresses for other devices are listed in the LAN MODE block.
+    _show_host = url_display_host(args.host)
+    log(f"listening  : http://{_show_host}:{args.port}/v1  (api key: {_key_state})")
+    log(f"dashboard  : http://{_show_host}:{args.port}/")
     # Keep the handler referenced for the process lifetime: SetConsoleCtrlHandler
     # stores a raw pointer, so a collected callback would crash on close.
     _ctrl_handler = install_console_close_handler()

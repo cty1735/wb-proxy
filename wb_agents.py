@@ -37,6 +37,25 @@ PROVIDER_ID = "wb-proxy"
 PROVIDER_NAME = "WB Proxy"
 CREDENTIAL_REF = "WB_PROXY_API_KEY"
 
+#: 模型名后面挂的短标签（写进 OpenCode 的模型表，客户端选择器里显示成
+#: 「模型名 标签」）。标签按**当前提供商**给：WorkBuddy 挂 wb、Qoder 挂
+#: qoder、Trae 挂 trae；选中鸡蛋时再按免费源细分——Kilo 免费池挂 kilo、
+#: OpenCode Zen 免费车道挂 opencode-zen，操作者自建的供应商池挂池子名。
+#: 以前一律挂 wb，Qoder / Trae / 鸡蛋的模型在选择器里也顶着 wb 的名字，
+#: 看着像 WorkBuddy 的模型。
+PROVIDER_TAGS = {
+    "workbuddy": "wb",
+    "qoder": "qoder",
+    "trae": "trae",
+    "egg": "egg",
+}
+
+#: 鸡蛋（免账号的免费网关）里各条免费源的短标签。
+EGG_SOURCE_TAGS = {
+    "zen": "opencode-zen",
+    "kilo": "kilo",
+}
+
 # A config file bigger than this is almost certainly not the hand-edited
 # settings file we expect, so refuse rather than risk corrupting user data.
 MAX_CONFIG_BYTES = 8 * 1024 * 1024
@@ -760,12 +779,49 @@ def _managed_codex(paths, contents):
     }, sort_keys=True, ensure_ascii=False)
 
 
+def _tag_slug(text):
+    """把池子名之类的标签压成一个能搜的小写词（NVIDIA NIM → nvidia-nim）。"""
+    slug = re.sub(r"[^a-z0-9]+", "-", str(text or "").strip().lower())
+    return slug.strip("-")
+
+
+def model_source_tag(entry, provider=None):
+    """这个模型在客户端选择器里该挂的短标签。
+
+    ``entry`` 是模型表里的一条（可以带 ``source`` / ``source_label``：
+    鸡蛋的免费源分别是 ``kilo`` / ``zen``，自建池是 ``pool-xxxx``）。
+    ``provider`` 是这次配置的当前提供商 —— 标签以它为准：鸡蛋按免费源细分，
+    其余按提供商名（workbuddy → wb、qoder → qoder、trae → trae）。
+    """
+    entry = entry if isinstance(entry, dict) else {}
+    provider = str(provider or "").strip().lower()
+    source = str(entry.get("source") or "").strip().lower()
+    label = str(entry.get("source_label") or "").strip()
+    if provider == "egg":
+        tag = EGG_SOURCE_TAGS.get(source)
+        if tag:
+            return tag
+        if source.startswith("pool-"):
+            # 操作者自建的供应商池：挂池子的名字，一眼知道这条模型走哪一家。
+            return _tag_slug(label) or "pool"
+        return PROVIDER_TAGS["egg"]
+    if provider:
+        return PROVIDER_TAGS.get(provider, provider)
+    # 没有提供商信息时退回到模型自己的来源，再退回到 WorkBuddy 的 wb。
+    if source in EGG_SOURCE_TAGS:
+        return EGG_SOURCE_TAGS[source]
+    if source:
+        return _tag_slug(label or source) or source
+    return PROVIDER_TAGS["workbuddy"]
+
+
 def _apply_opencode(paths, ctx):
     path = paths["config"]
     data = _load_json(path, "opencode config")
     if "$schema" not in data:
         data["$schema"] = "https://opencode.ai/config.json"
     models = {}
+    provider_id = str(ctx.get("provider") or "").strip().lower()
     for entry in ctx.get("models") or []:
         if isinstance(entry, dict):
             mid = entry.get("id")
@@ -778,11 +834,18 @@ def _apply_opencode(paths, ctx):
             continue
         # OpenCode v2's model picker searches model names only - the provider
         # name is not a search key unless an integration is connected - so tag
-        # every model with "wb": the row reads "hy3 wb" and typing "wb" lists
-        # every model this gateway serves.
+        # every model with the short name of where it actually comes from:
+        # "hy3 wb" for WorkBuddy, "hy3 qoder" / "hy3 trae" for those
+        # providers, and "hy3 kilo" / "hy3 opencode-zen" for the egg's free
+        # lanes. Typing the tag then lists exactly that provider's models.
         label = str(name or mid).strip() or mid
-        if "wb" not in label.lower():
-            label = "%s wb" % label
+        tag = model_source_tag(entry if isinstance(entry, dict) else {},
+                               provider_id)
+        # 每条模型都挂上来源标签（名字里已经以它结尾的就不重复挂），这样
+        # 选择器里每一行都能看出这条模型走的是哪一家，搜索也能按来源过滤。
+        words = label.lower().split()
+        if tag and (not words or words[-1] != tag.lower()):
+            label = "%s %s" % (label, tag)
         models[mid] = {"name": label}
     provider = {
         "npm": "@ai-sdk/openai-compatible",
@@ -1656,6 +1719,14 @@ def fetch_models_from_gateway(base_url, api_key, timeout=10):
         name = item.get("name")
         if name:
             entry["name"] = str(name)
+        # 免费源归属（鸡蛋的 kilo / zen 免费车道、自建池）：客户端据此给模型
+        # 挂上来源标签（见 model_source_tag）。
+        source = item.get("egg_source")
+        if source:
+            entry["source"] = str(source)
+            source_label = item.get("egg_source_label")
+            if source_label:
+                entry["source_label"] = str(source_label)
         models.append(entry)
     # Same cap as the panel's apply: a runaway catalog must not turn into a
     # megabyte config file.
@@ -1724,6 +1795,11 @@ def main(argv=None):
                               "(default: $WB_PROXY_API_KEY, then a prompt)")
     apply_p.add_argument("--model", default=None,
                          help="default model id to select in the client")
+    apply_p.add_argument("--provider", default=None,
+                         help="current provider of the gateway "
+                              "(workbuddy | qoder | trae | egg); decides the "
+                              "tag the models carry in the client's picker. "
+                              "Guessed from the model list when omitted.")
     apply_p.add_argument("--models-from-gateway", action="store_true",
                          dest="models_from_gateway",
                          help="fetch the model list from /v1/models "
@@ -1814,10 +1890,21 @@ def main(argv=None):
                     "%s - retry, or pass --no-models to configure without "
                     "the model list and key validation" % exc)
 
+        # 当前提供商：命令行给了就用它；没给就从模型清单猜——清单里带免费源
+        # 标记（egg_source）的就是鸡蛋的免费车道 / Kilo 免费池。
+        provider = str(args.provider or "").strip().lower()
+        if not provider:
+            provider = "egg" if any(m.get("source") for m in models) \
+                else "workbuddy"
+        if provider not in PROVIDER_TAGS:
+            return _cli_error(
+                "unknown provider %r (known: %s)"
+                % (provider, ", ".join(sorted(PROVIDER_TAGS))))
+
         if args.dry_run:
             try:
                 built = plan(client_id, base_url, key, model=args.model,
-                             models=models, home=home)
+                             models=models, home=home, provider=provider)
             except AgentConfigError as exc:
                 return _cli_error(str(exc))
             if as_json:
@@ -1847,7 +1934,8 @@ def main(argv=None):
 
         try:
             result = integrate(state_dir, client_id, base_url, key,
-                               model=args.model, models=models, home=home)
+                               model=args.model, models=models, home=home,
+                               provider=provider)
         except AgentConfigError as exc:
             return _cli_error(str(exc))
         if as_json:

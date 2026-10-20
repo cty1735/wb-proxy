@@ -837,18 +837,7 @@ def pool_status():
     except Exception:
         return []
     try:
-        out = []
-        for pool in wb_egg_pools.pools():
-            out.append({
-                "id": pool.get("id"),
-                "name": pool.get("name"),
-                "protocol": pool.get("protocol"),
-                "base_url": pool.get("base_url"),
-                "enabled": bool(pool.get("enabled")),
-                "count": len(pool.get("models") or []),
-                "catalog_at": pool.get("catalog_at") or 0.0,
-            })
-        return out
+        return wb_egg_pools.pool_summaries()
     except Exception:
         return []
 
@@ -1068,9 +1057,16 @@ class EggUpstream(object):
 
     def _transform(self, line):
         if self._sse is not None:
+            # 转换器是一个带 feed() 的对象（wb_egg_pools.AnthropicStream）：
+            # 吃一整行原始 SSE，吐一段 OpenAI 形状的字节。
             try:
-                return self._sse(line) or b""
-            except Exception:
+                feed = getattr(self._sse, "feed", None)
+                out = feed(line) if feed is not None else self._sse(line)
+                return out or b""
+            except Exception as exc:
+                # 转换器自己炸了：这一行丢掉，别把整条流带崩（下游会看到
+                # 上游少了一个事件，但连接仍然是好的）。
+                _log("egg sse transform failed: %s" % exc)
                 return b""
         if not self._rename:
             return line
