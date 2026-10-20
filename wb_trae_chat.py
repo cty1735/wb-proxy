@@ -489,7 +489,10 @@ def iter_openai_chunks(resp, model):
 
     while not saw_done:
         try:
-            raw = resp.read(65536)
+            # read1()：只取「已经到达」的那一块，不等凑满 64KB。read(65536)
+            # 会一直阻塞到攒够 64KB 或连接关闭 —— 上游早早就把错误信封送来了
+            # 也要等到连接断才知道，客户端那边就是干等。
+            raw = resp.read1(65536) if hasattr(resp, "read1") else resp.read(65536)
         except TraeChatError:
             raise
         except Exception as exc:

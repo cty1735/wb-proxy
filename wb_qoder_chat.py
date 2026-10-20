@@ -1046,7 +1046,12 @@ def iter_openai_chunks(resp, model):
 
     while not saw_done:
         try:
-            raw = resp.read(65536)
+            # read1()：有就只取「已经到达」的那一块（chunked 下一个 chunk 的
+            # 数据），不等凑满 64KB。read(65536) 会一直阻塞到攒够 64KB 或
+            # 连接关闭 —— 上游 0.2 秒就把「排队中（10605 RESOURCE_LIMIT）」的
+            # 错误信封送来了，却要等上游断开（实测 3 分钟）才看得见，客户端
+            # 那边就是干等三分钟才报错。
+            raw = resp.read1(65536) if hasattr(resp, "read1") else resp.read(65536)
         except QoderChatError:
             raise
         except IncompleteRead as exc:
