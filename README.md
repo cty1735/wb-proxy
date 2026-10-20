@@ -2,7 +2,7 @@
 
 > **本项目仓库**：**[cty1735/wb-proxy](https://github.com/cty1735/wb-proxy)**
 
-> 本项目以 **[ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub)** 的 **v1.7.5** 为基座：**完整保留其全部原始能力与实现细节**（见下方「原始项目介绍」与后续技术章节），并在此基础上持续叠加改进与修复。
+> 本项目以 **[ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub)** 的 **v1.7.16** 为基座：**完整保留其全部原始能力与实现细节**（见下方「原始项目介绍」与后续技术章节），并在此基础上持续叠加改进与修复。
 >
 > 相对上游基座多做了什么，见下方「增量功能」。
 
@@ -10,27 +10,19 @@
 
 | 日期 | 功能 |
 | --- | --- |
-| 2026-10-19 | 顶部 WorkBuddy / Qoder / Trae 切的是网关当前提供商：账号、用量、模型清单与未绑定版本的 Key 跟着换，但**不改默认出口版本**（出口只由 ⇄ 控件切换）；左上角品牌位显示 `提供商 · 真实出口`，通知提示 `网关默认上游已切换并永久保存为: Qoder（国际版）`。这次把模型真正接上：外部客户端 `GET /v1/models` / `/models` 没有显式 `?provider=` 时默认取 `CURRENT_PROVIDER`（以前固定回落 WorkBuddy，切换后客户端选择器仍是旧模型）；同时 `/agents` 会标记「配置文件已指向本网关但没有集成记录」的客户端，切提供商时一并对它们重新应用模型表（手写/旧版本生成的 `opencode.json` 不会再停留在上一家的模型），通知会带上已同步数量。另修时序图在空区间（如刚切到没有请求的提供商）悬停时抛 `Cannot read properties of undefined (reading 'at')` 的问题：现在画「该区间暂无请求」空态并拆掉 hover，键盘读数同样短路 |
-| 2026-10-18 | 数据看板 KPI 环比徽章不再撑爆卡头：基数极小时百分比会冲到六位数（如 `▲ 426200.0%`），把标题挤成两行甚至溢出卡面；现在超过 999% 统一收成 `▲ >999%`（完整值放 `title` 悬停可看），徽章限宽 58% 并允许省略，标题始终单行。KPI 明细弹窗的「账号 / 模型」筛选条移到汇总磁贴上方，并同时控制磁贴口径（按账号 / 按模型重算请求数、Token、积分与金额，平均值按权重重新加权）；下拉选项改为始终取未筛选的全集，修掉「选中一个账号后其他账号从下拉里消失」的问题。明细里的账号行 / 模型行 / 「主要模型·主要账号」药丸都可直接点选筛选：悬停淡绿主题底，选中项带主题色底与左侧色条（药丸用主题色边框），再点一次取消；行支持 Tab 聚焦 + 回车 / 空格操作 |
-| 2026-10-18 | 看板「积分消耗」与「API 等价花费」排除限时免费模型：目录倍率 0（如国际版 `deepseek-v4.1-flash`、国内版 `step-5-preview`）的请求本来就不耗积分，上游也回报 0 积分，但折算侧仍会按 OpenRouter 等价价给它算出一笔钱，把免费额度算成支出（实测一天能虚增 ￥130+）。现在指标聚合、用量快照、时间序列、日积分护栏与最近请求全部按同一份本地目录（内置快照 + 本机桌面缓存，与模型清单的倍率徽章同一来源）判定，免费行只计 Token 与请求数、不计积分与金额；KPI 明细弹窗给每个模型标出计费类型（`限时免费` / 目录倍率），页脚与花费卡副行说明「已排除限时免费模型：…」，最近请求表里免费行的积分与估算价格两列显示「免费」（同一个模型 id 两个版本倍率不同时不给单一徽章，只标「部分免费」并说明口径） |
-| 2026-10-18 | 看板按设计系统规范补齐可用性与无障碍：顶栏新增**实时状态徽标**（实时 / 数据可能已过期 / 已暂停轮询 / 刷新失败，悬停看绝对时间）与**轮询控制**（暂停 / 继续 + 5 · 15 · 30 秒频率，频率写进 `localStorage`）；KPI 迷你趋势图与时序图支持**键盘逐点读数**（← / →、Home / End、Esc 复位），时序图另附无障碍摘要与屏幕阅读器专用数据表；状态变化走礼貌播报区（例行 5 秒轮询不播报），表格计数只在数字变化时播报；系统开启「减弱动态效果」时全部动画与过渡自动归零 |
-| 2026-10-18 | 「任务与福利」页新增「今日新增积分」卡：与「已获取福利总积分」同一份积分快照、同一判据（国内版签到 / 成长 / 活动 / 裂变等福利发放），只框定今天这一天，副标给出近 7 天与昨日；整卡（点击 / 回车 / 空格）打开「每日福利积分明细」弹窗——按发放日期分天列出每天领了多少，当天再按「账号 + 来源」合并成行（×N、时间窗、占当天比例条），顶部四个汇总（今日 / 昨日 / 近 7 天 / 快照可见合计），底部注明快照时刻与口径；快照超过 30 分钟未更新时进入本页会静默拉一次上游积分（每次会话 10 分钟节流，失败保持旧快照） |
-| 2026-10-18 | 数据看板 KPI 卡片可点开明细：Token / 请求数 / 生成速度 / 缓存命中 / API 等价花费 / 请求成功率六张卡（点击或键盘回车 / 空格）展开同一口径的「按账号 / 按模型」拆解——花费卡直接给出每个账号在各模型上花了多少、每个模型被哪些账号用掉，弹窗跟着轮询刷新；同时修正成功率口径为 **成功 /（成功 + 失败）**（原来用「成功 − 失败」除以成功，把失败多扣了一次），且切到当前没有请求的提供商时环形卡与「请求数」卡显示「—」/「该区间暂无请求」，不再挂着上一口径的数字 |
-| 2026-10-18 | Trae 添加账号改为与 WorkBuddy 一致的浏览器授权：网关签发 `native_ide` OAuth 链接（PKCE + `login_trace_id`），浏览器登录后 302 回本机 `/authorize`，服务端用 AuthCode 换 token 并入池；保留「读取本机客户端登录态」与「粘贴 JWT」兜底，远程访问可粘贴回调地址完成。Trae 国内版支持每日自动签到（150+50 积分）、积分余额查询与「任务与福利」页的自动签到开关 / 今日状态 / 手动补签；国际版签到接口未证实，只做 best-effort，失败不伪造成功 |
-| 2026-10-18 | 新增 Trae 提供商（国际版 trae.ai / 国内版 trae.cn）：看板头部 WorkBuddy / Qoder / Trae 三态切换，账号支持读取本机 Trae 客户端登录态（`tc` 加密信封就地解密）或手动粘贴 JWT；模型清单走 `get_detail_param`，聊天走 `llm_utils_chat`（OpenAI 兼容流式 / 非流式，含工具调用），账号、模型目录、用量与统计全部按提供商分账；没有显式提供商提示时 WorkBuddy 行为逐字节不变 |
-| 2026-10-18 | Trae 视图细节：Trae 按账号额度计费、没有 per-model 倍率，模型清单显示「按额度计费」；数据看板提供商筛选新增 Trae；一键配置 OpenCode 时把提供商钉进 `X-Provider` 请求头（Trae 国内的 `glm-5.2` 等与 WorkBuddy 重名，仅靠模型 id 会路由错），切回 WorkBuddy 自动摘掉该头；主题绿统一到顶部页签、国内版徽章 / 卡片 / 切换按钮、默认出口卡片、账号版本列与看板「国内」标签 |
-| 2026-10-17 | 修复「切到 Qoder 后客户端里还留着 WorkBuddy 模型」：一键配置写 OpenCode 的模型表改为整表替换（以前递归合并会把两家的模型并集写进配置文件）；切换提供商 / 网关版本时自动把已配置客户端的模型表同步成当前目录（应用后被手改过的客户端不动），并记住当初用的面板 Key |
-| 2026-10-17 | 切换提供商 / 国际国内版时模型跟着换：模型清单与「智能体配置」的模型下拉立即清空，按新的 provider + realm 重新取数（Qoder 国际版 / 国内版目录不同），并丢弃迟到的旧响应；切换期间顶部显示 0.6s 的 loading 胶囊 |
-| 2026-10-17 | 数据看板新增提供商筛选（全部 / WorkBuddy / Qoder）：KPI、Token 曲线、最近请求、性能分位、工作回溯与用量明细统一按所选口径取数；首次进入跟随头部网关切换，之后以下拉选择为准 |
-| 2026-10-17 | Qoder 模型清单显示 Credit 消耗倍率：直接读账号 `/model/list` 的 `price_factor`（与官网模型选择器一致），`0` 标「限时免费」；没有账号时用官网文档系数兜底并标注为参考值 |
-| 2026-10-17 | Qoder 聊天通道接入：`/v1/chat/completions`（含 `/v1/completions`）、`/v1/messages`、`/v1/responses` 在显式 `?provider=qoder`（或 `X-Provider`）下走 Qoder COSY 协议，与 WorkBuddy 共用流式 / 非流式响应管线；没有显式提示时按模型归属兜底（Qoder 目录认识、WorkBuddy 目录不认识 → Qoder）；看板的 analytics / timeseries / remaining / by-account 也接受 provider 过滤 |
-| 2026-10-17 | 修复 Windows 下检测不到已安装 Hermes：`_hermes_home` 现在按 Hermes 自身规则解析（`HERMES_HOME` → Windows `%LOCALAPPDATA%\hermes` / POSIX `~/.hermes`，含 `HERMES_DATA_DIR_SUFFIX`），此前只认 `~/.hermes`，原生 Windows 安装全部漏检 |
-| 2026-10-17 | 新增 Qoder 提供商：看板头部 WorkBuddy / Qoder 切换，账号列表、积分、用量统计、默认出口与模型清单全部跟随提供商（各提供商再分国内 / 国际）；Qoder 支持浏览器设备码与 PAT 登录、额度查询与模型清单；普通 WorkBuddy 流量不受影响 |
-| 2026-10-17 | 看板/接口 providers 维度落地：账号、积分、用量（`/usage`、`/usage/recent`、`/usage/perf`）、模型清单与目录刷新端点接受 `?provider=`（或 `X-Provider`）显式提示；用量日志按提供商分桶记账，WorkBuddy 旧数据与旧口径逐字节不变 |
-| 2026-10-16 | 看板主题改版：强调色改为亮橙，浅色背景纯白、深色背景纯黑，整体样式优化 |
-| 2026-10-16 | Hermes 智能体未选择模型时回退到首个可用模型 |
+| 2026-10-20 | 账号列表自适应：宽屏铺满、窄屏自动切卡片、操作按钮可换行，移除横向滚动；修复按钮文案与手机顶部出口溢出。 |
+| 2026-10-20 | 同步上游 v1.7.6–v1.7.16：后台模型别名、Anthropic 图片工具结果、身份对齐、403 停止换号、账号禁用模型、Key 并发/定址、模型限额与探针、免费额度回落、401 刷新、Web 日志、多主题；保留 Qoder/Trae。 |
+| 2026-10-19 | 顶部提供商切换同步账号、用量、模型清单与未绑定 Key；修复空时序图悬停报错。 |
+| 2026-10-18 | 看板 KPI 可展开按账号/模型明细并修正成功率；新增实时状态、轮询、键盘读数与减弱动画。 |
+| 2026-10-18 | 免费模型不计积分与等价花费；任务与福利新增“今日新增积分”和按天明细。 |
+| 2026-10-18 | 新增 Trae 国际/国内提供商，支持 OAuth、本机登录态/JWT 兜底、国内自动签到、额度计费与用量分账。 |
+| 2026-10-18 | OpenCode 模型表整表替换并钉住 X-Provider，避免与 WorkBuddy 重名模型路由错。 |
+| 2026-10-17 | 切换提供商/版本时模型清单立即重取；看板新增提供商筛选。 |
+| 2026-10-17 | 新增 Qoder 提供商、聊天通道与 provider 维度；模型倍率 0 标“限时免费”。 |
+| 2026-10-17 | 修复 Windows 下 Hermes 路径检测；未选模型时回退首个可用模型。 |
+| 2026-10-16 | 看板主题改为亮橙 + 纯白/纯黑。 |
 
-> **维护约定**：每次更新后，在表格**顶部新增一行**，用一句话写明相对基座新增 / 修改了什么，保持本文件与项目进展同步。
+> **维护约定**：每次更新后在表格**顶部新增一行**，只写核心新增 / 修改，控制在 1–2 句话；详细说明放到对应提交或 PR。
 
 ---
 
@@ -39,7 +31,7 @@
 ### WorkBuddy2API-Hub — 国际版、国内版多账号网关中枢
 
 <p align="center">
-  <a href="https://github.com/cty1735/wb-proxy/releases"><img src="https://img.shields.io/badge/Release-v1.7.5-2496ED?style=flat-square" alt="Version 1.6.20"></a>
+  <a href="https://github.com/cty1735/wb-proxy/releases"><img src="https://img.shields.io/badge/Release-v1.7.16-2496ED?style=flat-square" alt="Version 1.7.16"></a>
   <img src="https://img.shields.io/badge/Python-3.9+-blue.svg?style=flat-square" alt="Python">
   <img src="https://img.shields.io/badge/API-OpenAI_Compatible-412991?style=flat-square" alt="OpenAI API">
   <img src="https://img.shields.io/badge/Dual_Realm-Intl_&_CN-0DBD8B?style=flat-square" alt="Dual Realm">
@@ -47,11 +39,11 @@
   <img src="https://img.shields.io/badge/Vibe_Coding-100%25-ff69b4?style=flat-square" alt="Vibe Coding">
 </p>
 
-把腾讯 **[www.workbuddy.ai](https://www.workbuddy.ai)**（国际版）与 **[codebuddy.cn](https://www.codebuddy.cn)**（国内版）的原生服务封装成标准 OpenAI 兼容接口（Chat Completions / Responses）与原生 Anthropic Messages 接口，并补齐多账号调度与运维能力：
+把腾讯 **[www.workbuddy.ai](https://www.workbuddy.ai)**（国际版）与 **[codebuddy.cn](https://www.codebuddy.cn)**（国内版）的原生服务封装成标准 OpenAI 兼容接口（Chat Completions / Responses），并提供默认关闭的实验性 Anthropic Messages 适配；同时补齐多账号调度与运维能力：
 
 - **开箱即用**：绿色包自带精简 Python（Windows），双击脚本即启；
 - **双区域独立路由**：国际版 / 国内版各自配置与调度，看板一键切换，状态落盘；
-- **三协议**：Chat Completions、Responses API（Codex）、原生 Anthropic Messages（Claude Code / Anthropic SDK）；
+- **协议与风险**：默认支持 Chat Completions、Responses API（Codex）；Anthropic Messages（Claude Code / Anthropic SDK）经协议转换且缓存兼容性尚未验证，默认禁用，仅可显式选择启用；
 - **模型目录对齐官方桌面端**：剔除补全通道与专线变体，能力与规格按桌面端宣告，上游新模型无需发版即进 `/v1/models`；
 - **设备指纹隔离 (`derive_id`)**：以账号 UID 稳定派生机器码与会话标识，同一账号不漂移、不同账号互不关联；
 - **账号接入**：看板点链接走浏览器 OAuth；Windows 上还能直接从运行中的桌面客户端导入（加密 token 就地解密），macOS / Linux 可手动粘贴解码密钥后导入；
@@ -62,6 +54,8 @@
 - **Web 看板**：指标卡片、模型性能与用量大表、请求流水、账号与任务管理一屏可查。
 
 > ⚡ **Vibe Coding 产物**：本项目为 100% Vibe Coding 协同产物——人类开发者提出架构与业务意图，AI 助手端到端完成逆向分析、链路调度、WAF 指纹脱敏与界面编写。
+
+> 📌 **提交代码贡献前**：请先查看并**严格遵循**贡献手册 [`CONTRIBUTING.md`](CONTRIBUTING.md)——提交格式、测试门禁与端到端冒烟要求都在那里（AI / 智能体请特别注意其中的硬性规则节）。
 
 ---
 
@@ -171,7 +165,7 @@ python tests/run_all.py            # 全部套件
 python tests/run_all.py realm      # 只跑名字里含 realm 的
 ```
 
-- 148 个套件：109 个 Python + 39 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
+- 172 个套件：127 个 Python + 45 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
 - `tests/_mobile_check.py` 是独立的 Playwright 手机/桌面布局检查器（需自行安装 Playwright），按需手动运行，不在上面的套件集里。
 - CI（`.github/workflows/tests.yml`）跑同一条命令：Ubuntu 上 python 3.9 与 3.12（3.9 是本项目声称的最低版本），Windows 上 python 3.12；推送 `v*` tag 时额外断言 **tag == 源码版本**（`-ci` 演练 tag 豁免）。
 
@@ -273,6 +267,30 @@ Codex App 这类客户端会在 Responses 请求里声明 `web_search` / `web_fe
 - **还原**：byte-exact 回到首次接入前，网关新建的文件会被清理；若之后手动改过配置，看板会提示「检测到外部修改」，还原仍会覆盖回原件；
 - **密钥安全**：API Key 只写进客户端自己的本地配置目录（权限仅限当前系统用户），单文件超过 8MB 拒绝编辑。
 
+**DSH：思考档位与上下文窗口写在哪**（`~/.dsh/settings.yaml`）
+
+一键配置给 DSH 写的每个模型条目都带上网关宣告的规格，DSH 会据此生成它自己的选择器：
+
+```yaml
+    wb-proxy:
+      api: openai-completions
+      baseURL: http://127.0.0.1:8788/v1
+      compat: {thinkingFormat: openai, supportsReasoningEffort: true}
+      models:
+        - id: deepseek-v4.1-flash
+          contextWindow: 1000000     # 客户端认为的上下文容量（压缩 / 截断按它算）
+          maxTokens: 128000          # 单次输出上限
+          reasoningEfforts:          # 会话里可选的思考档位：键=档位，值=发给网关的拼写
+            low: low
+            high: high
+            max: max
+```
+
+- **思考程度在 DSH 里怎么选**：不在「设置 → 模型」页（DSH 有意不把 per-model 的档位放进 provider 级表单），而在**输入框旁的模型菜单**：菜单里有两行 `模型` 与 `推理等级`，点「推理等级」选档位；`/model` 弹窗只列模型、不列档位。选项完全来自上面的 `reasoningEfforts` —— 不声明就没有这一行（`/v1/models` 里的 `reasoning_efforts` DSH 不读，它只读 `id` / `name` / `contextWindow` / `maxTokens`）。
+- **上下文长度怎么改**：`contextWindow` 就是 DSH 用的容量。改客户端侧就编辑这一行（或在 DSH 的模型编辑界面里填），改网关侧就改 `/v1/models` 宣告的 `context_length`；两条链路现在共用 `wb_modelsdev.lookup` 的同一套取值（上游值 > 内建知识表 > 本地缓存 > 1M 默认），不会再出现「网关宣告 1M、一键配置写 300k」这种对不上的情况。
+- **上游钉死档位的模型**（目录里只有 `reasoning.effort`、没有 `supportedEfforts`）不写 `reasoningEfforts`：给了选择器也不会改变上游实际跑的档位。
+- **注意 profile 覆盖层**：若 `$DSH_HOME/profiles/<profile>/cordis.patch.yml` 里有 `- id: llm-pi-ai` 条目，它会**整体替换**该插件的配置（不是逐键合并）——此时 `settings.yaml` 里那份是被盖住的，模型清单与档位以 patch 那份为准，一键配置写进去不会生效。
+
 **在另一台机器上接入（远程 / 非本机）**：看板的一键配置运行在网关进程里，改的是**网关所在机器**的配置目录——所以它只在网关本机、且用 `127.0.0.1` 打开看板时可用（远程访问、容器 / OpenWrt 部署下按设计隐藏入口）。客户端装在别的电脑（网关跑在服务器 / NAS / 路由器上）时，改用自带的配置器 CLI：它在**客户端所在的机器**上运行，写本机配置、只通过 HTTP 从网关取模型表：
 
 ```bash
@@ -311,11 +329,50 @@ python wb_agents.py restore --client codex                 # 随时字节级还�
 - **来源**：上游自带的发放原因原样显示（如「Buddy 加油站签到」「成长计划奖励」「官方活动发放」）；国际版的 Bonus Pack 30/50 没有原因字段，按官方规则推断为「每日活跃奖励」（悬停里注明这是推断）。我们自己的**签到 / 每日活跃**记录也会按时间关联上去（取发放前 2 小时内最近的一次尝试，带成功 / 失败），悬停即可对上「本机动作：每日签到 10-10 00:07 成功」——一次发放到底由哪次动作带来，一眼可见；
 - 摘要行给出笔数、合计面额、合计剩余与**快照时刻**。接口 `GET /accounts/credits/grants` 只读内存里的积分快照、**不发上游请求**——数字的新鲜度取决于最近一次「一键刷新积分」（签到与每日活跃打卡也会顺带刷新它），所以要看最新的包先点账号页那个按钮。
 
+### 11. 单请求体体积限制（`WB_MAX_PAYLOAD_BYTES`）
+
+针对携带超长历史、大内联附件或高分辨率图片的请求，网关默认对单次请求体做上限保护（默认 16MB = `16777216` 字节），以防止异常巨大的请求挤占内存。若请求体超过上限，网关在解析前即直接返回 HTTP 413（`payload too large` 并附带 `gateway_hint` 说明）。
+
+如需调整上限（例如提升至 32MB）：
+- 设置环境变量 `WB_MAX_PAYLOAD_BYTES=33554432`（单位为字节）；
+- 此环境变量仅在进程启动时读取一次，修改后重启 `wb-proxy` 即可生效。
+
+---
+
+### 12. 后台模型重定向（`WB_BACKGROUND_MODEL_NAMES` / `WB_BACKGROUND_MODEL_TARGET`）
+
+桌面客户端（Codex 等）的模型选择器**只管主对话线程**。客户端内置的「模型路由配置」会把后台工作——记忆生成、环境建议、临时内容生成、自动化任务——送到自己硬编码的模型上，UI 里选什么免费模型都改不掉。这些请求带着同一把 Key 打到网关，于是在共享 Key 的部署里悄悄烧付费积分。
+
+网关在唯一的 POST 分发点（选账号之前）把这类模型名改写成免费目标：
+
+- `WB_BACKGROUND_MODEL_NAMES`：要拦截的模型名清单（逗号分隔，大小写不敏感），默认 `gpt-5.6-terra,gpt-5.6-luna,gpt-5.3-codex`；
+- `WB_BACKGROUND_MODEL_TARGET`：改写目标，默认 `deepseek-v4.1-flash`。
+
+改写只动 `model` 字段，请求体其余部分原样透传；命中与改写都会记一条 `alias: background model X -> Y` 日志，方便核对。OpenAI 形状的两个路由（`/v1/chat/completions`、`/v1/responses`）与 Anthropic 形状的 `/v1/messages` 都覆盖。不需要时把名单设为空即可关闭。
+
+---
+
+### 13. 自签证书 / TLS 解密代理（WB_CA_BUNDLE）
+
+如果网关跑在公司代理、Clash/Surge 等 HTTPS 解密后面，或 macOS 上 Python 没有读到系统钥匙串里的根证书，上游请求会报 CERTIFICATE_VERIFY_FAILED: self-signed certificate in certificate chain，面板上的 OAuth 登录和账号测试会显示 502。把签发该证书的根证书导出为 PEM，然后设置 WB_CA_BUNDLE=/path/to/ca.pem（优先）或 SSL_CERT_FILE=/path/to/ca.pem，重启 wb-proxy。网关会在系统根证书之外追加这份 PEM，不关闭证书校验；证书错误也不再重试，日志和面板会直接给出这段提示。
+
+---
+
+### 14. 国内版上游地址（`WB_CN_CHAT_UPSTREAM`）
+
+国内版对话侧默认发往 `https://copilot.tencent.com`。网关跑在海外出口后面（代理软件的全局模式、海外服务器）时，到它的 TLS 握手会被复位，日志里是 `SSL: UNEXPECTED_EOF_WHILE_READING` 或 `WinError 10054`，国内版账号的对话、刷新 token、模型目录、签到与成长任务全部失败。`www.workbuddy.cn` 提供同一套接口且海外可达（官方桌面端当前即以它为 endpoint，VSCode 身分本来也走它）。
+
+- 设置 `WB_CN_CHAT_UPSTREAM=https://www.workbuddy.cn`，重启 `wb-proxy`；启动日志的 `realm` 行会显示新的出口，并多一行 `cn upstream: ... (WB_CN_CHAT_UPSTREAM)`；
+- 只改「往哪发」：`X-Domain` 仍用账号登录时记下的 domain，计费侧（`www.codebuddy.cn`）不变；
+- 不是 `http(s)://` 开头的值会被忽略并回落默认地址，启动日志给出提示；不设则行为与此前完全一致。
+
 ---
 
 ## 三、账号添加与管理
 
 打开看板 `http://127.0.0.1:8788/`，在「账号」区域操作。若上游对某账号的单个模型返回 429，账号行会显示受限模型与预计恢复时间（浏览器本地时间），该账号仍可用于其他模型；模型冷却只在当前进程内保留，重启清空。
+
+窗口探针管的是「已经撞到 429 之后」；想提前知道某条配额线有没有被打满，可在「设置 → 模型额度定时主动查询」勾选模型：网关每 6 小时为每个「账号 + 模型」发一个最小请求做体检，查到 429 就立刻记该模型的冷却并把重置时刻交给窗口探针，请求通了就说明还没到限额。一旦某个「账号 + 模型」已经有了登记的 429 记录，就停止定时查询（改由窗口探针负责），记录消失后自动恢复轮询；每次查询都会消耗该账号极少量额度，默认不勾选任何模型。
 
 ### 方式一：浏览器 OAuth 授权（推荐，免客户端）
 
@@ -359,16 +416,20 @@ export OPENAI_BASE_URL="http://127.0.0.1:8788/v1"
 export OPENAI_API_KEY="你在看板设置中添加并绑定的API_Key"
 ```
 
-**Claude Code / Anthropic SDK（原生 Anthropic Messages API）**
+**Claude Code / Anthropic SDK（实验性 Anthropic Messages 适配，默认禁用）**
+
+> ⚠️ **积分风险：默认拒绝调用。** 网关对外接受 Anthropic Messages，但对内将请求转换为 WorkBuddy 的 `/v2/chat/completions`；`cache_control` 被忽略。已有 [#367](https://github.com/ardeyouxipianyi/workbuddy2api-hub/issues/367) 报告长会话缓存命中率仅约 11%，单次消耗超过 100 积分。该问题的因果机制仍待定位，故暂时默认禁用整个 Anthropic Messages 入口，而不假装完全兼容。禁用时 `/v1/messages`、`/messages` 及对应 `count_tokens` 入口返回 Anthropic 格式的 HTTP 400（`invalid_request_error`），请求不会转发至上游。
+
+只有确认理解风险后，才在**网关服务端**显式设置 `WB_ENABLE_ANTHROPIC_MESSAGES=1` 并重启。Docker Compose 可在 `wb-proxy.environment` 中加入 `- WB_ENABLE_ANTHROPIC_MESSAGES=1`；其他环境则在启动网关前设置此环境变量。客户端配置示例：
 
 ```bash
 export ANTHROPIC_BASE_URL="http://127.0.0.1:8788"
 export ANTHROPIC_API_KEY="你在看板设置中添加并绑定的API_Key"
 ```
 
-网关原生实现 `/v1/messages`（流式与非流式）：`system`（字符串或文本块数组）、`text` / `image` / `document` / `tool_use` / `tool_result` 内容块双向转换，`tools` + `tool_choice`、`stop_sequences`、`metadata.user_id`、`thinking` / `output_config.effort` 全部映射到上游；流式输出是原生事件序列（`message_start` → `content_block_start` / `content_block_delta` → `content_block_stop` → `message_delta` → `message_stop`）；鉴权接受 `x-api-key` 或 `Authorization: Bearer`，错误一律用 Anthropic 的错误信封。
+实验性适配包含 `system`、`text`、`image`、`document`、`tool_use`、`tool_result`、`tools` 与 `tool_choice` 等字段转换，并将响应包装为 Anthropic 的流式事件序列或非流式消息。这不是向上游的原生 Anthropic 透传。
 
-边界：服务端工具（`web_search` 等）上游不支持，会被丢弃并在 system 里注明，不会伪造调用；`thinking` / `redacted_thinking` 块不回放（上游不提供可验证签名）；`top_k`、`cache_control`、`context_management` 与 `betas` 忽略；`/v1/messages/count_tokens` 返回的是网关的 CJK 感知估算值（与用量统计同一套估算器），**不是**官方分词器的精确值。
+已知边界：服务端工具（`web_search` 等）上游不支持，会被丢弃并在 system 里注明；`thinking` / `redacted_thinking` 历史块不回放；`top_k`、`cache_control`、`context_management` 与 `betas` 被忽略；`/v1/messages/count_tokens` 在显式启用后只提供网关的 CJK 感知估算值，**不是**官方分词器的精确值。
 
 ---
 
@@ -393,9 +454,13 @@ export ANTHROPIC_API_KEY="你在看板设置中添加并绑定的API_Key"
 | GET | / | Web 用量与任务监控看板 |
 | POST | /v1/chat/completions | 标准 Chat Completions 接口 |
 | POST | /v1/responses | Responses API 协议接口 |
-| POST | /v1/messages | 原生 Anthropic Messages 协议接口（流式 / 非流式，`x-api-key` 或 `Authorization` 鉴权） |
-| POST | /v1/messages/count_tokens | Anthropic 计数接口（CJK 感知估算值，非官方分词器） |
+| POST | /v1/messages | 实验性 Anthropic Messages 适配，默认禁用（HTTP 400）；需显式启用并承担缓存风险 |
+| POST | /v1/messages/count_tokens | 实验性 Anthropic 计数估算接口，随 Messages 入口默认禁用 |
 | GET | /v1/models | 官方对齐模型列表（含能力与规格宣告） |
+| GET | /u/\<ref\>/v1/models | 定址账号的模型清单：\<ref\> 支持完整 uid / uid 前 8 位 / 昵称，过滤该账号禁用模型 |
+| POST | /u/\<ref\>/v1/chat/completions | 定址调用：锁定该账号，不参与会话亲和 / 轮换 / 自动换号；账号不可用直接报错 |
+| POST | /u/\<ref\>/v1/responses | 定址 Responses API，语义同上 |
+| GET | /v1/balance-summary | 当前 API Key 所属区域的启用账号积分汇总；只读内存快照、不发上游请求，不返回账号身份 |
 | GET | /pricing | 定价状态：当前生效策略、上次/下次取价时间、未定价清单（分类 + 候选） |
 | POST | /pricing/refresh | 立即取一次价（需面板会话） |
 | POST | /pricing/mapping | 手填 / 清除「模型 → OpenRouter id」运行期映射，随后自动取价（需面板会话） |
@@ -409,7 +474,6 @@ export ANTHROPIC_API_KEY="你在看板设置中添加并绑定的API_Key"
 | GET | /scheduler | 定时调度器运行状态与排程日志 |
 | POST | /scheduler/trigger | 手动立即执行后台巡检保活 |
 | GET | /activity/history | 账号每日活动历史：签到与每日活跃的每一次真实尝试（`range` / `uid` / `task` / `result` / `limit`，最新在前） |
-
 | GET | /accounts/credits/grants | 积分获取历史：各账号积分包（发放时间 / 面额 / 剩余 / 到期 / 状态），只读内存快照、不发上游请求 |
 | GET | /usage/remaining | 剩余用量估算：每个账号 × 模型在当前 24h 窗口的已用 / 预算 / 剩余（预算取撞线账号的平均用量；需面板会话） |
 
@@ -421,7 +485,7 @@ export ANTHROPIC_API_KEY="你在看板设置中添加并绑定的API_Key"
 
 ### Unreleased
 
-已发布版本的完整记录（v1.4.5 ~ v1.7.5，含每版的 PR 归属）见 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
+已发布版本的完整记录（v1.4.5 ~ v1.7.16，含每版的 PR 归属）见 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
 
 ## 七、致谢与引用声明 (Credits & References)
 

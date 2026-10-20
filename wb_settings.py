@@ -368,12 +368,18 @@ def _clean_key_entry(entry):
     realm = str(entry.get("realm") or "").strip().lower()
     if realm not in REALMS:
         realm = ""
+    try:
+        concurrency = int(entry.get("concurrency_limit") or entry.get("max_concurrency") or 0)
+    except (TypeError, ValueError):
+        concurrency = 0
+    concurrency = max(0, concurrency)
     return {
         "id": str(entry.get("id") or secrets.token_hex(6)),
         "name": str(entry.get("name") or "").strip() or "未命名",
         "key": key,
         "realm": realm,
         "models": _clean_model_patterns(entry.get("models")),
+        "concurrency_limit": concurrency,
         "enabled": False if deleted_at else entry.get("enabled", True) is not False,
         "created_at": entry.get("created_at") or time.strftime("%Y/%m/%d %H:%M"),
         "deleted_at": deleted_at,
@@ -904,6 +910,83 @@ def set_credits_refresh_hours(accounts_dir, value):
     return hours
 
 
+#: 后台排程时段（CST 24 小时制）。默认值与旧版硬编码完全一致，老安装行为不变。
+DEFAULT_SCHEDULE_HOURS = {
+    "checkin": [9, 21],
+    "travel": [9, 21],
+    "keepalive": [22],
+    "cat": [1],
+}
+SCHEDULE_KEYS = ("checkin", "travel", "keepalive", "cat")
+
+
+def _normalize_hours(value):
+    """Coerce a list / comma string into sorted unique hours 0-23, or None."""
+    if isinstance(value, str):
+        raw = value.split(",")
+    elif isinstance(value, (list, tuple)):
+        raw = list(value)
+    else:
+        return None
+    out = set()
+    for item in raw:
+        if isinstance(item, bool):
+            continue
+        try:
+            hour = int(str(item).strip())
+        except (TypeError, ValueError):
+            continue
+        if 0 <= hour <= 23:
+            out.add(hour)
+    return sorted(out) if out else None
+
+
+def schedule_hours(accounts_dir):
+    """Background schedule hours, falling back per key to the legacy defaults.
+
+    Missing / invalid / out-of-range / empty entries fall back to the default
+    for that key, so a hand-edited settings.json cannot stop the scheduler.
+    Comma-separated strings are accepted like the other settings readers.
+    """
+    raw = load(accounts_dir).get("schedule")
+    if not isinstance(raw, dict):
+        raw = {}
+    out = {}
+    for key in SCHEDULE_KEYS:
+        hours = _normalize_hours(raw.get(key))
+        out[key] = hours if hours is not None else list(DEFAULT_SCHEDULE_HOURS[key])
+    return out
+
+
+def set_schedule_hours(accounts_dir, value):
+    """Persist a partial schedule update; returns the normalized full schedule.
+
+    Unknown keys are ignored. A supplied key must contain at least one valid
+    hour, otherwise ValueError is raised so the caller can return a readable
+    400 instead of storing a schedule that silently does nothing.
+    """
+    if not isinstance(value, dict):
+        raise ValueError("schedule must be an object")
+    with _lock:
+        data = load(accounts_dir)
+        current = data.get("schedule")
+        if not isinstance(current, dict):
+            current = {}
+        merged = {}
+        for key in SCHEDULE_KEYS:
+            if key in value:
+                hours = _normalize_hours(value.get(key))
+                if hours is None:
+                    raise ValueError("schedule.%s must contain hours 0-23" % key)
+                merged[key] = hours
+            else:
+                hours = _normalize_hours(current.get(key))
+                merged[key] = hours if hours is not None else list(DEFAULT_SCHEDULE_HOURS[key])
+        data["schedule"] = merged
+        save(accounts_dir, data)
+    return merged
+
+
 def section_max_height(accounts_dir):
     """Panel window height cap in pixels; 0 means no limit.
 
@@ -1247,6 +1330,36 @@ def set_prompt_config(accounts_dir, cfg):
     return clean
 
 
+def enable_anthropic_messages(accounts_dir):
+    """Whether Anthropic Messages compatibility layer is enabled via panel settings."""
+    return load(accounts_dir).get("enable_anthropic_messages") is True
+
+
+def set_enable_anthropic_messages(accounts_dir, enabled):
+    """Persist the Anthropic Messages toggle. Returns the stored boolean."""
+    enabled = bool(enabled)
+    with _lock:
+        data = load(accounts_dir)
+        data["enable_anthropic_messages"] = enabled
+        save(accounts_dir, data)
+    return enabled
+
+
+def free_model_credit_fallback(accounts_dir):
+    """Whether exhausted free models (deepseek-v4.1-flash) can fall back to credit siblings."""
+    return load(accounts_dir).get("free_model_credit_fallback") is True
+
+
+def set_free_model_credit_fallback(accounts_dir, enabled):
+    """Persist the free model credit fallback toggle. Returns the stored boolean."""
+    enabled = bool(enabled)
+    with _lock:
+        data = load(accounts_dir)
+        data["free_model_credit_fallback"] = enabled
+        save(accounts_dir, data)
+    return enabled
+
+
 def auto_switch_product(accounts_dir):
     """Whether an upstream 429 may rotate an account's outbound identity.
 
@@ -1266,6 +1379,47 @@ def set_auto_switch_product(accounts_dir, enabled):
         data["auto_switch_product"] = enabled
         save(accounts_dir, data)
     return enabled
+
+
+#: 出站身份自动切换允许落在哪些身份上（默认三条都允许，保持旧行为）。
+AUTO_SWITCH_PRODUCTS = ("workbuddy", "vscode", "cli")
+
+
+def auto_switch_products(accounts_dir):
+    """Allowed target identities for the 429 auto-switch.
+
+    Defaults to all three so an install that predates this setting keeps the
+    old behaviour. Unknown entries are dropped rather than failing the read.
+    """
+    raw = load(accounts_dir).get("auto_switch_products")
+    if not isinstance(raw, list):
+        return list(AUTO_SWITCH_PRODUCTS)
+    out = []
+    for item in raw:
+        if isinstance(item, str) and item in AUTO_SWITCH_PRODUCTS and item not in out:
+            out.append(item)
+    return out
+
+
+def set_auto_switch_products(accounts_dir, products):
+    """Persist the allowed auto-switch identities. Returns the stored list.
+
+    Raises ValueError for anything that is not a list of known product ids, so
+    the panel gets a readable 400 instead of silently storing garbage.
+    """
+    if not isinstance(products, list):
+        raise ValueError("auto_switch_products must be a list")
+    clean = []
+    for item in products:
+        if not isinstance(item, str) or item not in AUTO_SWITCH_PRODUCTS:
+            raise ValueError("unknown auto-switch product: %r" % (item,))
+        if item not in clean:
+            clean.append(item)
+    with _lock:
+        data = load(accounts_dir)
+        data["auto_switch_products"] = clean
+        save(accounts_dir, data)
+    return clean
 
 
 def remaining_priority_enabled(accounts_dir):
@@ -1522,6 +1676,108 @@ def set_daily_chat_model(accounts_dir, model):
     return model
 
 
+#: 网页通道一轮等多久（秒）的默认值。与 wb_accounts.WEB_TURN_TIMEOUT 同值：
+#: 没配过的部署保持既有行为，改过的部署按自己配的来。
+DAILY_CHAT_WEB_TIMEOUT_DEFAULT = 120
+#: 上限只是防手滑。每轮等待时间翻倍，配成几百秒会让单账号最坏情况跑到小时级。
+DAILY_CHAT_WEB_TIMEOUT_MAX = 3600
+#: 网页通道总共试几次（含第一轮）的默认值，与 wb_accounts.WEB_TURN_ATTEMPTS 同值。
+DAILY_CHAT_WEB_ATTEMPTS_DEFAULT = 3
+#: 上限同样只是防手滑：最坏等待是 base×(2^次数−1) 秒，5 次已经接近一小时。
+DAILY_CHAT_WEB_ATTEMPTS_MAX = 5
+
+
+def daily_chat_web_retry(accounts_dir):
+    """Whether a failed web-channel turn is tried again.
+
+    On unless the operator turns it off. The usual failure is a session that is
+    still ``working`` when the first wait runs out - slow, not broken - and the
+    daily activity is the only thing that earns the 30/50 credits, so giving up
+    on the first timeout silently loses the day. Off restores the old
+    single-attempt behaviour.
+    """
+    value = load(accounts_dir).get("daily_chat_web_retry")
+    return True if value is None else value is True
+
+
+def set_daily_chat_web_retry(accounts_dir, enabled):
+    """Persist the web-channel retry toggle. Returns the stored boolean."""
+    enabled = bool(enabled)
+    with _lock:
+        data = load(accounts_dir)
+        data["daily_chat_web_retry"] = enabled
+        save(accounts_dir, data)
+    return enabled
+
+
+def daily_chat_web_attempts(accounts_dir, default=None):
+    """How many times the web channel is tried in total, the first one included.
+
+    ``default`` is what an unset install gets, so a caller with its own
+    built-in default keeps it. Out-of-range or non-integer values fall back to
+    it too, so a hand-edited settings.json cannot park the sweep on one
+    account.
+    """
+    if default is None:
+        default = DAILY_CHAT_WEB_ATTEMPTS_DEFAULT
+    value = load(accounts_dir).get("daily_chat_web_attempts")
+    if (isinstance(value, bool) or not isinstance(value, int)
+            or value < 1 or value > DAILY_CHAT_WEB_ATTEMPTS_MAX):
+        return default
+    return value
+
+
+def set_daily_chat_web_attempts(accounts_dir, attempts):
+    """Persist the total number of tries. Returns the stored whole number."""
+    if isinstance(attempts, bool) or not isinstance(attempts, int):
+        raise ValueError("daily_chat_web_attempts must be a whole number")
+    if attempts < 1:
+        raise ValueError("daily_chat_web_attempts cannot be less than 1")
+    if attempts > DAILY_CHAT_WEB_ATTEMPTS_MAX:
+        raise ValueError("daily_chat_web_attempts cannot be more than %d"
+                         % DAILY_CHAT_WEB_ATTEMPTS_MAX)
+    with _lock:
+        data = load(accounts_dir)
+        data["daily_chat_web_attempts"] = attempts
+        save(accounts_dir, data)
+    return attempts
+
+
+def daily_chat_web_timeout(accounts_dir, default=None):
+    """Seconds to wait for the first web-channel turn; later tries double it.
+
+    ``default`` is what an unset install gets, so a caller that has its own
+    built-in default (the env-overridable ``WB_WEB_TURN_TIMEOUT``) keeps it
+    instead of being silently reset to 120 by this setting's existence.
+    Anything that is not a whole number in range also falls back to it, so a
+    hand-edited settings.json cannot make the scheduler hang on a huge value
+    or trip over a string.
+    """
+    if default is None:
+        default = DAILY_CHAT_WEB_TIMEOUT_DEFAULT
+    value = load(accounts_dir).get("daily_chat_web_timeout")
+    if (isinstance(value, bool) or not isinstance(value, int)
+            or value < 1 or value > DAILY_CHAT_WEB_TIMEOUT_MAX):
+        return default
+    return value
+
+
+def set_daily_chat_web_timeout(accounts_dir, seconds):
+    """Persist the per-attempt wait. Returns the stored whole number of seconds."""
+    if isinstance(seconds, bool) or not isinstance(seconds, int):
+        raise ValueError("daily_chat_web_timeout must be a whole number of seconds")
+    if seconds < 1:
+        raise ValueError("daily_chat_web_timeout cannot be less than 1")
+    if seconds > DAILY_CHAT_WEB_TIMEOUT_MAX:
+        raise ValueError("daily_chat_web_timeout cannot be more than %d"
+                         % DAILY_CHAT_WEB_TIMEOUT_MAX)
+    with _lock:
+        data = load(accounts_dir)
+        data["daily_chat_web_timeout"] = seconds
+        save(accounts_dir, data)
+    return seconds
+
+
 def local_web_tools(accounts_dir):
     """Whether the gateway runs web_search / web_fetch calls itself.
 
@@ -1675,6 +1931,28 @@ def set_update_check_enabled(accounts_dir, enabled):
     return enabled
 
 
+def window_probe(accounts_dir):
+    """是否在模型额度窗口重置时刻主动发探针请求，抢占新一轮计时。
+
+    上游的免费额度窗口按「首次请求」起算，打满后 429 会给出 `reset at`。
+    到点若无人请求，新一轮窗口就不会开始，额度一直空转。默认开启：这是
+    本网关把窗口起点钉在重置那一刻的唯一手段。关掉它的部署回到旧行为——
+    429 只记冷却，等真实请求自己撞上重置点。
+    """
+    value = load(accounts_dir).get("window_probe")
+    return True if value is None else value is True
+
+
+def set_window_probe(accounts_dir, enabled):
+    """Persist the window-probe switch. Returns the stored boolean."""
+    enabled = bool(enabled)
+    with _lock:
+        data = load(accounts_dir)
+        data["window_probe"] = enabled
+        save(accounts_dir, data)
+    return enabled
+
+
 def update_check_state(accounts_dir):
     """The last-check bookkeeping: when it ran, and the version it saw.
 
@@ -1717,6 +1995,49 @@ def record_update_check(accounts_dir, at=None, success=False, latest_version="")
         data[UPDATE_CHECK_STATE_KEY] = state
         save(accounts_dir, data)
     return update_check_state(accounts_dir)
+
+
+def _clean_quota_scan_models(value):
+    """Normalize the watch list into model ids in the order given.
+
+    Ids are kept verbatim (they are sent upstream as `model`), only trimmed and
+    de-duplicated; a hand-edited settings.json usually holds a comma-separated
+    string, so both shapes are accepted.
+    """
+    if isinstance(value, str):
+        raw = re.split(r"[,;\n]", value)
+    elif isinstance(value, (list, tuple, set)):
+        raw = list(value)
+    else:
+        return []
+    out = []
+    for item in raw:
+        name = str(item or "").strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def quota_scan_models(accounts_dir):
+    """Model ids the operator asked to watch, whether throttled or not.
+
+    The window probe only knows about a quota line once something hit its 429;
+    this list is how a line can be checked *before* it is exhausted, so hitting
+    the limit is discovered on an idle timer instead of mid-request. Empty means
+    the feature is off, which is what an install that predates the setting reads
+    back as.
+    """
+    return _clean_quota_scan_models(load(accounts_dir).get("quota_scan_models"))
+
+
+def set_quota_scan_models(accounts_dir, models):
+    """Replace the watch list. Returns the stored list."""
+    cleaned = _clean_quota_scan_models(models)
+    with _lock:
+        data = load(accounts_dir)
+        data["quota_scan_models"] = cleaned
+        save(accounts_dir, data)
+    return cleaned
 
 
 _SLOT_ID_RE = re.compile(r"^slot-(\d+)$")

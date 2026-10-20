@@ -11,17 +11,25 @@
   --fg:#1a1a1a; --dim:#737373; --dim-light:#a3a3a3;
   --accent:#2cb044; --accent-hover:#238f37; --accent-soft:rgba(44,176,68,.10);
   --accent2:#5e8c4f; --accent2-soft:rgba(94,140,79,.12);
+  --accent-selected-bg:rgba(44,176,68,.14); --bad-selected-bg:rgba(181,71,59,.12);
   --warn:#a0691c; --warn-soft:rgba(183,121,31,.12);
-  --think:#8a6a96; --think-soft:rgba(138,106,150,.10);
+  --think:#7d5c8a; --think-soft:rgba(125,92,138,.10);
   --bad:#b5473b; --bad-soft:rgba(181,71,59,.09);
   --shadow-sm:0 1px 2px 0 rgba(0,0,0,.05);
   --shadow:0 1px 2px 0 rgba(0,0,0,.04),0 4px 14px rgba(0,0,0,.06);
   --shadow-md:0 2px 6px 0 rgba(0,0,0,.06),0 12px 32px rgba(0,0,0,.10);
   --header-bg:rgba(255,255,255,.85);
+  --on-accent:#fff; --danger-bg:rgba(181,71,59,.14); --danger-border:rgba(181,71,59,.35);
+  --overlay-mask:rgba(15,23,42,.45); --terminal-bg:#16140f; --terminal-head:#1d1b15;
+  --terminal-border:#2b2820; --terminal-fg:#d6d3c9; --terminal-dim:#7c796f;
+  --terminal-error:#ef4444; --terminal-warn:#f59e0b; --terminal-ok:#10b981;
+  --chart-axis:#1e293b; --chart-text:#64748b; --chart-bar:#38bdf8; --chart-line:#a78bfa;
+  --summary-row-bg:rgba(37,99,235,.06); --toast-bad-bg:rgba(254,242,242,.98); --toast-warn-bg:rgba(255,251,235,.98);
   /* 页面左右留白：header 与 main 共用同一个值，窄屏收窄、宽屏封顶 28px，
      免得主区域两侧堆出一大片用不上的空白。 */
   --page-pad:clamp(14px,1.4vw,28px);
   --serif:ui-serif, Georgia, "Source Han Serif SC", "Noto Serif SC", "Songti SC", serif;
+  --radius-card:12px; --radius-control:8px; --radius-pill:12px;
   color-scheme:light;
 }
 [data-theme="dark"]{
@@ -29,6 +37,7 @@
   --line:#262626; --line-hover:#383838;
   --fg:#f5f5f5; --dim:#a3a3a3; --dim-light:#6b6b6b;
   --accent:#2cb044; --accent-hover:#3ec95a; --accent-soft:rgba(44,176,68,.16);
+  --accent-selected-bg:rgba(44,176,68,.20); --bad-selected-bg:rgba(217,123,114,.16);
   --accent2:#8fae78; --accent2-soft:rgba(143,174,120,.15);
   --warn:#d9b25f; --warn-soft:rgba(217,178,95,.15);
   --think:#bfa3cc; --think-soft:rgba(191,163,204,.15);
@@ -37,12 +46,21 @@
   --shadow:0 1px 2px 0 rgba(0,0,0,.5),0 4px 14px rgba(0,0,0,.45);
   --shadow-md:0 2px 6px 0 rgba(0,0,0,.55),0 12px 32px rgba(0,0,0,.6);
   --header-bg:rgba(0,0,0,.85);
+  --on-accent:#fff; --danger-bg:rgba(217,123,114,.15); --danger-border:rgba(217,123,114,.35);
+  --overlay-mask:rgba(0,0,0,.65); --terminal-bg:#16140f; --terminal-head:#1d1b15;
+  --terminal-border:#2b2820; --terminal-fg:#d6d3c9; --terminal-dim:#7c796f;
+  --terminal-error:#ef4444; --terminal-warn:#f59e0b; --terminal-ok:#10b981;
+  --chart-axis:#cbd5e1; --chart-text:#94a3b8; --chart-bar:#38bdf8; --chart-line:#c084fc;
+  --summary-row-bg:rgba(59,130,246,.12); --toast-bad-bg:rgba(69,10,10,.95); --toast-warn-bg:rgba(69,43,8,.95);
   color-scheme:dark;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);
   font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue","PingFang SC","Microsoft YaHei",sans-serif;
   -webkit-font-smoothing:antialiased;transition:background-color .25s ease,color .25s ease}
+.card,section.panel,#pageAnalytics .panel,#pageAnalytics .kpi,.modal{border-radius:var(--radius-card)}
+button,.btn,input,select,textarea,.chip,.range-btn,.badge,.tag{border-radius:var(--radius-control)}
+.pill,.chip.on,.theme-opt-check,.mini{border-radius:var(--radius-pill)}
 header{padding:16px var(--page-pad);border-bottom:1px solid var(--line);display:flex;
   align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
   position:sticky;top:0;background:var(--header-bg);backdrop-filter:blur(10px);z-index:10;box-shadow:var(--shadow-sm);
@@ -99,6 +117,13 @@ section{background:var(--panel);border:1px solid var(--line);border-radius:14px;
    区块自带的 padding-top 挪给吸顶的首行（它要盖住滚上来的内容），故置 0；
    首行的 margin 也折成 padding，否则吸顶后下方那条 margin 会漏出滚动内容。 */
 body.win-capped .main-page section{max-height:var(--win-max-h);overflow-y:auto;padding-top:0}
+/* 看板页的面板用 #pageAnalytics .panel{overflow:hidden}（ID 选择器）做圆角
+   裁剪，优先级压过上一条，限高模式下 section 的滚动被裁掉——内容超出限高
+   后既看不到也滚不动。这里把滚动权还给限高模式下的看板面板。 */
+body.win-capped #pageAnalytics section.panel{overflow-y:auto}
+/* 看板面板本身是唯一的纵向滚动上下文；pbody 只保留表格横向溢出。
+   overflow-y:clip 防止 overflow-x:auto 按 CSS 规则隐式生成第二根纵向滚动条。 */
+body.win-capped #pageAnalytics section.panel .pbody{overflow-y:clip!important;max-height:none!important;overscroll-behavior:auto}
 body.win-capped .main-page section>:first-child{position:sticky;top:0;z-index:3;
   background:var(--panel);padding-top:18px;margin-bottom:0!important;padding-bottom:14px}
 body.win-capped #logTerminalBody{max-height:var(--win-max-h)}
@@ -106,6 +131,13 @@ section h2{margin:0 0 14px;font-size:13px;font-weight:700;color:var(--dim);
   text-transform:uppercase;letter-spacing:.6px}
 section h2 em{color:var(--fg);font-style:normal;text-transform:none;letter-spacing:0;margin-left:6px}
 table{width:100%;border-collapse:collapse;font-size:13px}
+/* 网关模型清单：固定列布局 + 百分比列宽 → 占满整行、消除右侧空位；
+   单元格 nowrap 防止长模型 ID / 思考档位换行，超长用省略号兜底。 */
+#modelsTable{table-layout:fixed}
+#modelsTable th,#modelsTable td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#modelsTable td[data-label="思考档位"]{white-space:nowrap}
+/* 采样参数：放不下时 chips 折行显示完整，不截断 */
+#modelsTable td[data-label="默认采样参数"]{white-space:normal}
 th,td{text-align:right;padding:9px 12px;border-bottom:1px solid var(--line);
   font-variant-numeric:tabular-nums;vertical-align:middle}
 th{color:var(--dim);font-weight:600;font-size:12px;white-space:nowrap;background:var(--panel2)}
@@ -187,9 +219,57 @@ th.sortable:focus-visible .sort-arrow.idle{opacity:1}
 .badge.warn{color:#a0691c;background:rgba(183,121,31,.14);border-color:rgba(183,121,31,.35)}
 .badge.bad{color:#a03c32;background:rgba(181,71,59,.14);border-color:rgba(181,71,59,.35)}
 .badge.mini{padding:1px 6px;font-size:10px}
-.cool-list{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
-.cool-pill{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:600;
+.cool-list{display:flex;flex-direction:column;align-items:stretch;gap:2px;margin-top:3px;max-width:100%;overflow:hidden;min-width:0}
+.cool-pill{display:inline-block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:600;
   color:#a0691c;background:rgba(183,121,31,.14);border:1px solid rgba(183,121,31,.35);white-space:nowrap}
+/* 桌面账号表的告警按模型逐条纵排；完整模型名/时间仍可通过 title 悬浮查看。 */
+table.account-cards td[data-label="账号"] .cool-list{display:flex;flex-direction:column;align-items:stretch;gap:2px;max-width:100%;overflow:hidden}
+table.account-cards td[data-label="账号"] .cool-pill{display:block;width:100%;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Wide desktop: the account table keeps all 11 columns, but widths are
+   percentages and the action column is allowed to wrap.  A fixed 232px
+   action cell used to be wider than its content minimum, which pushed the
+   table past the content area and produced a horizontal scrollbar. */
+@media (min-width:1751px){
+  #accounts .table-wrap{overflow-x:clip}
+  table.account-cards{table-layout:fixed;width:100%;min-width:0}
+  table.account-cards th,table.account-cards td{padding-left:8px;padding-right:8px}
+  table.account-cards th:nth-child(1){width:6%}
+  table.account-cards th:nth-child(2){width:14%}
+  table.account-cards th:nth-child(3){width:6%}
+  table.account-cards th:nth-child(4){width:11%}
+  table.account-cards th:nth-child(5){width:9%}
+  table.account-cards th:nth-child(6){width:5%}
+  table.account-cards th:nth-child(7){width:11%}
+  table.account-cards th:nth-child(8){width:5%}
+  table.account-cards th:nth-child(9){width:6%}
+  table.account-cards th:nth-child(10){width:5%}
+  table.account-cards th:last-child{width:22%;position:static;background:var(--panel2);box-shadow:none}
+  table.account-cards td.acct-actions{white-space:normal;min-width:0;width:auto;position:static;
+    background:transparent;box-shadow:none}
+  table.account-cards tbody tr:hover td.acct-actions{background:var(--panel2)}
+  table.account-cards .acct-actions-col{min-width:0;max-width:100%;align-items:stretch}
+  table.account-cards .acct-actions-row{flex-wrap:wrap;max-width:100%;justify-content:center}
+  table.account-cards .acct-actions-row .id-btn-label{white-space:nowrap}
+  table.account-cards .acct-actions button.mini{padding-left:7px;padding-right:7px}
+  table.account-cards td[data-label="版本"] .realm-badge-intl,
+  table.account-cards td[data-label="版本"] .realm-badge-cn{padding:2px 6px;font-size:10px}
+  table.account-cards td[data-label="状态"] .badge{padding:2px 6px;font-size:10px;max-width:100%;
+    overflow:hidden;text-overflow:ellipsis}
+  table.account-cards td[data-label="今日活动"],
+  table.account-cards td[data-label="积分"]{min-width:0}
+  table.account-cards td[data-label="今日活动"] > div,
+  table.account-cards td[data-label="积分"] > div{max-width:100%;flex-wrap:wrap;row-gap:2px}
+  table.account-cards td[data-label="今日活动"] .badge{max-width:100%;overflow:hidden;
+    text-overflow:ellipsis}
+  table.account-cards .slot-select{width:100%;max-width:100%;min-width:0}
+  table.account-cards .mini-select{width:100%;min-width:0;padding-left:2px;padding-right:2px}
+}
+@media (max-width:640px){
+  table.account-cards{min-width:0!important;table-layout:auto}
+  table.account-cards th:last-child,table.account-cards td.acct-actions{position:static;min-width:0;width:auto;z-index:auto;box-shadow:none}
+  table.account-cards td[data-label="积分"]{white-space:normal;align-items:flex-start}
+  table.account-cards .credit-stack{width:100%;align-items:flex-start}
+}
 .empty{color:var(--dim);text-align:center;padding:28px 0;font-size:13px}
 /* 价格悬停气泡：自绘，才能对齐单价并截图验收；pointer-events:none 让它不会
    抢走鼠标、把 hover 打断。 */
@@ -255,8 +335,67 @@ button.mini{padding:3px 9px;font-size:11px}
   padding:3px 6px;color:var(--fg);font:inherit;font-size:11px;font-variant-numeric:tabular-nums}
 .slot-input{width:100%;background:var(--panel2);border:1px solid var(--line);
   border-radius:8px;padding:6px 10px;color:var(--fg);font:inherit;font-size:13px}
+table.account-cards td[data-label="账号"]{padding-top:6px;padding-bottom:6px}
+table.account-cards td[data-label="账号"] .cool-list{max-width:100%;}
+table.account-cards td[data-label="账号"] .cool-pill{max-width:100%;overflow:hidden;text-overflow:ellipsis}
+/* 冷却 / 达日限额的整行（coolRow / limitRow）：跨满表头列数，文本完整可见，
+   不再有省略号，所以也不再需要 title 兜底。桌面下表格用 table-layout:fixed，
+   td 是普通单元格，只要去掉 ::before 的 data-label 装饰即可；窄屏走
+   data-cards 的 grid，td[colspan] 已跨满 6 栏。
+   这一行是账号行的续行（同一块内容），所以两行之间不能有分割线：
+   ① 这里不画 border-top；② 账号行让出 td 默认的 border-bottom（见 has-alert）。
+   间距也收紧到 1px，让胶囊贴住它所属的账号，而不是飘在下一块区域里；
+   左右留 12px 与首列文字对齐（归零会让胶囊比账号名更靠左，看着歪）。 */
+table.account-cards tr.cool-row td{border-top:none;padding:1px 12px 3px}
+table.account-cards tr.cool-row td::before{content:none}
+/* 有续行的账号行：交出底边框，否则 th,td 的默认 border-bottom 会在账号行与
+   胶囊行之间留一条实线，把同一块内容切成两块。 */
+table.account-cards tr.has-alert td{border-bottom:none}
+/* 悬停账号行时续行一起亮：视觉上它们是一块，不该只有上半截响应鼠标。
+   用相邻选择器而不是 ~：~ 会一路匹配到后面别的账号的续行，鼠标停在 A 号上
+   却把 B 号的胶囊也点亮。续行最多两条（冷却 + 达限），所以写两段就够。 */
+table.account-cards tr.has-alert:hover + tr.cool-row,
+table.account-cards tr.has-alert:hover + tr.cool-row + tr.cool-row{background:var(--panel2)}
+/* 整行放得下完整文案，胶囊恢复成自然宽度、不再截断。 */
+table.account-cards tr.cool-row .cool-list{flex-direction:row;flex-wrap:wrap;gap:4px 8px;max-width:none}
+table.account-cards tr.cool-row .cool-pill{display:inline-block;width:auto;max-width:none;overflow:visible;text-overflow:clip;white-space:nowrap;cursor:default}
+@media (max-width:640px){
+  /* 窄屏每个 tr 是一张独立卡片（border + 圆角 + 10px 外边距）。续行要跟账号
+     卡片拼成一块：负 margin 抵消上一张的 margin-bottom 并让边框重叠，自己只
+     留底部圆角、去掉上边框，就不会出现「两张卡片叠在一起」的割裂感。 */
+  table.account-cards tr.cool-row{margin-top:-11px;border-top:none;
+    border-radius:0 0 12px 12px;padding-top:8px;padding-bottom:8px}
+  table.account-cards tr.has-alert{margin-bottom:10px;border-bottom:none;
+    border-radius:12px 12px 0 0}
+  /* 窄屏 6 栏也够放一条，但一条放不下时允许换行而不是横向溢出卡片。 */
+  table.account-cards tr.cool-row .cool-pill{white-space:normal}
+}
+
 .acct-actions-col{display:flex;flex-direction:column;gap:5px;align-items:center;justify-content:center}
 .acct-actions-row{display:flex;gap:4px;justify-content:center}
+/* 账号列（accountRow）：账号名 + 备注 chip 一行、次要信息一行、报错一行。
+   次要信息与报错的完整值都在 data-tip 悬浮气泡里。 */
+.acct-name-row{display:flex;align-items:center;gap:6px;min-width:0}
+.credit-summary{white-space:nowrap}
+.credit-kind{font-size:11px;font-weight:500;color:var(--dim)}
+.credit-stack{display:flex;flex-direction:column;align-items:flex-start;gap:3px;white-space:nowrap;min-width:0}
+.credit-main{display:inline-flex;align-items:baseline;gap:6px;line-height:1.15}
+.credit-main b{font-size:13px;font-weight:700;color:var(--accent2)}
+.credit-main .credit-total{font-size:11px;font-weight:500;color:var(--dim)}
+.credit-meta{display:inline-flex;align-items:center;gap:4px;min-height:17px}
+.credit-meta .badge{font-size:10px;padding:1px 5px}
+@media (max-width:1100px){.realm-cards-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}.realm-cards-grid .gateway-ctrl{grid-column:span 2}}
+@media (max-width:720px){.realm-cards-grid{grid-template-columns:1fr!important}.realm-cards-grid .gateway-ctrl{grid-column:auto}.credit-summary{white-space:normal}}
+.acct-name{font-weight:600;font-size:14px;color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.note-chip{flex-shrink:0;font-size:10px;line-height:16px;padding:0 6px;border-radius:999px;cursor:pointer;color:var(--dim);border:1px dashed var(--line);white-space:nowrap}
+.note-chip:hover{color:var(--accent);border-color:var(--accent)}
+.note-chip.has{color:var(--accent2);border:1px solid transparent;background:var(--accent2-soft);max-width:120px;overflow:hidden;text-overflow:ellipsis}
+.acct-meta{color:var(--dim);font-size:11px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.acct-meta [data-tip]{cursor:help}
+.acct-meta [data-tip]:hover{color:var(--fg)}
+.acct-err{display:flex;align-items:center;gap:4px;color:var(--warn);font-size:11px;margin-top:1px;cursor:help;max-width:340px}
+.acct-err .err-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acct-err .err-info{flex-shrink:0;opacity:.7}
 .modal-mask{display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);
   backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:20px;z-index:100}
 .modal-mask.show{display:flex}
@@ -344,12 +483,14 @@ body.provider-trae #btnFetchCredits{display:none !important}
 
 .realm-card{
   background:var(--panel);border:1px solid var(--line);border-radius:12px;
-  padding:14px 18px;box-shadow:var(--shadow);cursor:pointer;transition:all .15s ease;
-  position:relative;display:flex;flex-direction:column;justify-content:space-between;min-height:104px;
+  padding:12px 16px;box-shadow:var(--shadow);cursor:pointer;transition:all .15s ease;
+  position:relative;display:flex;flex-direction:column;justify-content:space-between;min-height:84px;
 }
 .realm-card:hover{border-color:var(--line-hover);transform:translateY(-1px);box-shadow:var(--shadow-md)}
+/* 选中态：描边 + 淡色填充双通道。只靠 1px 描边在小屏或暗色下不够醒目，
+   填充色让「当前视图」一眼可辨（M3 selected-container 的做法）。 */
 .realm-card.active{
-  border-color:var(--accent);background:var(--panel);
+  border-color:var(--accent);background:var(--accent-selected-bg);
   box-shadow:0 0 0 1px var(--accent), var(--shadow-md);
 }
 /* 顶部「网关默认出口」：原本是网关页里的第三张卡片，现在搬到顶栏，只留标题、
@@ -389,6 +530,18 @@ body.provider-trae #btnFetchCredits{display:none !important}
 .gh-link:hover{color:var(--fg);border-color:var(--line-hover);
   background:var(--panel2);text-decoration:none;box-shadow:var(--shadow-md)}
 .gh-link svg{width:17px;height:17px;display:block;fill:currentColor}
+
+/* 顶栏图标按钮：控制台显隐 / 关闭服务，与 gh-link 同款几何。 */
+.hdr-icon-btn{display:inline-flex;align-items:center;justify-content:center;
+  width:34px;height:32px;border-radius:8px;border:1px solid var(--line);
+  background:var(--panel);color:var(--dim);box-shadow:var(--shadow-sm);
+  cursor:pointer;padding:0;transition:all .15s ease}
+.hdr-icon-btn:hover{color:var(--fg);border-color:var(--line-hover);
+  background:var(--panel2);box-shadow:var(--shadow-md)}
+.hdr-icon-btn svg{width:16px;height:16px;display:block}
+.hdr-icon-btn:disabled{opacity:.45;cursor:default}
+.hdr-icon-danger:hover{color:var(--bad);border-color:var(--bad)}
+@media (max-width:640px){.hdr-icon-btn{width:36px;height:36px}}
 
 /* 顶部右侧区域与主题切换组件 (黑白单色、极简线条Outline、符合规范) */
 .header-right{display:flex;align-items:center;gap:10px}
@@ -443,6 +596,7 @@ body.provider-trae #btnFetchCredits{display:none !important}
 @keyframes switchSpin{to{transform:rotate(360deg)}}
 .theme-option.active{font-weight:600;color:var(--accent)}
 .theme-option.active .theme-opt-icon{color:var(--accent)}
+.theme-sep{height:1px;background:var(--line);margin:4px 6px}
 .lang-btn{
   display:inline-flex;align-items:center;justify-content:center;
   min-width:34px;height:32px;padding:0 8px;border-radius:8px;border:1px solid var(--line);
@@ -459,7 +613,7 @@ body.provider-trae #btnFetchCredits{display:none !important}
 
 [data-theme="dark"] .badge.ok{color:#9dbb87;background:rgba(143,174,120,.16);border-color:rgba(143,174,120,.34)}
 [data-theme="dark"] .badge.s{color:#8ab4d9;background:rgba(106,155,204,.18);border-color:rgba(106,155,204,.36)}
-[data-theme="dark"] .badge.off{color:#a5a29a;background:rgba(165,162,154,.14);border-color:rgba(165,162,154,.24)}
+[data-theme="dark"] .badge.off{color:var(--terminal-fg);background:rgba(165,162,154,.14);border-color:rgba(165,162,154,.24)}
 [data-theme="dark"] .badge.warn{color:#d9b25f;background:rgba(217,178,95,.16);border-color:rgba(217,178,95,.35)}
 [data-theme="dark"] .badge.bad{color:#d97b72;background:rgba(217,123,114,.16);border-color:rgba(217,123,114,.35)}
 [data-theme="dark"] .cool-pill{color:#d9b25f;background:rgba(217,178,95,.18);border-color:rgba(217,178,95,.38)}
@@ -553,19 +707,19 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 .key-row-switch{min-height:0}
 .log-line{display:flex;align-items:flex-start;gap:8px;padding:3px 6px;border-radius:4px;font-family:Consolas,Monaco,'Courier New',monospace;font-size:12px;line-height:1.55;transition:background .1s}
 .log-line:hover{background:rgba(255,255,255,.05)}
-.log-ts{color:#7c796f;font-variant-numeric:tabular-nums;flex-shrink:0;user-select:none}
+.log-ts{color:var(--terminal-dim);font-variant-numeric:tabular-nums;flex-shrink:0;user-select:none}
 .log-lvl{font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;flex-shrink:0;text-align:center;min-width:46px;user-select:none}
 .log-lvl.lvl-INFO{background:rgba(106,155,204,.22);color:#8ab4d9}
 .log-lvl.lvl-WARN{background:rgba(217,178,95,.2);color:#d9b25f}
 .log-lvl.lvl-ERROR{background:rgba(217,123,114,.22);color:#e0948c}
-.log-lvl.lvl-DEBUG{background:rgba(165,162,154,.2);color:#a5a29a}
-.log-tag{font-size:11px;font-weight:600;padding:1px 5px;border-radius:3px;flex-shrink:0;background:rgba(165,162,154,.14);color:#a5a29a;user-select:none}
+.log-lvl.lvl-DEBUG{background:rgba(165,162,154,.2);color:var(--terminal-fg)}
+.log-tag{font-size:11px;font-weight:600;padding:1px 5px;border-radius:3px;flex-shrink:0;background:rgba(165,162,154,.14);color:var(--terminal-fg);user-select:none}
 .log-tag.tag-chat{background:rgba(191,163,204,.18);color:#c5a3d1}
 .log-tag.tag-scheduler{background:rgba(143,174,120,.18);color:#9dbb87}
 .log-tag.tag-tasks{background:rgba(217,178,95,.18);color:#d9c07a}
 .log-tag.tag-accounts{background:rgba(138,180,217,.18);color:#8ab4d9}
 .log-tag.tag-auth{background:rgba(224,148,140,.18);color:#e0948c}
-.log-tag.tag-system{background:rgba(124,121,111,.2);color:#a5a29a}
+.log-tag.tag-system{background:rgba(124,121,111,.2);color:var(--terminal-fg)}
 /* 细分出来的模块标签各有配色；catalog/auth 早先就被推断出来，只是一直没有
    自己的颜色，和 system 的灰底混在一起。 */
 .log-tag.tag-catalog{background:rgba(143,186,173,.18);color:#8fbaad}
@@ -576,12 +730,16 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 .log-tag.tag-update{background:rgba(156,182,216,.18);color:#9cb6d8}
 .log-tag.tag-usage{background:rgba(148,195,179,.18);color:#94c3b3}
 .log-tag.tag-webtools{background:rgba(181,194,118,.18);color:#b5c276}
-.log-msg{color:#d6d3c9;flex:1;word-break:break-all;white-space:pre-wrap}
-.log-empty{padding:48px 24px;text-align:center;color:#7c796f;font-size:13px;font-family:inherit}
+.log-msg{color:var(--terminal-fg);flex:1;word-break:break-all;white-space:pre-wrap}
+.log-empty{padding:48px 24px;text-align:center;color:var(--terminal-dim);font-size:13px;font-family:inherit}
 /* ===== Phone: ≤640px ===== */
 @media (max-width: 640px){
   header{padding:10px 12px;gap:8px}
   .header-left{width:auto;flex:1;gap:8px;min-width:0}
+  /* 网关默认出口这条在手机上内容比剩余宽度还长，允许它独占一行并把
+     切换按钮折到下一行，否则整页会多出 8px 的横向滚动。 */
+  .gw-exit{flex:1 1 100%;min-width:0;flex-wrap:wrap;gap:6px}
+  .gw-exit-btn{flex:1 1 100%;white-space:normal;text-align:center}
   .header-right{display:flex;align-items:center;gap:6px;order:2}
   h1{font-size:15px;flex:1;min-width:0}
   h1 span{font-size:11px;margin-left:6px}
@@ -615,6 +773,9 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
   table.limits-cards td.limit-name{display:block;padding-bottom:6px}
   table.data-cards td[colspan]{grid-column:span 6;justify-content:center;text-align:center!important}
   table.data-cards td[colspan]::before{content:none}
+  /* 冷却 / 达限整行走左对齐：它属于账号卡片的一部分，跟账号名对齐才像同一块
+     内容；居中会让它看起来是表格的一条汇总横幅。 */
+  table.account-cards tr.cool-row td{justify-content:flex-start;text-align:left!important}
   /* Account card: grouped layout */
   table.account-cards td:nth-child(1){order:1;grid-column:span 3;justify-content:flex-start}
   table.account-cards td:nth-child(1)::before,
@@ -668,6 +829,74 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
   .modal-ft{padding:12px 14px;flex-wrap:wrap}
   .modal-ft button{flex:1;min-height:38px}
   .modal table td, .modal table th{padding:7px 8px}
+}
+/* ===== Account table: card layout before the 11 columns get squeezed =====
+   The desktop table needs roughly 1150px to stay readable.  When the content
+   column (viewport minus the left app nav and the right page nav) falls below
+   that, switch to the same card layout the phone breakpoint uses instead of
+   leaving a horizontal scrollbar under the table. */
+@media (max-width:1750px){
+  #accounts .table-wrap{overflow:visible}
+  #accounts table.account-cards{display:block;width:100%;min-width:0!important;table-layout:auto}
+  #accounts table.account-cards thead{display:none}
+  #accounts table.account-cards tbody{display:block}
+  #accounts table.account-cards tr{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));
+    gap:5px 8px;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:12px;margin-bottom:10px;box-shadow:var(--shadow-sm)}
+  #accounts table.account-cards td{display:flex;align-items:baseline;justify-content:space-between;
+    gap:12px;grid-column:span 6;border:none;padding:1px 0;text-align:left!important;
+    font-variant-numeric:tabular-nums;min-width:0;overflow-wrap:anywhere;word-break:break-word}
+  #accounts table.account-cards td::before{content:attr(data-label);color:var(--dim);font-size:11px;
+    font-weight:600;flex-shrink:0}
+  #accounts table.account-cards td:not([data-label])::before{content:none}
+  #accounts table.account-cards td[colspan]{grid-column:span 6;justify-content:center;text-align:center!important}
+  #accounts table.account-cards td[colspan]::before{content:none}
+  #accounts table.account-cards tr.cool-row td{grid-column:span 6;order:0;
+    justify-content:flex-start;text-align:left!important}
+  #accounts table.account-cards td:nth-child(1){order:1;grid-column:span 3;justify-content:flex-start}
+  #accounts table.account-cards td:nth-child(1)::before,
+  #accounts table.account-cards td:nth-child(2)::before,
+  #accounts table.account-cards td:nth-child(3)::before{content:none}
+  #accounts table.account-cards td:nth-child(2){order:3;grid-column:span 6;flex-direction:column;
+    align-items:flex-start;gap:2px}
+  #accounts table.account-cards td:nth-child(2) .acct-name-row{flex-wrap:wrap;max-width:100%}
+  #accounts table.account-cards td:nth-child(2) .acct-meta{width:100%;max-width:100%}
+  #accounts table.account-cards td:nth-child(2) .note-chip.has{max-width:min(240px,100%)}
+  #accounts table.account-cards td:nth-child(3){order:2;grid-column:span 3;justify-content:flex-end}
+  #accounts table.account-cards td:nth-child(4){order:4;grid-column:span 6;flex-direction:column;
+    align-items:stretch;gap:4px}
+  #accounts table.account-cards td:nth-child(4)::before{font-size:10px}
+  #accounts table.account-cards td:nth-child(5){order:5;grid-column:span 6}
+  #accounts table.account-cards td:nth-child(6),
+  #accounts table.account-cards td:nth-child(7),
+  #accounts table.account-cards td:nth-child(8),
+  #accounts table.account-cards td:nth-child(9),
+  #accounts table.account-cards td:nth-child(10){order:6;grid-column:span 2;
+    flex-direction:column-reverse;align-items:center;justify-content:center;gap:0;padding:4px 0;
+    background:var(--panel2);border-radius:8px}
+  #accounts table.account-cards td:nth-child(6)::before,
+  #accounts table.account-cards td:nth-child(7)::before,
+  #accounts table.account-cards td:nth-child(8)::before,
+  #accounts table.account-cards td:nth-child(9)::before,
+  #accounts table.account-cards td:nth-child(10)::before{font-size:10px}
+  #accounts table.account-cards td.acct-actions{order:7;grid-column:span 6;justify-content:flex-start}
+  #accounts table.account-cards td.acct-actions::before{content:none}
+  #accounts table.account-cards .acct-actions-col{flex-direction:row;flex-wrap:wrap;
+    align-items:flex-start;justify-content:flex-start;gap:6px;min-width:0;max-width:100%}
+  #accounts table.account-cards .acct-actions-row{flex-wrap:wrap;gap:6px;max-width:100%}
+  #accounts table.account-cards .acct-actions button.mini{min-height:32px;padding:6px 12px}
+  #accounts table.account-cards .slot-select{max-width:100%;width:100%}
+  #accounts table.account-cards td[data-label="积分"] .credit-stack{white-space:normal}
+  #accounts table.account-cards tr.cool-row{margin-top:-11px;border-top:none;
+    border-radius:0 0 12px 12px;padding-top:8px;padding-bottom:8px}
+  #accounts table.account-cards tr.has-alert{margin-bottom:10px;border-bottom:none;
+    border-radius:12px 12px 0 0}
+  #accounts table.account-cards tr.has-alert:hover + tr.cool-row,
+  #accounts table.account-cards tr.has-alert:hover + tr.cool-row + tr.cool-row{background:var(--panel2)}
+  #accounts table.account-cards tr.cool-row .cool-list{flex-direction:row;flex-wrap:wrap;
+    gap:4px 8px;max-width:none}
+  #accounts table.account-cards tr.cool-row .cool-pill{display:inline-block;width:auto;max-width:none;
+    overflow:visible;text-overflow:clip;white-space:normal}
 }
 /* ===== Small phone: ≤400px ===== */
 @media (max-width: 400px){
@@ -822,7 +1051,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 #pageAnalytics .ring .hole span{font-size:9px;color:var(--dim)}
 
 
-#pageAnalytics .recent-list{display:flex;flex-direction:column;max-height:236px;overflow-y:auto}
+#pageAnalytics .recent-list{display:flex;flex-direction:column;max-height:260px;overflow-y:auto;padding-right:2px}
 #pageAnalytics .recent-item{
   display:grid;grid-template-columns:54px minmax(0,1fr) auto;gap:10px;align-items:baseline;
   font-size:11px;padding:5.5px 0;border-bottom:1px dashed var(--line);
@@ -846,10 +1075,13 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 #pageAnalytics .panel{
   background:var(--panel);border:1px solid var(--line);border-radius:12px;
   box-shadow:var(--shadow);margin-bottom:10px;overflow:hidden;
+  transition:border-color .15s ease,box-shadow .15s ease;
 }
+#pageAnalytics .panel:hover{border-color:var(--line2);box-shadow:var(--shadow-md)}
 #pageAnalytics .phead{
   display:flex;align-items:center;gap:10px;flex-wrap:wrap;
-  padding:9px 14px 7px;
+  padding:9px 14px 7px;border-bottom:1px solid var(--line);
+  background:linear-gradient(to bottom,var(--panel),var(--panel2));
 }
 #pageAnalytics .phead h2{
   margin:0;font-size:12.5px;font-weight:650;letter-spacing:.01em;
@@ -860,7 +1092,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 #pageAnalytics .pbody{padding:0 14px 11px}
 
 
-#pageAnalytics .maingrid{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,6fr);gap:10px;margin-bottom:10px}
+#pageAnalytics .maingrid{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,6fr);gap:10px;margin-bottom:10px;align-items:stretch}
 #pageAnalytics .maingrid .panel{margin-bottom:0}
 @media (max-width:1150px){#pageAnalytics .maingrid{grid-template-columns:1fr}}
 
@@ -920,6 +1152,18 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 #pageAnalytics .dimtabs button.on{background:var(--panel);color:var(--fg);font-weight:650;box-shadow:var(--shadow);border:1px solid var(--line)}
 #pageAnalytics .dimtabs .cnt{font-size:10.5px;color:var(--dim2);background:var(--panel2);border-radius:20px;padding:0 6px;line-height:16px}
 #pageAnalytics .dimtabs button.on .cnt{background:var(--accent-soft);color:var(--accent)}
+#pageAnalytics .dim-columns-btn{border:1px solid var(--line);background:var(--panel);color:var(--dim);font-size:11px;padding:4px 9px;border-radius:7px;cursor:pointer}
+#pageAnalytics .dim-columns-btn:hover,#pageAnalytics .dim-columns-btn[aria-expanded="true"]{color:var(--fg);border-color:var(--accent);background:var(--accent-soft)}
+#pageAnalytics .phead{position:relative}
+#pageAnalytics .dim-columns-menu{position:absolute;right:14px;top:34px;z-index:10;min-width:180px;padding:7px;background:var(--panel);border:1px solid var(--line);border-radius:9px;box-shadow:var(--shadow-lg)}
+#pageAnalytics .dim-columns-menu[hidden]{display:none}
+#pageAnalytics .dim-columns-menu .dim-col-item{display:flex;align-items:center;gap:7px;padding:4px 5px;font-size:11px;color:var(--fg);cursor:grab;border-radius:5px}
+#pageAnalytics .dim-columns-menu .dim-col-item:hover{background:var(--panel2)}
+#pageAnalytics .dim-columns-menu .dim-col-item.locked{cursor:default;color:var(--dim)}
+#pageAnalytics .dim-columns-menu .dim-col-grip{color:var(--dim2);font-size:12px;width:12px}
+#pageAnalytics .dim-columns-menu .dim-col-item input{accent-color:var(--accent)}
+#pageAnalytics table.dim th[data-dim-col]{cursor:grab;user-select:none}
+#pageAnalytics table.dim th[data-dim-col]:hover{background:var(--panel2);color:var(--fg)}
 
 #pageAnalytics table.dim{width:100%;border-collapse:collapse;font-size:12px}
 #pageAnalytics table.dim th{
@@ -929,7 +1173,8 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 #pageAnalytics table.dim th.num{text-align:right}
 #pageAnalytics table.dim td{padding:6.5px 8px;border-bottom:1px solid var(--line);vertical-align:middle;font-variant-numeric:tabular-nums}
 #pageAnalytics table.dim tbody tr{transition:background .12s ease}
-#pageAnalytics table.dim tbody tr:hover{background:var(--panel2)}
+#pageAnalytics table.dim tbody tr:hover{background:var(--panel2);box-shadow:inset 2px 0 0 var(--accent)}
+#pageAnalytics table.dim thead th{background:var(--panel2)}
 #pageAnalytics table.dim tbody tr:last-child td{border-bottom:0}
 #pageAnalytics td.num{text-align:right;white-space:nowrap}
 #pageAnalytics th.num{text-align:right}
@@ -1222,6 +1467,25 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
    external or deferred script would run too late to avoid the flash. */
 (function(){
   var THEME_KEY = 'wb-theme';
+  var THEME_STYLE_KEY = 'wb-theme-style';
+  var THEME_STYLES = {
+    green: {label:'Green', light:{"--bg":"#ffffff","--panel":"#ffffff","--panel2":"#f5f5f5","--panel3":"#ededed","--line":"#e7e7e7","--line2":"#d4d4d4","--line-hover":"#d4d4d4","--fg":"#1a1a1a","--fg2":"#404040","--dim":"#737373","--dim2":"#a3a3a3","--dim-light":"#a3a3a3","--accent":"#2cb044","--accent-hover":"#238f37","--accent-soft":"rgba(44,176,68,.10)","--accent-selected-bg":"rgba(44,176,68,.14)","--accent-2":"#4ccb63","--accent2":"#5e8c4f","--accent2-soft":"rgba(94,140,79,.12)","--green":"#5e8c4f","--green-soft":"rgba(94,140,79,.12)","--blue":"#6a9bcc","--warn":"#a0691c","--warn-soft":"rgba(183,121,31,.12)","--gold":"#b7791f","--think":"#8a6a96","--think-soft":"rgba(138,106,150,.10)","--bad":"#b5473b","--bad-soft":"rgba(181,71,59,.09)","--red":"#b5473b","--shadow-sm":"0 1px 2px 0 rgba(0,0,0,.05)","--shadow":"0 1px 2px 0 rgba(0,0,0,.04),0 4px 14px rgba(0,0,0,.06)","--shadow-md":"0 2px 6px 0 rgba(0,0,0,.06),0 12px 32px rgba(0,0,0,.10)","--shadow-lg":"0 2px 6px rgba(0,0,0,.06), 0 12px 32px rgba(0,0,0,.12)","--header-bg":"rgba(255,255,255,.85)","--chart-bar":"#2cb044","--chart-bar-soft":"rgba(44,176,68,.55)","--chart-line":"#6a9bcc","--hm0":"#f0f0f0","--hm1":"#e6f7ea","--hm2":"#b9e9c4","--hm3":"#74d18a","--hm4":"#2cb044"}, dark:{"--bg":"#000000","--panel":"#0e0e0e","--panel2":"#1a1a1a","--panel3":"#242424","--line":"#262626","--line2":"#383838","--line-hover":"#383838","--fg":"#f5f5f5","--fg2":"#d4d4d4","--dim":"#a3a3a3","--dim2":"#6b6b6b","--dim-light":"#6b6b6b","--accent":"#2cb044","--accent-hover":"#3ec95a","--accent-soft":"rgba(44,176,68,.16)","--accent-selected-bg":"rgba(44,176,68,.20)","--accent-2":"#3ec95a","--accent2":"#8fae78","--accent2-soft":"rgba(143,174,120,.15)","--green":"#8fae78","--green-soft":"rgba(143,174,120,.14)","--blue":"#8ab4d9","--warn":"#d9b25f","--warn-soft":"rgba(217,178,95,.15)","--gold":"#d9b25f","--think":"#bfa3cc","--think-soft":"rgba(191,163,204,.15)","--bad":"#d97b72","--bad-soft":"rgba(217,123,114,.15)","--red":"#d97b72","--shadow-sm":"0 1px 2px 0 rgba(0,0,0,.5)","--shadow":"0 1px 2px 0 rgba(0,0,0,.5),0 4px 14px rgba(0,0,0,.45)","--shadow-md":"0 2px 6px 0 rgba(0,0,0,.55),0 12px 32px rgba(0,0,0,.6)","--shadow-lg":"0 2px 6px rgba(0,0,0,.3), 0 12px 32px rgba(0,0,0,.4)","--header-bg":"rgba(0,0,0,.85)","--chart-bar":"#3ec95a","--chart-bar-soft":"rgba(62,201,90,.5)","--chart-line":"#8ab4d9","--hm0":"#1a1a1a","--hm1":"#12331b","--hm2":"#1d5a2c","--hm3":"#277f3c","--hm4":"#3ec95a"}},
+    claude: {label:'Claude', light:{"--bg":"#efebe0","--panel":"#ffffff","--panel2":"#e9e5d6","--panel3":"#e0dbc9","--line":"#d5cfbc","--line-hover":"#c5bfab","--fg":"#1f1e1b","--dim":"#625f57","--dim-light":"#87847a","--accent":"#a14427","--accent-hover":"#8a3a20","--accent-soft":"rgba(161,68,39,.09)","--accent-selected-bg":"rgba(161,68,39,.14)","--accent2":"#497035","--accent2-soft":"rgba(73,112,53,.12)","--warn":"#a0691c","--warn-soft":"rgba(183,121,31,.12)","--think":"#7d5c8a","--think-soft":"rgba(125,92,138,.10)","--bad":"#b5473b","--bad-soft":"rgba(181,71,59,.09)","--shadow-sm":"0 1px 2px 0 rgba(31,30,27,.05)","--shadow":"0 1px 2px 0 rgba(31,30,27,.05),0 4px 14px rgba(31,30,27,.04)","--shadow-md":"0 2px 6px 0 rgba(31,30,27,.06),0 12px 32px rgba(31,30,27,.09)","--header-bg":"rgba(239,235,224,.92)","--hm0":"#ece6db","--hm1":"#f3d5c1","--hm2":"#e8a98a","--hm3":"#d6846a","--hm4":"#b4533a"}, dark:{"--bg":"#1f1e1b","--panel":"#2d2c25","--panel2":"#38362f","--panel3":"#433f37","--line":"#4f4b42","--line-hover":"#5d584e","--fg":"#edebe3","--dim":"#a5a29a","--dim-light":"#9c9a90","--accent":"#e88a68","--accent-hover":"#f0967a","--accent-soft":"rgba(232,138,104,.14)","--accent-selected-bg":"rgba(232,138,104,.18)","--accent2":"#8fae78","--accent2-soft":"rgba(143,174,120,.15)","--warn":"#d9b25f","--warn-soft":"rgba(217,178,95,.15)","--think":"#bfa3cc","--think-soft":"rgba(191,163,204,.15)","--bad":"#d97b72","--bad-soft":"rgba(217,123,114,.15)","--shadow-sm":"0 1px 2px 0 rgba(0,0,0,.25)","--shadow":"0 1px 2px 0 rgba(0,0,0,.25),0 4px 14px rgba(0,0,0,.25)","--shadow-md":"0 2px 6px 0 rgba(0,0,0,.3),0 12px 32px rgba(0,0,0,.4)","--header-bg":"rgba(31,30,27,.92)","--hm0":"#2b2924","--hm1":"#3d352e","--hm2":"#5a3e30","--hm3":"#8a5a45","--hm4":"#c97250"}},
+    material: {label:'Material', light:{"--bg":"#fefbff","--panel":"#ffffff","--panel2":"#f5eff7","--panel3":"#ece6f0","--line":"#cac4d0","--line-hover":"#b4aab8","--fg":"#1d1b20","--dim":"#5b5b66","--dim-light":"#767680","--accent":"#6750a4","--accent-hover":"#4f378b","--accent-soft":"#eaddff","--accent-selected-bg":"#e8def8","--accent2":"#006a60","--accent2-soft":"#ccfbee","--warn":"#7e5260","--bad":"#b3261e","--bad-soft":"#f9dedc","--think":"#5e5891","--think-soft":"#e5dffa","--shadow-sm":"0 1px 2px 0 rgba(29,27,32,.15)","--shadow":"0 1px 2px 0 rgba(29,27,32,.18),0 1px 3px 1px rgba(29,27,32,.10)","--shadow-md":"0 2px 4px -1px rgba(29,27,32,.12),0 4px 6px 1px rgba(29,27,32,.10)","--header-bg":"rgba(254,251,255,.94)","--hm0":"#e8def8","--hm1":"#d3c2f1","--hm2":"#b8a1ec","--hm3":"#9a82e3","--hm4":"#6750a4"}, dark:{"--bg":"#141218","--panel":"#211f26","--panel2":"#2b2930","--panel3":"#36343b","--line":"#49454f","--line-hover":"#5b5963","--fg":"#e6e1e5","--dim":"#c4c5d0","--dim-light":"#928f9a","--accent":"#d0bcff","--accent-hover":"#b9a4fa","--accent-soft":"rgba(208,188,255,.24)","--accent-selected-bg":"rgba(208,188,255,.30)","--accent2":"#4ecdb4","--accent2-soft":"rgba(78,205,180,.24)","--warn":"#f2b8b4","--bad":"#f2b8b4","--bad-soft":"rgba(242,184,180,.24)","--think":"#cfc4f7","--think-soft":"rgba(207,196,247,.18)","--shadow-sm":"0 1px 2px 0 rgba(0,0,0,.30)","--shadow":"0 1px 2px 0 rgba(0,0,0,.40),0 1px 3px 1px rgba(0,0,0,.30)","--shadow-md":"0 2px 4px -1px rgba(0,0,0,.45),0 4px 6px 1px rgba(0,0,0,.32)","--header-bg":"rgba(20,18,24,.88)","--hm0":"#2b2930","--hm1":"#332e44","--hm2":"#3d3460","--hm3":"#4d4080","--hm4":"#d0bcff"}},
+    miuix: {label:'MiuiX', light:{"--bg":"#f6f7fa","--panel":"#ffffff","--panel2":"#eef0f4","--panel3":"#e2e6ee","--line":"#dde1e8","--line-hover":"#c9d0db","--fg":"#1f2024","--dim":"#5f6671","--dim-light":"#8c93a0","--accent":"#ff5c00","--accent-hover":"#ff7a33","--accent-soft":"rgba(255,92,0,.10)","--accent-selected-bg":"rgba(255,92,0,.18)","--accent2":"#07c160","--accent2-soft":"rgba(7,193,96,.12)","--warn":"#d48200","--bad":"#e53935","--bad-soft":"rgba(229,57,53,.10)","--think":"#7c4dff","--think-soft":"rgba(124,77,255,.10)","--shadow-sm":"0 1px 2px 0 rgba(31,32,36,.05)","--shadow":"0 2px 6px 0 rgba(31,32,36,.08)","--shadow-md":"0 6px 16px 0 rgba(31,32,36,.10)","--header-bg":"rgba(255,255,255,.85)","--hm0":"#ffece0","--hm1":"#ffd0b8","--hm2":"#ffb085","--hm3":"#ff8c4a","--hm4":"#ff5c00"}, dark:{"--bg":"#0e0f12","--panel":"#191b1f","--panel2":"#22252b","--panel3":"#2a2d34","--line":"#2e3239","--line-hover":"#3a3f48","--fg":"#f0f1f4","--dim":"#9aa0aa","--dim-light":"#7a8090","--accent":"#ff7a33","--accent-hover":"#ff9056","--accent-soft":"rgba(255,122,51,.18)","--accent-selected-bg":"rgba(255,122,51,.26)","--accent2":"#3ed984","--accent2-soft":"rgba(62,217,132,.20)","--warn":"#ffb852","--bad":"#ff6f6f","--bad-soft":"rgba(255,111,111,.16)","--think":"#a78bff","--think-soft":"rgba(167,139,255,.18)","--shadow-sm":"0 1px 2px 0 rgba(0,0,0,.40)","--shadow":"0 2px 6px 0 rgba(0,0,0,.55)","--shadow-md":"0 6px 18px 0 rgba(0,0,0,.60)","--header-bg":"rgba(14,15,18,.78)","--hm0":"#22252b","--hm1":"#332820","--hm2":"#4a2c20","--hm3":"#5c3220","--hm4":"#ff7a33"}}
+  };
+  var STYLE_GEOMETRY = {green:12, claude:12, material:14, miuix:20};
+  Object.keys(THEME_STYLES).forEach(function(id){
+    ['light','dark'].forEach(function(mode){
+      var v=THEME_STYLES[id][mode];
+      var r = STYLE_GEOMETRY[id] || 12;
+      v['--radius-card'] = r + 'px';
+      v['--radius-pill'] = (id === 'miuix' ? 16 : r) + 'px';
+      v['--radius-control'] = Math.max(6, Math.round(r*0.6)) + 'px';
+    });
+  });
+  function getStyle(){ try { var s=localStorage.getItem(THEME_STYLE_KEY); return THEME_STYLES[s] ? s : 'green'; } catch(e){ return 'green'; } }
+  function setStyleAttr(s){ document.documentElement.setAttribute('data-theme-style',s); }
   var mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
   function getPref(){
     try { return localStorage.getItem(THEME_KEY) || 'system'; } catch(e){ return 'system'; }
@@ -1233,16 +1497,34 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
 
   // 1. 初始化主题（防止闪烁）
   var savedTheme = getPref();
+  var savedStyle = getStyle();
   var resolvedTheme = resolve(savedTheme);
+  setStyleAttr(savedStyle);
   document.documentElement.setAttribute('data-theme', resolvedTheme);
   document.documentElement.setAttribute('data-theme-pref', savedTheme);
   document.documentElement.style.colorScheme = resolvedTheme;
+  applyStyle(savedStyle);
 
   // 2. 主题切换核心与UI同步逻辑
   var svgSun = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></svg>';
   var svgMoon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg>';
   var svgMonitor = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>';
 
+  function applyStyle(style){
+    if(!THEME_STYLES[style]) style = 'green';
+    var vars = THEME_STYLES[style][resolvedTheme === 'dark' ? 'dark' : 'light'];
+    setStyleAttr(style);
+    Object.keys(vars).forEach(function(k){ document.documentElement.style.setProperty(k, vars[k]); });
+    try { localStorage.setItem(THEME_STYLE_KEY, style); } catch(e){}
+    return style;
+  }
+  function updateStyleUI(style){
+    var menu = document.getElementById('themeDropdown');
+    if(!menu) return;
+    Array.prototype.forEach.call(menu.querySelectorAll('[data-theme-style-option]'), function(opt){
+      opt.classList.toggle('active', opt.getAttribute('data-theme-style-option') === style);
+    });
+  }
   function updateThemeUI(pref, resolved){
     var icon = document.getElementById('themeToggleIcon');
     var btn = document.getElementById('themeToggleBtn');
@@ -1262,12 +1544,39 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     if(btn) btn.title = '颜色主题: ' + label;
   }
 
+  window.applyStyle = function(style){
+    style = THEME_STYLES[style] ? style : 'green';
+    try { localStorage.setItem(THEME_STYLE_KEY, style); } catch(e){}
+    setStyleAttr(style);
+    var mode = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+    var vars = THEME_STYLES[style][mode];
+    Object.keys(vars).forEach(function(k){ document.documentElement.style.setProperty(k, vars[k]); });
+    updateStyleUI(style);
+    var analytics = document.getElementById('pageAnalytics');
+    if(analytics){
+      ['--bg','--panel','--panel2','--panel3','--line','--line2','--fg','--fg2','--dim','--dim2','--accent','--accent-2','--green','--green-soft','--gold','--red','--blue','--chart-bar','--chart-bar-soft','--chart-line','--hm0','--hm1','--hm2','--hm3','--hm4','--shadow','--shadow-lg'].forEach(function(k){
+        var source = {'--green':'--accent2','--gold':'--warn','--red':'--bad'}[k] || k;
+        analytics.style.setProperty(k, getComputedStyle(document.documentElement).getPropertyValue(source).trim());
+      });
+    }
+    return style;
+  };
+  window.selectStyle = function(style, evt){
+    if(evt){ evt.preventDefault(); evt.stopPropagation(); }
+    window.applyStyle(style);
+    var menu = document.getElementById('themeDropdown');
+    var btn = document.getElementById('themeToggleBtn');
+    if(menu) menu.classList.remove('open');
+    if(btn) btn.setAttribute('aria-expanded', 'false');
+    return false;
+  };
   window.applyTheme = function(pref){
     var resolved = resolve(pref);
     document.documentElement.setAttribute('data-theme', resolved);
     document.documentElement.setAttribute('data-theme-pref', pref);
     document.documentElement.style.colorScheme = resolved;
     try { localStorage.setItem(THEME_KEY, pref); } catch(e){}
+    window.applyStyle(getStyle());
     updateThemeUI(pref, resolved);
   };
 
@@ -1346,6 +1655,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       if(btn) btn.classList.toggle('active', t === pick);
     });
     window.initThemeSystem();
+    if(window.applyStyle) window.applyStyle(getStyle());
   });
 })();
 </script>
@@ -1596,6 +1906,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '刷新模型清单': 'Refresh catalog',
     '立即从上游 API 重新拉取当前视图版本的模型清单（不走缓存；同一版本 30 秒内只能刷一次）': 'Refetch the model catalog of the current view from the upstream API (bypassing cache; limited to one refresh per version every 30s)',
     '刷新凭证': 'Refresh token',
+    '凭证失效': 'Token expired',
+    '重新登录': 'Sign in again',
+    '重新登录该账号': 'Sign in again for this account',
+    '登录凭证已失效': 'Login token expired',
+    '登录已过期，请重新登录': 'Session expired, please sign in again',
     '一键刷新凭证': 'Refresh all tokens',
     '刷新失败:': 'Refresh failed:',
     '刷新完成:': 'Refresh finished:',
@@ -1646,6 +1961,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '启用': 'Enable',
     '启用价估算': 'Enable estimate',
     '启用自动切换': 'Enable auto-switch',
+    '允许切换的身份：': 'Allowed identities: ',
+    '至少选择一个身份': 'Pick at least one identity',
     '启用调度': 'Enable scheduler',
     '回到顶部': 'Back to top',
     '回收失败': 'Recovery failed',
@@ -1662,6 +1979,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '国内版 (China) · copilot.tencent.com': 'China · copilot.tencent.com',
     '国内版成长任务与日常福利': 'China growth tasks and daily perks',
     '国内版任务与福利': 'China tasks and perks',
+    // 页签名与区块标题：词级词典缺了「福利」，整体只能拼出「Taskand福利」。
+    '任务与福利': 'Tasks & rewards',
+    '国际版每日活跃福利': 'Daily activity rewards (Global)',
+    '已获取福利总积分': 'Total reward credits earned',
+    '每日活跃打卡、Buddy 加油站、成长任务与福利积分总览。': 'Daily check-in, Buddy refuel and an overview of growth tasks plus reward credits.',
+    '福利': 'rewards',
     '国内版签到': 'China check-in',
     '国家未知': 'Country unknown',
     '国际版': 'Global',
@@ -1680,6 +2003,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '复制登录链接': 'Copy sign-in link',
     '复制当前视图显示的日志': 'Copy the log lines shown in the current view',
     '多个账号按会话粘性 + 轮询使用；某个账号被上游拒绝时自动切到下一个': 'Accounts are used with session stickiness plus round-robin; when one is rejected upstream it switches to the next',
+    '天有活动': 'days active',
     '天': 'days',
     '天 (即将到期)': 'days (expiring soon)',
     '天)': 'days)',
@@ -1753,6 +2077,19 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '已启用：429 时自动切换出站身份': 'On: switch the outbound identity automatically on 429',
     '已启用：余额低于': 'On: when the balance drops below',
     '已启用：国际版打卡走网页通道': 'On: the Global check-in uses the web channel',
+    '失败重试': 'Retry on failure',
+    '最多尝试次数': 'Max attempts',
+    '首轮等待': 'First wait',
+    '最多尝试 ': 'Up to ',
+    ' 次 · ': ' attempts · ',
+    '只跑一轮': 'Single attempt',
+    '每轮等待': 'Wait per attempt',
+    '网页通道一轮没跑完（会话还在 working）就再来一轮：最多尝试几次（含第一轮，可改），每轮等待时间是上一轮的两倍——默认 3 次、首轮 120 秒，也就是 120 / 240 / 480 秒。默认开启；会话只是慢的时候多等一轮通常就过了。': 'When a web-channel attempt does not finish (the session is still working), try again: up to N tries in total (the first one included, configurable), with each wait twice the previous one - 3 tries and a 120-second first wait by default, i.e. 120 / 240 / 480. On by default; a session that is merely slow usually finishes on the next attempt.',
+    '注意：等待时间逐轮翻倍，「次数」与「首轮等待」调大都是平方级的代价——一个始终跑不完的账号最坏能占住巡检 base×(2^次数−1) 秒（默认 120×7 = 840 秒 ≈ 14 分钟）。建议不超过客户端愿意空等的时长。': 'Note: the wait doubles each round, so raising either the try count or the first wait costs you on a quadratic scale - an account that never finishes can hold the sweep for base×(2^tries−1) seconds (120×7 = 840 seconds, about 14 minutes, by default). Keep it within how long a client is willing to wait.',
+    '已启用：网页通道失败后会再试（等待时间翻倍）': 'On: the web channel tries again after a failure (wait doubles each time)',
+    '已关闭：网页通道只跑一轮': 'Off: the web channel runs a single attempt',
+    '已保存：最多尝试 ': 'Saved: up to ',
+    ' 次，首轮等待 ': ' tries, first wait ',
     '已启用：每': 'On: every',
     '已启用：由网关代跑 web_search / web_fetch': 'On: the gateway runs web_search / web_fetch for the client',
     '已启用：账号单模型当日超过': 'On: once an account, for a single model, exceeds today',
@@ -1913,6 +2250,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '暂无账号用量数据': 'No account usage data yet',
     '暂无数据（需要账号先有用量或撞线记录）': 'No data yet (needs usage or a cap on record)',
     '暂无预算样本：等某个账号把某个模型的窗口用满（撞线）后自动出现。': 'No budget samples yet: they appear once an account fills a model\'s window (hits the cap).',
+    '撞线样本': 'Cap samples',
+    '逐个窗口的原始值（先按账号，再跨账号汇总）': 'Raw values per window (averaged per account first, then across accounts)',
+    '复制为征集格式': 'Copy as collection format',
+    '暂无撞线样本。': 'No cap samples yet.',
     '更新时间:': 'Updated:',
     '更新时间: -': 'Updated: -',
     '最低保留积分': 'Minimum reserved credits',
@@ -1937,6 +2278,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '点击添加备注，比如「批量」/「自用」': 'Click to add a note, e.g. "batch" / "personal"',
     '最近将过期': 'Expiring soonest',
     '最近请求': 'Recent requests',
+    // 数据看板（B 版）的区块标题与指标名：此前整条回落中文，实测 en 界面残留。
+    'Token 时序': 'Token timeline',
+    '工作回溯': 'Activity lookback',
+    '吞吐量': 'Throughput',
+    '峰值吞吐': 'Peak throughput',
+    '实时活动流': 'Live activity stream',
+    '近一年每日活动': 'Daily activity over the last year',
+    '用量明细': 'Usage detail',
+    '积分扣减历史': 'Credit deduction history',
+    '模型性能分位': 'Model performance percentiles',
     '有': '',
     '有剩余': 'Left',
     '有效期': 'Valid until',
@@ -1965,14 +2316,47 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '本周请求数': 'Requests this week',
     '本地网络工具': 'Local web tools',
     '更新': 'Update',
+    // 「更新于 HH:MM:SS」是 B 版页头的动态拼接串，只有「更新」有词条会拼出「Update于」。
+    '更新于': 'Updated at',
     '立即检查更新': 'Check now',
     '安装更新': 'Install update',
-    '本版只做检查，安装更新尚未提供': 'This build only checks; installing is not available yet',
+    '网关检查自有 GitHub Release。发现稳定版后可手动安装；安装会短暂重启网关，账号与用量数据会保留。': 'The gateway checks its configured GitHub Releases. Stable updates can be installed manually; installation briefly restarts the gateway and preserves accounts and usage data.',
+    '安装状态': 'Install status',
+    '尚未开始': 'Not started',
+    '更新服务未安装': 'Updater is not installed',
+    '等待安装': 'Queued',
+    '正在下载更新包': 'Downloading update package',
+    '正在校验更新包': 'Verifying update package',
+    '正在备份程序文件': 'Backing up application files',
+    '正在停止网关': 'Stopping the gateway',
+    '正在安装程序': 'Installing application files',
+    '正在重启网关': 'Restarting gateway',
+    '正在检查网关': 'Checking gateway health',
+    '更新完成': 'Update completed',
+    '更新失败，正在回滚': 'Update failed; rolling back',
+    '更新已回滚': 'Update was rolled back',
+    '更新失败': 'Update failed',
+    '安装更新失败:': 'Installing update failed: ',
+    '更新失败：': 'Update failed: ',
+    '更新已回滚：': 'Update was rolled back: ',
+    '安装更新服务尚未配置': 'Updater is not configured',
+    '请先成功检查更新': 'Check for updates successfully first',
+    '当前没有可安装的新版本': 'No newer stable version is available',
+    '请先点击立即检查更新': 'Click Check now first',
+    '已有更新任务正在运行': 'An update is already running',
+    '无法提交更新任务，请检查更新服务状态': 'Could not queue update; check the updater service',
+    '提交更新任务失败': 'Could not queue update',
+    '目标版本无效或不高于当前版本': 'Target release is invalid or not newer than the current version',
+    '安装更新会短暂重启网关。账号与用量数据会保留。继续吗？': 'Installing an update briefly restarts the gateway. Accounts and usage data will be preserved. Continue?',
+    '已开始安装更新': 'Update installation started',
+    '更新已完成，正在刷新页面': 'Update completed; refreshing the page',
+    '更新正在进行，页面会在服务恢复后自动更新状态': 'Update is running. Status will refresh when the gateway returns',
+    '更新仍在执行，请稍后刷新': 'Update is still running; refresh again in a moment',
+    '更新状态暂时无法读取': 'Update status is temporarily unavailable',
     '最新版本': 'Latest version',
     '上次检查': 'Last check',
     '每天自动检查更新': 'Check for updates daily',
-    '默认关闭。开启后最多每 24 小时检查一次，只检查、不安装。': 'Off by default. When on it checks at most once every 24 hours - checking only, never installing.',
-    '网关匿名查询 GitHub 的公开 Release 列表，与当前运行的版本比较。本版只检查：不下载、不安装、不重启，账号与用量数据不会被碰。': 'The gateway anonymously queries the public GitHub Release list and compares it with the running version. This build only checks: it does not download, install or restart, and never touches account or usage data.',
+    '默认关闭。开启后最多每 24 小时自动检查一次；安装仍需手动点击。': 'Off by default. When enabled, it checks at most once every 24 hours; installation still requires a manual click.',
     '已是最新': 'Up to date',
     '发现新版本': 'Update available',
     '检查失败': 'Check failed',
@@ -2008,6 +2392,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '模型能力': 'Capabilities',
     '模型限制': 'Model restriction',
     '模式': 'Mode',
+    // 「N 次请求」是页头/热力图/模型表的动态拼接串：只有「次」「请求」两个单词条时
+    // 会拼成「N callsRequests」，短语条目靠长度降序先命中。
+    '次请求': 'requests',
     '次': 'calls',
     '次 ·': 'calls ·',
     '次异常拦截': 'errors blocked',
@@ -2039,6 +2426,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '每日 Token 限额': 'Daily token limit',
     '每日活跃:': 'Daily activity:',
     '每日活跃打卡 (国际版)': 'Daily activity check-in (Global)',
+    '未活跃打卡一键打卡': 'Check in the not-yet-active accounts',
+    '未活跃打卡:': 'Inactive check-in:',
+    '未活跃打卡失败:': 'Inactive check-in failed: ',
+    '未发现待打卡的国际版账号': 'No Global account is waiting for a check-in',
+    '国际版账号今天都已打卡': 'Every Global account has checked in today',
+    '今日未打卡账号': 'Accounts not checked in today',
     '每日积分限额': 'Daily credit limit',
     '临期积分优先': 'Expiring credits first',
     '读取签到记录失败:': 'Failed to read the activity log:',
@@ -2289,14 +2682,37 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '该槽位被': 'This slot is used by',
     '该模型今日已达限额，仅此模型受限（本地 0 点恢复）': 'This model reached the daily limit; only this model is restricted (resets at local midnight)',
     '该模型暂无定价数据': 'No pricing data for this model yet',
+    '该模型被上游临时限流（429），仅此模型受限，到点自动恢复': 'This model is temporarily rate-limited upstream (429); only this model is restricted and it recovers automatically',
+    '该模型配额耗尽（code 6004），同账号其他模型不受影响': "This model's quota is exhausted (code 6004); the account's other models are unaffected",
     '当前窗口的起点未知（没有撞线记录，或记录已过期），已用按最近 24 小时统计，是剩余量的下界': 'The start of the current window is unknown (no cap on record, or a stale one); used counts the last 24h, a lower bound of what is left',
     // 模型冷却 pill 的动态文本按片段匹配（整串含模型名与时间戳，命不中整串键），
     // 所以片段键必须带前后空格，避免误命中其它文案。
     ' · 撞线 ': ' · hit at ',
     ' · 恢复 ': ' · back at ',
-    '撞线时间': 'Cap time',
-    '该账号仅此模型受限（上游判定额度用满）；撞线时间与恢复时间均为本地时间': 'only this model is restricted for this account (the upstream declared its quota exhausted); cap and reset times are local',
-    '该账号仅此模型受限；时间为本地时间': 'only this model is restricted for this account; times are local',
+    ' · 恢复时刻 ': ' · back at ',
+    // 模型冷却 / 达日限额的整行胶囊（coolRow / limitRow）：胶囊现在是**可见文本**
+    // （不再是 title），所以这些片段会被 i18n 的文本节点路径翻译，条目必须齐。
+    // 缺一条的后果不只是漏译：逐字/逐片段硬拼会出「TodayUsed」「上cap」这种
+    // 半英半中的怪译文（实测过），所以每个片段都要逐条核对。
+    ' 今日已用 ': ' used today ',
+    ' / 上限 ': ' / cap ',
+    ' token 已达限额（本地 0 点恢复）': ' token, which reaches the daily limit (resets at local midnight)',
+    '（时间为本地时间）': '(times are local)',
+    // 胶囊的悬停提示（TIP_COOL_HIT / TIP_COOL_PLAIN / TIP_LIMIT）：只讲可见文本
+    // 没说的「原因 + 影响范围」，不重复模型名与时刻。整句键——这三条是常量、
+    // 不含动态值，所以能精确命中，不必像上面的片段那样带前后空格。
+    '上游判定该模型额度用满（code 6004）；仅此模型受限，同账号其他模型照常接单':
+      "The upstream declared this model's quota exhausted (code 6004); only this model is restricted, the account's other models still take traffic",
+    '上游临时限流（429），到点自动恢复；仅此模型受限，同账号其他模型照常接单':
+      "Temporarily rate-limited upstream (429) and it recovers on its own; only this model is restricted, the account's other models still take traffic",
+    '该模型今日 token 用量达到「按模型每日 Token 限额」；仅此模型受限，同账号其他模型照常接单':
+      'This model reached the daily token limit set by "Daily token limit per model"; only this model is restricted, the account\'s other models still take traffic',
+    // 「禁用的模型」行的悬停提示：只留操作提示（名单已在可见文本里换行显示）。
+    '点击编辑该账号禁用的模型（逗号分隔；留空 = 不限制）':
+      'Click to edit the models disabled for this account (comma separated; empty = no restriction)',
+    // 禁用总览的「开始时间」列：模型级限流两类都有真实起始时刻（6004 撞线 /
+    // 临时 429 限流），列头用中性措辞，两类性质由「原因」列区分。
+    '开始时间': 'Started',
     '该账号属于': 'This account belongs to the',
     '说明': 'Description',
     '请先登录或导入一个': 'Sign in or import a',
@@ -2442,6 +2858,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     ' 恢复': '',
     '颜色主题': 'Color theme',
     '颜色主题:': 'Color theme:',
+    '色彩配置': 'Color settings',
+    '关闭色彩配置': 'Close color settings',
+    '重置': 'Reset',
+    '导出 JSON': 'Export JSON',
     '额度利用率:': 'Quota utilization:',
     '首字': 'TTFT',
     '首字延迟': 'Time to first token',
@@ -2462,6 +2882,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '）· 只读': ') · read-only',
     '，手动导入': ', imported manually',
     '，进程内存回收': ', recovered from process memory',
+    '当前系统不支持从进程内存回收密钥。': 'This system does not support recovering the key from process memory.',
     '回收不到时，也可以在下面手动粘贴密钥。': 'If recovery fails, you can also paste the key below.',
     '可以在下面手动粘贴解码密钥，或改用「+ 添加账号 (OAuth)」走浏览器登录。': 'You can paste the decryption key below, or sign in through the browser with + Add account (OAuth).',
     '手工导入的密钥只留在网关内存里，不落盘、不写日志；导入时会先用 keyblob 校验，贴错会直接报错。': 'A manually imported key stays in the gateway process memory only - never written to disk or to the logs; it is validated against the keyblob first, so a wrong paste fails immediately.',
@@ -2591,11 +3012,26 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
   };
   var HANT_PHRASES = {
     " · 周期已过": " · 週期已過",
-    // 撞线（6004）相关：pill 的动态片段 + 禁用总览的列头 + pill 悬停标题。
+    // 撞线（6004）相关：pill 的动态片段 + 禁用总览的列头。
     " · 撞线 ": " · 撞線 ",
     " · 恢复 ": " · 恢復 ",
-    "撞线时间": "撞線時間",
-    "该账号仅此模型受限（上游判定额度用满）；撞线时间与恢复时间均为本地时间": "該帳號僅此模型受限（上游判定額度用滿）；撞線時間與恢復時間均為本地時間",
+    " · 恢复时刻 ": " · 恢復時刻 ",
+    " （时间为本地时间）": " （時間為本地時間）",
+    "（时间为本地时间）": "（時間為本地時間）",
+    "开始时间": "開始時間",
+    " token 已达限额（本地 0 点恢复）": " token 已達限額（本地 0 點恢復）",
+    " · 今日已用 ": " · 今日已用 ",
+    " / 上限 ": " / 上限 ",
+    // 胶囊的悬停提示（TIP_COOL_HIT / TIP_COOL_PLAIN / TIP_LIMIT）：整句条目，
+    // 逐字转换会把「账」转成「賬」，站内惯用「帳號」，所以必须整句覆盖。
+    "上游判定该模型额度用满（code 6004）；仅此模型受限，同账号其他模型照常接单":
+      "上游判定該模型額度用滿（code 6004）；僅此模型受限，同帳號其他模型照常接單",
+    "上游临时限流（429），到点自动恢复；仅此模型受限，同账号其他模型照常接单":
+      "上游臨時限流（429），到點自動恢復；僅此模型受限，同帳號其他模型照常接單",
+    "该模型今日 token 用量达到「按模型每日 Token 限额」；仅此模型受限，同账号其他模型照常接单":
+      "該模型今日 token 用量達到「按模型每日 Token 限額」；僅此模型受限，同帳號其他模型照常接單",
+    "点击编辑该账号禁用的模型（逗号分隔；留空 = 不限制）":
+      "點擊編輯該帳號停用的模型（逗號分隔；留空 = 不限制）",
     " 个未绑定账号分配代理出口": " 個未繫結帳號分配代理出口",
     " 个槽位，记得点「保存槽位」": " 個槽位，記得點「儲存槽位」",
     " 个账号 → ": " 個帳號 → ",
@@ -2744,6 +3180,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     "启用临期优先": "啟用臨期優先",
     "启用价估算": "啟用價估算",
     "启用自动切换": "啟用自動切換",
+    "允许切换的身份：": "允許切換的身分：",
+    "至少选择一个身份": "至少選擇一個身分",
     "启用调度": "啟用排程",
     "回收密钥": "回收金鑰",
     "导入密钥": "匯入金鑰",
@@ -2817,6 +3255,19 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     "已启用：429 时自动切换出站身份": "已啟用：429 時自動切換出站身份",
     "已启用：余额低于": "已啟用：餘額低於",
     "已启用：国际版打卡走网页通道": "已啟用：國際版打卡走網頁通道",
+    "失败重试": "失敗重試",
+    "最多尝试次数": "最多嘗試次數",
+    "首轮等待": "首輪等待",
+    "最多尝试 ": "最多嘗試 ",
+    " 次 · ": " 次 · ",
+    "只跑一轮": "只跑一輪",
+    "每轮等待": "每輪等待",
+    "网页通道一轮没跑完（会话还在 working）就再来一轮：最多尝试几次（含第一轮，可改），每轮等待时间是上一轮的两倍——默认 3 次、首轮 120 秒，也就是 120 / 240 / 480 秒。默认开启；会话只是慢的时候多等一轮通常就过了。": "網頁通道一輪沒跑完（會話還在 working）就再來一輪：最多嘗試幾次（含第一輪，可改），每輪等待時間是上一輪的兩倍——預設 3 次、首輪 120 秒，也就是 120 / 240 / 480 秒。預設開啟；會話只是慢的時候多等一輪通常就過了。",
+    "注意：等待时间逐轮翻倍，「次数」与「首轮等待」调大都是平方级的代价——一个始终跑不完的账号最坏能占住巡检 base×(2^次数−1) 秒（默认 120×7 = 840 秒 ≈ 14 分钟）。建议不超过客户端愿意空等的时长。": "注意：等待時間逐輪翻倍，「次數」與「首輪等待」調大都是平方級的代價——一個始終跑不完的帳號最壞能佔住巡檢 base×(2^次數−1) 秒（預設 120×7 = 840 秒 ≈ 14 分鐘）。建議不超過客戶端願意空等的時長。",
+    "已启用：网页通道失败后会再试（等待时间翻倍）": "已啟用：網頁通道失敗後會再試（等待時間翻倍）",
+    "已关闭：网页通道只跑一轮": "已關閉：網頁通道只跑一輪",
+    "已保存：最多尝试 ": "已保存：最多嘗試 ",
+    " 次，首轮等待 ": " 次，首輪等待 ",
     "已启用：每": "已啟用：每",
     "已启用：每 ": "已啟用：每 ",
     "已启用：由网关代跑 web_search / web_fetch": "已啟用：由閘道代跑 web_search / web_fetch",
@@ -3008,8 +3459,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     "设置文件": "設定檔案",
     "设置里还没有任何 API Key，全部流量都落在下面的未归属行里。": "設定裡還沒有任何 API Key，全部流量都落在下面的未歸屬行裡。",
     "该模型暂无定价数据": "該模型暫無定價資料",
+    "该模型被上游临时限流（429），仅此模型受限，到点自动恢复": "該模型被上游臨時限流（429），僅此模型受限，到點自動恢復",
     "该模型配额耗尽（code 6004），同账号其他模型不受影响": "該模型配額耗盡（code 6004），同帳號其他模型不受影響",
-    "该账号仅此模型受限；时间为本地时间": "該帳號僅此模型受限；時間為本地時間",
     "该账号属于": "該帳號屬於",
     "请先登录或导入一个": "請先登入或匯入一個",
     "请先登录或导入一个 ": "請先登入或匯入一個 ",
@@ -3058,6 +3509,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     "点击编辑备注": "點擊編輯備註",
     "点击添加备注，比如「批量」/「自用」": "點擊新增備註，例如「批量」/「自用」",
     "按「剩余用量估算」优先调度：某 (账号 × 模型) 的估计剩余越接近耗尽，分到的请求越多——先把快用完的额度用掉，等它到点重置。剩余不到 30% 开始加权、5% 以内权重最高；没有预算样本、或剩余为 0 / 冷却中的组合不参与。默认关闭。": "按「剩餘用量估算」優先排程：某 (帳號 × 模型) 的估計剩餘越接近耗盡，分到的請求越多——先把快用完的額度用掉，等它到點重置。剩餘不到 30% 開始加權、5% 以內權重最高；沒有預算樣本、或剩餘為 0 / 冷卻中的組合不參與。預設關閉。",
+    "撞线样本": "撞線樣本",
+    "逐个窗口的原始值（先按账号，再跨账号汇总）": "逐個視窗的原始值（先按帳號，再跨帳號彙總）",
+    "复制为征集格式": "複製為徵集格式",
+    "暂无撞线样本。": "暫無撞線樣本。",
     "注意：估算由撞线样本反推的预算与本地用量得出，本身有误差；开启后接近耗尽的账号会明显多接流量，也可能更早撞到上游限额（撞线后该模型停用到上游给出的恢复时刻）。": "注意：估算由撞線樣本反推的預算與本地用量得出，本身有誤差；開啟後接近耗盡的帳號會明顯多接流量，也可能更早撞到上游限額（撞線後該模型停用到上游給出的恢復時刻）。",
     "启用优先调度": "啟用優先排程",
     "已启用：剩余用量接近耗尽的组合优先调度": "已啟用：剩餘用量接近耗盡的組合優先排程",
@@ -3107,6 +3562,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     "（策略早于该字段，按当前映射表推断）": "（策略早於該欄位，按目前對映表推斷）",
     "，手动导入": "，手動匯入",
     "，进程内存回收": "，程序記憶體回收",
+    "当前系统不支持从进程内存回收密钥。": "當前系統不支援從進程記憶體回收金鑰。",
     "回收不到时，也可以在下面手动粘贴密钥。": "回收不到時，也可以在下面手動貼上金鑰。",
     "可以在下面手动粘贴解码密钥，或改用「+ 添加账号 (OAuth)」走浏览器登录。": "可以在下面手動貼上解碼金鑰，或改用「+ 新增帳號 (OAuth)」走瀏覽器登入。",
     "手工导入的密钥只留在网关内存里，不落盘、不写日志；导入时会先用 keyblob 校验，贴错会直接报错。": "手動匯入的金鑰只留在閘道記憶體裡，不落盤、不寫日誌；匯入時會先用 keyblob 校驗，貼錯會直接報錯。",
@@ -3117,7 +3573,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     "），加密凭据可直接导入。": "），加密憑據可直接匯入。",
     "，登录后请在「设置」中修改。": "，登入後請在「設定」中修改。",
     "；关闭后不再向 OpenRouter 取价，也不再折算任何金额，相关列、卡片与取价控件一并隐藏（只留这个开关）。": "；關閉後不再向 OpenRouter 取價，也不再折算任何金額，相關列、卡片與取價控制元件一併隱藏（只留這個開關）。",
-    "；变体继承当前已关闭": "；變體繼承目前已關閉"
+    "；变体继承当前已关闭": "；變體繼承目前已關閉",
+    "未活跃打卡一键打卡": "未活躍打卡一鍵打卡",
+    "今日未打卡账号": "今日未打卡帳號",
+    "国际版账号今天都已打卡": "國際版帳號今天都已打卡"
   };
   var HANT_TERMS = {"下拉菜单":"下拉選單","任务":"任務","会话":"會話","余额":"餘額","保存":"儲存","信息":"資訊","内存":"記憶體","凭证":"憑證","删除":"刪除","刷新":"重新整理","加载":"載入","启用":"啟用","响应":"回應","在线":"線上","复制":"複製","失败":"失敗","导入":"匯入","导出":"匯出","当前":"目前","按钮":"按鈕","搜索":"搜尋","支持":"支援","数据":"資料","文件":"檔案","日志":"日誌","权限":"權限","添加":"新增","用户":"使用者","登录":"登入","禁用":"停用","积分":"積分","端口":"埠","筛选":"篩選","粘贴":"貼上","统计":"統計","缓存":"快取","编辑":"編輯","网关":"閘道","网络":"網路","视频":"影片","计划":"計畫","设置":"設定","请求":"請求","账号":"帳號","账户":"帳戶","质量":"品質","软件":"軟體","输入框":"輸入框","运行":"執行","链接":"連結","错误":"錯誤","队列":"佇列","页面":"頁面","默认":"預設"};
   Object.keys(HANT_TERMS).forEach(function(k){ HANT_PHRASES[k] = HANT_TERMS[k]; });
@@ -3669,6 +4128,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       <button type="button" class="gw-exit-btn" id="btnToggleRealm" onclick="toggleActiveGatewayRealm()"
               title="切换网关的默认上游出口（会影响所有未绑定版本的 Key）">⇄ 切换默认出口为【国内版】</button>
     </div>
+<button type="button" class="hdr-icon-btn" id="btnConsoleToggle" data-no-i18n onclick="toggleConsoleWindow()"
+            title="在新窗口打开运行日志" aria-label="在新窗口打开运行日志">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+    </button>
+    <button type="button" class="hdr-icon-btn hdr-icon-danger" id="btnGatewayShutdown" data-no-i18n onclick="shutdownGateway()"
+            title="关闭网关服务（进程退出，需重新运行启动脚本）" aria-label="关闭网关服务">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>
+      </svg>
+    </button>
   </div>
   <div class="header-right">
     <button type="button" class="lang-btn" id="langToggleBtn" onclick="toggleLang(event)" data-no-i18n title="切换语言 (简体中文 / 正體中文 / English)" aria-label="切换语言">
@@ -3695,6 +4164,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
         <span id="themeToggleIcon" class="theme-btn-icon"></span>
       </button>
       <div class="theme-dropdown" id="themeDropdown" role="menu" aria-label="选择颜色主题">
+        <div class="theme-style-group" role="group" aria-label="主题风格">
+          <button type="button" class="theme-option" data-theme-style-option="green" onclick="selectStyle('green', event)" role="menuitem">Green</button>
+          <button type="button" class="theme-option" data-theme-style-option="claude" onclick="selectStyle('claude', event)" role="menuitem">Claude</button>
+          <button type="button" class="theme-option" data-theme-style-option="material" onclick="selectStyle('material', event)" role="menuitem">Material</button>
+          <button type="button" class="theme-option" data-theme-style-option="miuix" onclick="selectStyle('miuix', event)" role="menuitem">MiuiX</button>
+        </div>
+        <div class="theme-sep" role="separator"></div>
         <button type="button" class="theme-option" id="themeOptLight" onclick="selectTheme('light', event)" role="menuitem">
           <svg class="theme-opt-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="4"></circle>
@@ -3718,6 +4194,20 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
           </svg>
           <span class="theme-opt-text">跟随系统</span>
           <svg class="theme-opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+        </button>
+        <div class="theme-sep" role="separator"></div>
+        <!-- 色彩配置：打开调色台浮层（面板本身在文件尾部，见 #tunerBox）。
+             与上面三档是不同维度的事：那三档选「用哪套主题」，这里调「主题
+             用哪些颜色」——调的是当前亮/暗两套的变量，实时生效。 -->
+        <button type="button" class="theme-option" id="themeOptTuner" onclick="toggleThemeTuner(event)" role="menuitem">
+          <svg class="theme-opt-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.13-.29-.29-.44-.65-.44-1.12a1.64 1.64 0 0 1 1.67-1.67h2c3.05 0 5.56-2.5 5.56-5.55C21.96 6.01 17.46 2 12 2z"></path>
+            <circle cx="13.5" cy="6.5" r=".5" fill="currentColor"></circle>
+            <circle cx="17.5" cy="10.5" r=".5" fill="currentColor"></circle>
+            <circle cx="8.5" cy="7.5" r=".5" fill="currentColor"></circle>
+            <circle cx="6.5" cy="12.5" r=".5" fill="currentColor"></circle>
+          </svg>
+          <span class="theme-opt-text">色彩配置</span>
         </button>
       </div>
     </div>
@@ -3789,22 +4279,21 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     <div id="gatewayPageDesc" style="font-size:12px;color:var(--dim);margin-top:4px">管理账号池与代理出口，查看当日调用量、估算花费、成功率、最近请求与网关模型清单。</div>
   </div>
   <!-- 版本中枢控制栏 (三列等高对齐网格) -->
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:18px">
+  <div class="realm-cards-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:18px">
     
     <!-- 卡片 1: 国际版 (Global) -->
     <div id="tabIntl" class="realm-card active" onclick="switchViewRealm('intl')">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <span class="realm-badge-intl">国际版 (Global)</span>
-          <span id="tabIntlDefaultBadge" class="badge ok mini" style="font-weight:600;display:none">默认出口</span>
-          <span id="tabIntlViewBadge" class="badge s mini" style="display:inline-block">当前视图</span>
-        </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+        <span class="realm-badge-intl">国际版 (Global)</span>
+        <span class="mono" style="font-size:11px;color:var(--dim)">www.workbuddy.ai</span>
+        <span id="tabIntlDefaultBadge" class="badge ok mini" style="font-weight:600;display:none">默认出口</span>
+        <span id="tabIntlViewBadge" class="badge s mini" style="display:inline-block">当前视图</span>
       </div>
       <div class="mono" style="font-size:11px;color:var(--dim);margin-bottom:8px" id="tabIntlHost">www.workbuddy.ai</div>
-      <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:8px">
-        <div style="display:flex;align-items:baseline;gap:6px">
-          <span id="tabIntlCredits" style="font-size:22px;font-weight:700;color:var(--accent2);letter-spacing:-.5px" title="总剩余积分：全部账号（含停用）之和；「可用」只算启用且未触发限额护栏的账号">0</span>
-          <span style="font-size:12px;color:var(--dim)">剩余积分 · <span id="tabIntlAvailCred" style="color:var(--fg);font-weight:600">可用 —</span> · <span id="tabIntlAccts" style="color:var(--fg);font-weight:600">0/0 账号</span></span>
+      <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <div class="credit-summary" style="display:flex;align-items:baseline;gap:5px;flex-wrap:wrap;min-width:0">
+          <span id="tabIntlAvailCred" style="font-size:22px;font-weight:700;color:var(--accent2);letter-spacing:-.5px" title="可用积分：只算启用且未触发保留/限额护栏的账号之和，与「N/M 账号」同一口径">0</span>
+          <span style="font-size:12px;color:var(--dim)">/ <span id="tabIntlCredits" style="color:var(--fg);font-weight:600" title="总积分：全部账号（含停用）之和">0</span> 总积分 · <span id="tabIntlAccts" style="color:var(--fg);font-weight:600">0/0 账号</span></span>
         </div>
         <span id="tabIntlKeyBadge" class="badge s mini" style="font-weight:600">0 个 Key</span>
       </div>
@@ -3812,18 +4301,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
 
     <!-- 卡片 2: 国内版 (China) -->
     <div id="tabCn" class="realm-card" onclick="switchViewRealm('cn')">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <span class="realm-badge-cn">国内版 (China)</span>
-          <span id="tabCnDefaultBadge" class="badge ok mini" style="font-weight:600;display:none">默认出口</span>
-          <span id="tabCnViewBadge" class="badge ok mini" style="display:none">当前视图</span>
-        </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+        <span class="realm-badge-cn">国内版 (China)</span>
+        <span class="mono" style="font-size:11px;color:var(--dim)" id="tabCnHost">copilot.tencent.com</span>
+        <span id="tabCnDefaultBadge" class="badge ok mini" style="font-weight:600;display:none">默认出口</span>
+        <span id="tabCnViewBadge" class="badge warn mini" style="display:none">当前视图</span>
       </div>
-      <div class="mono" style="font-size:11px;color:var(--dim);margin-bottom:8px" id="tabCnHost">copilot.tencent.com</div>
-      <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:8px">
-        <div style="display:flex;align-items:baseline;gap:6px">
-          <span id="tabCnCredits" style="font-size:22px;font-weight:700;color:var(--accent2);letter-spacing:-.5px" title="总剩余积分：全部账号（含停用）之和；「可用」只算启用且未触发限额护栏的账号">0</span>
-          <span style="font-size:12px;color:var(--dim)">剩余积分 · <span id="tabCnAvailCred" style="color:var(--fg);font-weight:600">可用 —</span> · <span id="tabCnAccts" style="color:var(--fg);font-weight:600">0/0 账号</span></span>
+      <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <div class="credit-summary" style="display:flex;align-items:baseline;gap:5px;flex-wrap:wrap;min-width:0">
+          <span id="tabCnAvailCred" style="font-size:22px;font-weight:700;color:var(--accent2);letter-spacing:-.5px" title="可用积分：只算启用且未触发保留/限额护栏的账号之和，与「N/M 账号」同一口径">0</span>
+          <span style="font-size:12px;color:var(--dim)">/ <span id="tabCnCredits" style="color:var(--fg);font-weight:600" title="总积分：全部账号（含停用）之和">0</span> 总积分 · <span id="tabCnAccts" style="color:var(--fg);font-weight:600">0/0 账号</span></span>
         </div>
         <span id="tabCnKeyBadge" class="badge ok mini" style="font-weight:600">0 个 Key</span>
       </div>
@@ -3901,14 +4388,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       <table id="modelsTable" class="data-cards">
         <thead>
           <tr>
-            <th style="text-align:left;width:200px">模型 ID</th>
-            <th style="text-align:left;width:100px">名称</th>
-            <th style="text-align:center;width:150px">消费倍率 / 优惠</th>
-            <th style="text-align:center;width:170px">模型能力</th>
-            <th style="text-align:center;width:100px">上下文窗口</th>
-            <th style="text-align:center;width:100px">最大输出</th>
-            <th style="text-align:left;width:170px">思考档位</th>
-            <th style="text-align:left">默认采样参数</th>
+            <th style="text-align:left;width:17%">模型 ID</th>
+            <th style="text-align:left;width:11%">名称</th>
+            <th style="text-align:center;width:12%">消费倍率 / 优惠</th>
+            <th style="text-align:center;width:14%">模型能力</th>
+            <th style="text-align:center;width:9%">上下文窗口</th>
+            <th style="text-align:center;width:9%">最大输出</th>
+            <th style="text-align:left;width:16%">思考档位</th>
+            <th style="text-align:left;width:12%;white-space:nowrap">默认采样参数</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -3963,6 +4450,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     <div class="tb-group">
     <button class="sec" id="btnFetchCredits" onclick="fetchCredits(this)">一键刷新积分</button>
     <button class="sec" onclick="refreshAccounts(this)" title="逐个刷新所有账号的上游访问凭证（相当于对每个账号点一次「刷新凭证」）">一键刷新凭证</button>
+    <button class="sec" onclick="testAccounts(this)" title="逐个真发一条最小请求，并同时检查本机到上游的网络：能分清「账号坏了」和「本机断网了」，测试通过还会清掉该账号的熔断/降权计数">一键测试</button>
     </div>
     <div class="tb-group">
     <button class="sec" id="btnCheckin" onclick="doCheckin(this)" style="display:none">Buddy 加油站签到</button>
@@ -4136,10 +4624,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="primary" id="btnPageDailyChat" onclick="doDailyChat(this)">每日活跃打卡 (国际版)</button>
+        <!-- 未活跃打卡一键打卡：只补跑今天还没有活跃打卡记录的国际版账号。
+             要打的那批与左边「今日活跃打卡状态」卡片悬停时列出的名单完全同源，
+             所以不会把已经打过的账号再打一遍、白烧它的额度。 -->
+        <button class="primary" id="btnPageDailyChatPending" onclick="doDailyChatPending(this)">未活跃打卡一键打卡</button>
       </div>
     </div>
     <div class="cards" style="margin-bottom:16px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))">
-      <div class="card accent2">
+      <div class="card accent2" id="cardIntlTodayActive">
         <div class="k">今日活跃打卡状态</div>
         <div class="v" id="intlTodayActiveState" style="font-size:20px">-</div>
       </div>
@@ -4379,6 +4871,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
         <button data-dim="account">按账号 <span class="cnt" id="cntAccount">0</span></button>
         <button data-dim="key">按 API Key <span class="cnt" id="cntKey">0</span></button>
       </div>
+      <button type="button" class="dim-columns-btn" id="dimColumnsBtn" aria-expanded="false" aria-controls="dimColumnsMenu">列</button>
+      <div class="dim-columns-menu" id="dimColumnsMenu" hidden></div>
     </div>
     <div class="pbody" style="overflow-x:auto">
       <table class="dim" id="dimTable">
@@ -4444,6 +4938,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
               <tbody id="remainingTbodyCn"></tbody>
             </table>
           </div>
+        </div>
+        <div id="remainingSamplesBlock" style="margin-top:18px">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+            <div><b>撞线样本</b><span style="font-size:12px;color:var(--dim);margin-left:6px">逐个窗口的原始值（先按账号，再跨账号汇总）</span></div>
+            <button class="sec mini" onclick="copyRemainingSamples()">复制为征集格式</button>
+          </div>
+          <div id="remainingSamplesBody" style="font-size:12px;color:var(--dim)">暂无撞线样本。</div>
         </div>
       </div>
       </div>
@@ -4767,6 +5268,48 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       <section class="wb-only">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
           <div>
+            <h2 style="margin:0">启用 Anthropic Messages 接口 (Claude) <em id="setAnthropicMessagesState"></em></h2>
+            <div style="font-size:12px;color:var(--dim);margin-top:4px">
+              允许 Claude Code / Anthropic SDK 访问网关 /v1/messages。网关对内将其转换为 OpenAI Chat Completions 协议转发。
+            </div>
+            <div style="font-size:12px;color:var(--warn);margin-top:4px">
+              注意：转换层目前未保留 cache_control 语义，在长会话中可能因缓存命中率降低而导致积分消耗偏高。请知晓风险后再开启。默认关闭。
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px">
+              <input id="setAnthropicMessages" type="checkbox" style="width:16px;height:16px">
+              启用 Messages 接口
+            </label>
+            <button onclick="saveAnthropicMessages(this)">保存</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+          <div>
+            <h2 style="margin:0">免费额度耗尽回退积分版 <em id="setCreditFallbackState"></em></h2>
+            <div style="font-size:12px;color:var(--dim);margin-top:4px">
+              国际版 deepseek-v4.1-flash 免费额度在所有账号均耗尽（6004 撞线）后，自动回退到 deepseek-v4.1-flash-sg 付费通道。默认关闭。
+            </div>
+            <div style="font-size:12px;color:var(--warn);margin-top:4px">
+              注意：回退后将消耗账户中的真实积分（x0.03 倍率），请确认知晓积分成本后再开启。
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px">
+              <input id="setCreditFallback" type="checkbox" style="width:16px;height:16px">
+              启用积分回退
+            </label>
+            <button onclick="saveCreditFallback(this)">保存</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+          <div>
             <h2 style="margin:0">自动切换出站身份 <em id="setAutoSwitchState"></em></h2>
             <div style="font-size:12px;color:var(--dim);margin-top:4px">
               某账号在某模型上被上游限流（429）时，自动在 WB / VSC / CLI 之间换身分重试，每轮最多 4 次。三条身分走不同的配额通道，开启后 429 会少一些。默认关闭。
@@ -4780,6 +5323,18 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
               <input id="setAutoSwitch" type="checkbox" style="width:16px;height:16px">
               启用自动切换
             </label>
+            <div style="display:flex;align-items:center;gap:10px;font-size:13px;min-height:40px;flex-wrap:wrap">
+              允许切换的身份：
+              <label style="display:flex;align-items:center;gap:4px">
+                <input id="setAutoSwitchWB" type="checkbox" style="width:16px;height:16px">WB
+              </label>
+              <label style="display:flex;align-items:center;gap:4px">
+                <input id="setAutoSwitchVSC" type="checkbox" style="width:16px;height:16px">VSC
+              </label>
+              <label style="display:flex;align-items:center;gap:4px">
+                <input id="setAutoSwitchCLI" type="checkbox" style="width:16px;height:16px">CLI
+              </label>
+            </div>
             <button onclick="saveAutoSwitchProduct(this)">保存</button>
           </div>
         </div>
@@ -4810,6 +5365,30 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
         <div style="font-size:12px;color:var(--dim);margin-top:6px">
           清单是国际版目录里的全部模型，标价 0.00x 的标成免费并排在前面。每日活跃只是一次「Hi」的会话，默认用内置的免费模型；换一个是为了把活跃挪出真实流量正在用的那个模型的窗口额度。选到付费模型的话，活跃就会按那个模型花积分。
         </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px">
+          <label class="switch">
+            <input id="setDailyChatWebRetry" type="checkbox" onchange="saveDailyChatWebRetry()">
+            <span class="switch-track"></span>
+            <span>失败重试</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px">
+            最多尝试次数
+            <input id="setDailyChatWebAttempts" type="number" min="1" step="1" style="width:70px">
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px">
+            首轮等待
+            <input id="setDailyChatWebTimeout" type="number" min="1" step="1" style="width:90px">
+            秒
+          </label>
+          <button onclick="saveDailyChatWebTuning(this)">保存</button>
+          <span id="setDailyChatWebRetryState" style="font-size:12px;color:var(--dim)"></span>
+        </div>
+        <div style="font-size:12px;color:var(--dim);margin-top:6px">
+          网页通道一轮没跑完（会话还在 working）就再来一轮：最多尝试几次（含第一轮，可改），每轮等待时间是上一轮的两倍——默认 3 次、首轮 120 秒，也就是 120 / 240 / 480 秒。默认开启；会话只是慢的时候多等一轮通常就过了。
+        </div>
+        <div style="font-size:12px;color:var(--warn);margin-top:4px">
+          注意：等待时间逐轮翻倍，「次数」与「首轮等待」调大都是平方级的代价——一个始终跑不完的账号最坏能占住巡检 base×(2^次数−1) 秒（默认 120×7 = 840 秒 ≈ 14 分钟）。建议不超过客户端愿意空等的时长。
+        </div>
       </section>
 
       <section>
@@ -4836,7 +5415,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       <section>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
           <div>
-<h2 style="margin:0">剩余用量优先调度 <em id="setRemainingPriorityState"></em></h2>
+            <h2 style="margin:0">剩余用量优先调度 <em id="setRemainingPriorityState"></em></h2>
             <div style="font-size:12px;color:var(--dim);margin-top:4px">
               按「剩余用量估算」优先调度：某 (账号 × 模型) 的估计剩余越接近耗尽，分到的请求越多——先把快用完的额度用掉，等它到点重置。剩余不到 30% 开始加权、5% 以内权重最高；没有预算样本、或剩余为 0 / 冷却中的组合不参与。默认关闭。
             </div>
@@ -4857,6 +5436,27 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       <section>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
           <div>
+            <h2 style="margin:0">模型额度窗口探针 <em id="setWindowProbeState"></em></h2>
+            <div style="font-size:12px;color:var(--dim);margin-top:4px">
+              上游的免费额度窗口按「首次请求」起算：某账号在某模型上被限流（429）后，上游会给出一个重置时刻。开启后，网关会在该时刻到点主动补一个最小请求，把新一轮窗口的计时起点钉在重置那一刻——否则要等到下一次真实请求窗口才开始计时，额度白白空转。默认开启。
+            </div>
+            <div style="font-size:12px;color:var(--warn);margin-top:4px">
+              注意：探针会真的发一次对话请求，消耗该账号极少量额度（约一条 "Hi"）。到点后若上游仍未放开，最多重试 20 次（每 15 秒一次）后放弃，等下一次 429 重新登记。
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px">
+              <input id="setWindowProbe" type="checkbox" style="width:16px;height:16px">
+              到点自动请求
+            </label>
+            <button onclick="saveWindowProbe(this)">保存</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+          <div>
             <h2 style="margin:0">出口级瞬时失败退避 <em id="setEgressBackoffState"></em></h2>
             <div style="font-size:12px;color:var(--dim);margin-top:4px">
               传输类失败与 502/503/504 改记在「出口」而不是账号上：同一个出口的账号共用一个计数器，退避是秒级（1 秒起、翻倍、封顶 15 秒、带抖动），任一次成功即清零；账号级熔断（30 分钟起、翻倍到 6 小时）不再被一次链路抖动触发。500 与 401/403/429 仍走原路径。默认关闭。
@@ -4870,6 +5470,31 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
             <button onclick="saveEgressBackoff(this)">保存</button>
           </div>
         </div>
+      </section>
+
+      <section>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+          <div>
+            <h2 style="margin:0">模型额度定时主动查询 <em id="setQuotaScanState"></em></h2>
+            <div style="font-size:12px;color:var(--dim);margin-top:4px">
+              勾选要留意的模型后，网关每 6 小时为每个「账号 + 模型」发一个最小请求，主动确认这条配额线是否已经被打满：打到 429 就立即记该模型的冷却，并把上游给的重置时刻交给上面的「模型额度窗口探针」到点处理；请求通了就说明这条线还没到限额。窗口探针管的是「已经限额之后」，这里管的是「还没限额时先知道」。默认不勾选，勾选后才会定时查询。
+            </div>
+            <div style="font-size:12px;color:var(--warn);margin-top:4px">
+              注意：每次查询都会真的发一次对话请求，消耗该账号极少量额度；本地一旦有了该「账号 + 模型」的 429 记录，就停止定时查询（改由上面的探针负责），窗口记录消失后自动恢复轮询。
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+            <button onclick="saveQuotaScanModels(this)">保存勾选</button>
+            <button class="sec" onclick="runQuotaScan(this)">立即查询</button>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          <button class="sec mini" onclick="toggleAllQuotaScanModels(true)">全选</button>
+          <button class="sec mini" onclick="toggleAllQuotaScanModels(false)">清空</button>
+          <span id="quotaScanHint" style="font-size:12px;color:var(--dim)"></span>
+        </div>
+        <div id="quotaScanModels" style="display:flex;flex-wrap:wrap;gap:6px 14px;max-height:220px;overflow:auto;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px"></div>
+        <div id="quotaScanState" style="margin-top:12px"></div>
       </section>
 
       <section>
@@ -4962,12 +5587,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
           <div>
             <h2 style="margin:0">更新 <em id="setUpdateState"></em></h2>
             <div style="font-size:12px;color:var(--dim);margin-top:4px">
-              网关匿名查询 GitHub 的公开 Release 列表，与当前运行的版本比较。本版只检查：不下载、不安装、不重启，账号与用量数据不会被碰。
+              网关检查自有 GitHub Release。发现稳定版后可手动安装；安装会短暂重启网关，账号与用量数据会保留。
             </div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
             <button id="setUpdateCheckBtn" onclick="checkUpdateNow(this)">立即检查更新</button>
-            <button id="setUpdateInstallBtn" class="sec" disabled>安装更新</button>
+            <button id="setUpdateInstallBtn" class="sec" onclick="installUpdateNow(this)" disabled>安装更新</button>
           </div>
         </div>
         <table>
@@ -4975,6 +5600,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
             <tr><td>当前版本</td><td class="mono" id="setUpdateCurrent">-</td></tr>
             <tr><td>最新版本</td><td class="mono" id="setUpdateLatest">-</td></tr>
             <tr><td>上次检查</td><td class="mono" id="setUpdateLastCheck">-</td></tr>
+            <tr><td>安装状态</td><td id="setUpdateInstallStatus">尚未开始</td></tr>
           </tbody>
         </table>
         <div id="setUpdateError" style="font-size:12px;color:var(--warn);margin-top:8px"></div>
@@ -4983,7 +5609,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
           每天自动检查更新
         </label>
         <div style="font-size:12px;color:var(--dim);margin-top:4px">
-          默认关闭。开启后最多每 24 小时检查一次，只检查、不安装。
+          默认关闭。开启后最多每 24 小时自动检查一次；安装仍需手动点击。
         </div>
         <div style="margin-top:10px">
           <button onclick="saveUpdateCheckEnabled(this)">保存</button>
@@ -5116,17 +5742,17 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     </div>
 
     <!-- 终端视窗 -->
-    <div style="background:#16140f;border:1px solid #2b2820;border-radius:12px;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,.15)">
-      <div style="background:#1d1b15;border-bottom:1px solid #2b2820;padding:8px 14px;display:flex;align-items:center;justify-content:space-between">
+    <div style="background:var(--terminal-bg);border:1px solid var(--terminal-border);border-radius:12px;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,.15)">
+      <div style="background:var(--terminal-head);border-bottom:1px solid #2b2820;padding:8px 14px;display:flex;align-items:center;justify-content:space-between">
         <div style="display:flex;align-items:center;gap:7px">
-          <span style="width:10px;height:10px;border-radius:50%;background:#ef4444;display:inline-block"></span>
-          <span style="width:10px;height:10px;border-radius:50%;background:#f59e0b;display:inline-block"></span>
-          <span style="width:10px;height:10px;border-radius:50%;background:#10b981;display:inline-block"></span>
-          <span style="font-size:11px;color:#a5a29a;font-family:monospace;margin-left:8px">wb-proxy-console.log</span>
+          <span style="width:10px;height:10px;border-radius:50%;background:var(--terminal-error);display:inline-block"></span>
+          <span style="width:10px;height:10px;border-radius:50%;background:var(--terminal-warn);display:inline-block"></span>
+          <span style="width:10px;height:10px;border-radius:50%;background:var(--terminal-ok);display:inline-block"></span>
+          <span style="font-size:11px;color:var(--terminal-fg);font-family:monospace;margin-left:8px">wb-proxy-console.log</span>
         </div>
-        <div id="logTerminalStatus" style="font-size:11px;color:#7c796f;font-family:monospace">就绪</div>
+        <div id="logTerminalStatus" style="font-size:11px;color:var(--terminal-dim);font-family:monospace">就绪</div>
       </div>
-      <div id="logTerminalBody" style="height:620px;overflow-y:auto;padding:10px 12px;background:#16140f;color:#d6d3c9" onscroll="handleLogTerminalScroll()">
+      <div id="logTerminalBody" style="height:620px;overflow-y:auto;padding:10px 12px;background:var(--terminal-bg);color:var(--terminal-fg)" onscroll="handleLogTerminalScroll()">
         <div class="log-empty">正在拉取网关日志...</div>
       </div>
     </div>
@@ -5279,6 +5905,26 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
   </div>
 </div>
 
+<div class="modal-mask" id="testAllModal">
+  <div class="modal" role="dialog" aria-modal="true" style="width:min(820px,100%)">
+    <div class="modal-hd">
+      <h2>一键测试结果</h2>
+      <button class="modal-x" onclick="closeTestAll()" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-bd">
+      <p class="hint" style="margin-top:0">
+        每个已启用账号各发一条最小请求（真实调用上游，会消耗极少量额度）。
+        测试通过会顺手清掉该账号的熔断 / 降权 / 软限流计数，所以不会出现「测完还是冷却」。
+      </p>
+      <div id="testAllBody"><p class="hint">正在测试…</p></div>
+    </div>
+    <div class="modal-ft">
+      <button class="sec" onclick="testAccounts(null)">重新测试</button>
+      <button class="sec" onclick="closeTestAll()">关闭</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-mask" id="desktopScanModal">
   <div class="modal" role="dialog" aria-modal="true" style="width:min(720px,100%)">
     <div class="modal-hd">
@@ -5375,6 +6021,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     <div class="modal-bd" style="overflow-y:auto;flex:1">
       <div id="creditsModalLoading" style="display:none;text-align:center;padding:30px 0">
         <div class="hint">正在向上游同步最新积分与权益包明细…</div>
+      </div>
+      <div id="creditsModalError" style="display:none;text-align:center;padding:36px 16px">
+        <div id="creditsModalErrorTitle" style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--bad)">登录凭证已失效</div>
+        <div id="creditsModalErrorMsg" style="color:var(--dim);font-size:13px;max-width:480px;margin:0 auto 18px;line-height:1.6">上游鉴权网关返回 401 Unauthorized，该账号的登录会话已过期。请重新扫码登录以更新凭据。</div>
+        <button id="btnCreditsRelogin" class="bad" onclick="reloginFromCreditsModal()" style="font-size:13px;padding:7px 18px">重新登录该账号</button>
       </div>
       <div id="creditsModalContent">
         <!-- 顶部指标卡片 (4 列卡片) -->
@@ -5516,13 +6167,14 @@ function closeLogin(){
   if(loginState){ postJSON("/accounts/login/cancel", {state: loginState}).catch(()=>{}); loginState = null; }
 }
 
-function openLoginModal(){
+function openLoginModal(targetRealm){
   // Qoder / Trae 各有自己的弹窗（Qoder：设备码 + PAT；Trae：本机登录态 + JWT）；
   // WorkBuddy 保持原 OAuth 弹窗。
   if(currentProvider() === 'qoder'){ openQoderLogin(); return; }
   if(currentProvider() === 'trae'){ openTraeLogin(); return; }
   openLogin();
-  const isCn = (window.VIEW_REALM === "cn");
+  const realm = targetRealm || window.VIEW_REALM || "intl";
+  const isCn = (realm === "cn");
   const rCn = document.getElementById("radioCn");
   const rIntl = document.getElementById("radioIntl");
   if(rCn) rCn.checked = isCn;
@@ -6543,17 +7195,20 @@ function updateUI(){
   const intlActive = intlAccts.filter(isAcctActive).length;
   const cnActive = cnAccts.filter(isAcctActive).length;
 
+  // 区域卡片：大字 = 可用积分（只算 isAcctActive——启用且未触发保留/限额
+  // 护栏的账号，与旁边的 N/M 账号计数同一口径）；小字 = 总积分（全部账号
+  // 含停用）。数字各挂各的节点，样式（大字/小字）由 HTML 决定。
   const elIntlCred = document.getElementById("tabIntlCredits");
   if(elIntlCred) elIntlCred.textContent = hasIntlCred ? fmt(intlCred) : "—";
   const elIntlAvail = document.getElementById("tabIntlAvailCred");
-  if(elIntlAvail) elIntlAvail.innerHTML = '可用 <b style="color:var(--accent2)">' + (hasIntlAvail ? fmt(intlAvailCred) : "—") + '</b>';
+  if(elIntlAvail) elIntlAvail.innerHTML = '<span class="credit-kind">可用</span> ' + (hasIntlAvail ? fmt(intlAvailCred) : "—");
   const elIntlAcct = document.getElementById("tabIntlAccts");
   if(elIntlAcct) elIntlAcct.innerHTML = '<b style="color:var(--accent)">' + intlActive + '</b>/' + intlAccts.length + ' 账号';
 
   const elCnCred = document.getElementById("tabCnCredits");
   if(elCnCred) elCnCred.textContent = hasCnCred ? fmt(cnCred) : "—";
   const elCnAvail = document.getElementById("tabCnAvailCred");
-  if(elCnAvail) elCnAvail.innerHTML = '可用 <b style="color:var(--accent2)">' + (hasCnAvail ? fmt(cnAvailCred) : "—") + '</b>';
+  if(elCnAvail) elCnAvail.innerHTML = '<span class="credit-kind">可用</span> ' + (hasCnAvail ? fmt(cnAvailCred) : "—");
   const elCnAcct = document.getElementById("tabCnAccts");
   if(elCnAcct) elCnAcct.innerHTML = '<b style="color:var(--accent)">' + cnActive + '</b>/' + cnAccts.length + ' 账号';
 };
@@ -6756,7 +7411,7 @@ function renderModelsSourceLine(meta){
     : '清单构建顺序：先请求上游 API（/v3/config，用当前视图版本的账号）→ 失败则读取本机桌面客户端缓存文件 → 都拿不到才用内置快照。'
       + '清单在 5 分钟缓存期内复用，过期自动重取；网关后台每天也会兜底获取一次；点「刷新模型清单」可立即从上游更新。';
   if(!meta || !meta.source){
-    el.style.cssText = CATALOG_BANNER_BASE + 'background:transparent;border:1px dashed var(--line);color:var(--dim)';
+    el.style.cssText = CATALOG_BANNER_BASE + 'flex-direction:column;align-items:flex-start;gap:2px;background:transparent;border:1px dashed var(--line);color:var(--dim)';
     el.title = tip;
     el.innerHTML = '数据来源：未知（当前网关进程版本较旧未提供来源信息，重启网关后可见）';
     return;
@@ -6782,6 +7437,7 @@ function renderModelsSourceLine(meta){
     origin += ' · 生成于 ' + at;
   }
   el.style.cssText = CATALOG_BANNER_BASE
+    + 'flex-direction:column;align-items:flex-start;gap:2px;'
     + 'background:var(--warn-soft);border:1px solid rgba(183,121,31,.35);color:var(--warn)';
   el.innerHTML = '<b>⚠ 当前为项目默认模型信息（未经 API 刷新）：模型、倍率数据可能不一致</b>'
     + '<span style="color:var(--dim)">数据出处：' + esc(origin)
@@ -6934,14 +7590,14 @@ function renderAvailableModels(){
     const samples = [];
     if(m.temperature != null) samples.push('温度 ' + esc(String(m.temperature)));
     if(m.top_p != null) samples.push('top_p ' + esc(String(m.top_p)));
-    const sampleCell = '<td style="text-align:left" data-label="默认采样参数">'
+    const sampleCell = '<td style="text-align:left;padding-right:14px" data-label="默认采样参数">'
       + (samples.length
-          ? '<span style="font-size:12px">' + samples.join(' · ') + '</span>'
+          ? '<span style="font-size:12px;display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap">' + samples.map(s => '<span style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:2px 8px">' + s + '</span>').join('') + '</span>'
           : '<span style="color:var(--dim)">—</span>')
       + '</td>';
 
     return '<tr' + rowStyle + '>'
-      + '<td style="text-align:left" class="mono" data-label="模型 ID"><b>' + esc(m.id) + '</b></td>'
+      + '<td style="text-align:left" class="mono" data-label="?? ID" title="' + esc(m.id) + '"><b>' + esc(m.id) + '</b></td>'
       + nameCell
       + '<td style="text-align:center" data-label="消费倍率">' + credBadge + '</td>'
       + '<td style="text-align:center" data-label="能力">' + capHtml + '</td>'
@@ -7599,7 +8255,27 @@ async function loadSchedulerStatus(){
       ? (s.mode_intl || '账号 Token 自动保活与凭证常驻 (每日 22:00 集中巡检)')
       : (s.mode_cn || s.mode || '整点排程');
     if(txt) txt.textContent = s.enabled ? ('运行中 · ' + modeText) : '已暂停';
-    if(times) times.textContent = '上次: ' + (s.last_run_time || '-') + ' · 下次: ' + (s.next_run_time || '-');
+    if(times){
+      let line = '上次: ' + (s.last_run_time || '-') + ' · 下次: ' + (s.next_run_time || '-');
+      // 待触发的模型额度窗口：探针会在这些时刻到点时自动发请求，看不到就成了黑盒。
+      const wins = Array.isArray(s.windows) ? s.windows : [];
+      if(wins.length){
+        const w = wins[0];
+        const left = Math.max(0, Math.round(Number(w.reset_in) || 0));
+        const h = Math.floor(left / 3600);
+        const m = Math.floor((left % 3600) / 60);
+        line += ' · 待触发窗口 ' + wins.length + ' 个，最近: ' + (w.model || '-')
+             + '（' + (w.uid8 || '-') + '）' + (h ? h + 'h' : '') + m + 'm 后';
+      }
+      // 定时主动查询同样要看得见：知道下一次会查哪个模型，比黑盒轮询好。
+      const scans = Array.isArray(s.quota_scans) ? s.quota_scans.filter(x => !x.pending) : [];
+      if(scans.length){
+        const sc = scans[0];
+        line += ' · 额度查询 ' + scans.length + ' 条，最近: ' + (sc.model || '-')
+             + ' ' + fmtDueSec(sc.due_in) + ' 后';
+      }
+      times.textContent = line;
+    }
     if(btn) btn.textContent = s.enabled ? '暂停调度' : '启用调度';
     if(btnTrig) btnTrig.textContent = '立即巡检保活';
   }catch(e){}
@@ -7664,6 +8340,43 @@ async function doDailyChat(btn){
     }
     await refreshActiveRealm(); window.updateUI(); loadAccounts(); loadModels();
   }catch(e){ toast("打卡失败: " + e.message, "bad"); }
+  finally { btn.disabled = false; btn.textContent = ot; }
+}
+
+/* 今天还没有活跃打卡记录的国际版账号。判定口径与「今日活跃打卡状态」卡片完全一致
+ * （都用 activityStatusOf()），所以卡片上悬停看到的未打卡名单，就是下面按钮要打的那批。 */
+function pendingDailyChatAccounts(){
+  const all = window.ACCOUNTS || [];
+  return all.filter(a => a.realm === 'intl' && a.enabled).filter(a => {
+    const s = activityStatusOf(a);
+    return !(s.kind === 'ok' || s.kind === 'done');
+  });
+}
+
+// 卡片悬停提示：把未打卡账号逐个列出来，省得去账号页一个个比对。
+function pendingDailyChatTip(pending){
+  const MAX = 30;
+  const lines = pending.slice(0, MAX).map(a => '· ' + (a.nickname || String(a.uid || '').slice(0, 8)));
+  if(pending.length > MAX) lines.push('· …');
+  return '今日未打卡账号 (' + pending.length + ')：\n' + lines.join('\n');
+}
+
+/* 未活跃打卡一键打卡：只对今天还没打过卡的国际版账号补跑，名单交给服务端精确执行。
+ * 全部已打卡时直接提示，不发请求——重复打卡不会多给积分，只会白烧账号额度。 */
+async function doDailyChatPending(btn){
+  const pending = pendingDailyChatAccounts();
+  if(!pending.length){ toast("国际版账号今天都已打卡", "ok"); return; }
+  btn.disabled = true; const ot = btn.textContent; btn.textContent = "打卡中...";
+  try {
+    const r = await postJSON("/accounts/daily-chat", {uids: pending.map(a => String(a.uid))});
+    const res = r.results || [];
+    if(!res.length) toast("未发现待打卡的国际版账号", "warn");
+    else {
+      const summary = res.map(x => (x.nickname||x.uid.slice(0,6)) + ": " + (x.ok ? "活跃打卡成功" : (x.error||x.msg))).join("；");
+      toast("未活跃打卡: " + summary, res.some(x => x.ok) ? "ok" : "warn");
+    }
+    await refreshActiveRealm(); window.updateUI(); loadAccounts(); loadModels();
+  }catch(e){ toast("未活跃打卡失败: " + e.message, "bad"); }
   finally { btn.disabled = false; btn.textContent = ot; }
 }
 
@@ -8315,7 +9028,60 @@ const GETJSON_INFLIGHT = new Map();
 // 挂死保护：网络层僵住时 fetch 可能永远不落定，登记项会一直占着这个 URL，之后
 // 每一轮轮询都陪它一起等。超过这个时长就把登记项视为已死，放行新请求。
 const GETJSON_STALE_MS = 60000;
+// ---- 顶栏：运行日志窗口 + 关闭服务 ------------------------------------
+// 「眼睛」按钮在新窗口打开运行日志页：服务端不 spawn 任何进程，Windows /
+// macOS / 容器走同一条路（#427）。关闭服务不能凭一次 postJSON 的成败就宣布
+// 成功——容器或守护进程可能把进程重新拉起，所以要用 /health 复核（#426）。
+let GATEWAY_DOWN = false;
+
+function toggleConsoleWindow(){
+  let win = null;
+  try{ win = window.open('/dashboard?tab=logs', 'wb-logs', 'width=1000,height=640'); }catch(e){}
+  if(!win){ toast('浏览器拦截了新窗口，请允许弹窗后重试', 'bad'); return; }
+  try{ win.focus(); }catch(e){}
+  toast('已在新窗口打开运行日志', 'ok');
+}
+
+async function shutdownGateway(opts){
+  if(!confirm('确定关闭网关服务？进程会退出，需要重新运行启动脚本才能再次使用。')) return;
+  const pollMs = (opts && opts.pollMs) || 600;
+  const tries = (opts && opts.tries) || 10;
+  let sent = false;
+  try{ await postJSON('/shutdown', {}); sent = true; }
+  catch(e){
+    if(String(e.message) === 'unauthorized'){
+      toast('面板会话已失效，请重新登录后再关闭服务', 'bad');
+      return;
+    }
+    // 进程退出会掐断连接（Failed to fetch / 空响应），真正死没死看 /health。
+  }
+  for(let i = 0; i < tries; i++){
+    await new Promise(function(resolve){ setTimeout(resolve, pollMs); });
+    let alive = false;
+    try{
+      const res = await fetch('/health', {cache: 'no-store'});
+      alive = !!res.ok;
+    }catch(e){ alive = false; }
+    if(!alive) break;
+    if(i === tries - 1){
+      toast(sent
+        ? '停止请求已发送，但服务仍在运行：可能由容器或守护进程自动拉起'
+        : '关闭请求失败：服务仍在运行', sent ? 'warn' : 'bad');
+      return;
+    }
+  }
+  GATEWAY_DOWN = true;
+  toast('网关服务已关闭，需重新运行启动脚本才能恢复', 'warn');
+  const dot = document.getElementById('statusDot');
+  if(dot) dot.style.background = 'var(--bad)';
+  const t = document.getElementById('btnConsoleToggle');
+  if(t) t.disabled = true;
+  const s = document.getElementById('btnGatewayShutdown');
+  if(s) s.disabled = true;
+}
 async function getJSON(url, opts){
+  // 服务已关闭：所有轮询静默挂起，不再发请求（见 shutdownGateway）。
+  if(GATEWAY_DOWN) return new Promise(function(){});
   // cache 模式分两档，按"响应体在服务端是否有一份 TTL 缓存"来选：
   //
   //  - 默认 no-store：不落盘、每次整份重取。登录轮询（/accounts/login/poll）、
@@ -8351,6 +9117,7 @@ async function getJSON(url, opts){
 // no-store，免得"顺手加上"之后把必须每次都新的响应也变成可缓存校验的。
 const POLL_READ = {revalidate: true};
 async function postJSON(url, body){
+  if(GATEWAY_DOWN) throw new Error('服务已关闭');
   const r = await fetch(url, {method:'POST', headers: authHeaders({'Content-Type':'application/json'}),
                               body: JSON.stringify(body || {})});
   const t = await r.text();
@@ -8417,34 +9184,54 @@ function fmtLeft(seconds){
   if(m < 60) return m + 'm';
   return Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0') + 'm';
 }
-function coolPills(a){
+// 模型冷却 / 达日限额的胶囊：从账号列里拆出来，单独占一整行（colspan 跨满表头
+// 列数），文本完整可见、不再被 180px 的账号列切掉。
+//
+// 胶囊的悬停提示只补「可见文本没说的部分」——原因与影响范围。模型名、撞线 /
+// 恢复时刻、本地时间口径都已经画在胶囊上了，再塞进 title 就是同一句话说两遍
+// （第一版就是那样：悬停里一半是重复内容，用户明确要求去掉）。
+// 用整句常量而不是拼动态值：title 在 i18n 的 ATTRS 里，整句才能被 DICT 精确
+// 命中；一旦拼进模型名与时间戳，整串命不中键，只剩逐片段匹配，容易漏译。
+const TIP_COOL_HIT = '上游判定该模型额度用满（code 6004）；仅此模型受限，同账号其他模型照常接单';
+const TIP_COOL_PLAIN = '上游临时限流（429），到点自动恢复；仅此模型受限，同账号其他模型照常接单';
+const TIP_LIMIT = '该模型今日 token 用量达到「按模型每日 Token 限额」；仅此模型受限，同账号其他模型照常接单';
+const COOL_ROW_COLS = 11;   // 与 accounts 表头的列数一致
+function coolRow(a){
   const list = a && Array.isArray(a.modelCooldowns) ? a.modelCooldowns : [];
   const pills = list.map(c => {
     const at = c && fmtCoolAt(c.expiresAt);
     if(!at) return '';
-    // 撞过线（上游 code 6004）的模型带 cappedAt：把撞线时间一并画出来，
+    // 撞过线（上游 code 6004）的模型带 cappedAt：把撞线时间一并写出来，
     // 两段时间配合就能看出这是窗口配额用满，而不是一次临时限流。
     const hit = c && fmtCoolAt(c.cappedAt);
     return hit
-      ? '<span class="cool-pill" title="该账号仅此模型受限（上游判定额度用满）；撞线时间与恢复时间均为本地时间">'
-        + esc(c.model) + ' · 撞线 ' + hit + ' · 恢复 ' + at + '</span>'
-      : '<span class="cool-pill" title="该账号仅此模型受限；时间为本地时间">'
-        + esc(c.model) + ' · ' + at + ' 恢复</span>';
+      ? '<span class="cool-pill" title="' + esc(TIP_COOL_HIT) + '">'
+        + esc(c.model) + ' · 撞线 ' + hit + ' · 恢复 ' + at + '（时间为本地时间）</span>'
+      // 这一支的措辞刻意与 6004 那支错开：用「恢复时刻」而不是「恢复」。因为
+      // DICT 里已有一条 ' 恢复': ''（给「剩余用量」的「），额度 X 恢复」用，
+      // 那边整词要并进 returns at），胶囊若也用「X 恢复」，英文会被那段规则
+      // 先手吃掉，变成「18:04(times are local)」——「back」整个丢了。
+      : '<span class="cool-pill" title="' + esc(TIP_COOL_PLAIN) + '">'
+        + esc(c.model) + ' · 恢复时刻 ' + at + '（时间为本地时间）</span>';
   }).filter(Boolean);
-  return pills.length ? '<div class="cool-list">' + pills.join('') + '</div>' : '';
+  if(!pills.length) return '';
+  return '<tr class="cool-row"><td colspan="' + COOL_ROW_COLS + '">'
+    + '<div class="cool-list">' + pills.join('') + '</div></td></tr>';
 }
 
-// 按模型达日限额的模型清单（与冷却并列展示）：只影响列出的模型，其他模型照常。
-function modelLimitPills(a){
+// 按模型达日限额的清单（与冷却同一行承载）：只影响列出的模型，其他模型照常。
+function limitRow(a){
   const limit = Number(a.modelDailyTokenLimit || 0);
   if(limit <= 0 || !a.modelDailyTokens) return '';
   const hit = Object.entries(a.modelDailyTokens)
     .filter(([mid, v]) => Number(v) >= limit);
   if(!hit.length) return '';
-  return '<div class="cool-list">' + hit.map(([mid, v]) =>
-    '<span class="cool-pill" title="该模型今日已达限额，仅此模型受限（本地 0 点恢复）">'
-      + esc(mid) + ' · ' + fmt(v) + ' tok 达限</span>'
-  ).join('') + '</div>';
+  return '<tr class="cool-row"><td colspan="' + COOL_ROW_COLS + '">'
+    + '<div class="cool-list">' + hit.map(([mid, v]) =>
+        '<span class="cool-pill" title="' + esc(TIP_LIMIT) + '">'
+        + esc(mid) + ' · 今日已用 ' + fmt(v)
+        + ' / 上限 ' + fmt(limit) + ' token 已达限额（本地 0 点恢复）</span>'
+      ).join('') + '</div></td></tr>';
 }
 
 // ---- 每日活动（国内签到 / 国际活跃）------------------------------------
@@ -8611,16 +9398,24 @@ async function loadActivityToday(){
 function updateTaskPageCheckinCards(){
   const allList = window.ACCOUNTS || [];
   const stateEl = document.getElementById("intlTodayActiveState");
+  const intlCard = document.getElementById("cardIntlTodayActive");
   if(stateEl){
+    // 卡片（与卡片里的数值）都挂上同一个 title，鼠标落在卡片任何位置都能看到名单。
+    const setCardTip = tip => {
+      stateEl.title = tip;
+      if(intlCard) intlCard.title = tip;
+    };
     const intlAccts = allList.filter(a => a.realm === 'intl' && a.enabled);
     if(!intlAccts.length){
       stateEl.textContent = '无国际账号';
+      setCardTip('');
     } else {
       const isDone = a => {
         const s = activityStatusOf(a);
         return s.kind === 'ok' || s.kind === 'done';
       };
-      const doneCount = intlAccts.filter(isDone).length;
+      const pending = intlAccts.filter(a => !isDone(a));
+      const doneCount = intlAccts.length - pending.length;
       if(doneCount === intlAccts.length){
         stateEl.innerHTML = '<span style="color:var(--accent2)">今日已打卡 (' + doneCount + '/' + intlAccts.length + ')</span>';
       } else if(doneCount > 0){
@@ -8628,6 +9423,8 @@ function updateTaskPageCheckinCards(){
       } else {
         stateEl.innerHTML = '<span style="color:var(--warn)">今日未打卡 (0/' + intlAccts.length + ')</span>';
       }
+      // 悬停看未打卡名单：与「未活跃打卡一键打卡」按钮要打的那批同源，看到什么就打什么。
+      setCardTip(pending.length ? pendingDailyChatTip(pending) : '国际版账号今天都已打卡');
     }
   }
 
@@ -8772,9 +9569,12 @@ function accountRow(a){
   // both the attribute and the quoted JS string. uid comes from an upstream
   // JWT; treat it as untrusted and keep it to a safe charset.
   const uidAttr = esc(String(a.uid || '').replace(/[^\w.@-]/g, ''));
+  const realmAttr = esc(String(a.realm || 'intl').replace(/[^\w-]/g, ''));
   const nameAttr = esc(String(a.nickname || '').replace(/["'\\<>]/g, ''));
   const usage = USAGE_BY_ACCOUNT[a.uid] || {};
+  const isTokenBad = !!(a.tokenExpired || a.expiresIn === 'expired');
   const state = !a.enabled ? '<span class="badge off">已停用</span>'
+              : isTokenBad ? '<span class="badge bad" title="登录凭证已失效（上游返回 401 或已过期），请重新登录">凭证失效</span>'
               : a.reserveBlocked ? '<span class="badge warn">保留积分</span>'
               : a.dailyLimitBlocked ? '<span class="badge warn" title="今日已用 ' + fmt(a.dailyTokensToday || 0) + ' / ' + fmt(a.dailyTokenLimit || 0) + ' token，暂停接单（本地 0 点恢复）">日限额</span>'
               : a.creditLimitReached ? '<span class="badge warn" title="今日已消费 ' + Number(a.dailyCreditsToday || 0).toFixed(2) + ' / ' + (a.dailyCreditLimit || 0) + ' 积分，仅免费模型可用（本地 0 点恢复）">积分限额</span>'
@@ -8786,22 +9586,42 @@ function accountRow(a){
               : a.inCooldown ? '<span class="badge warn"' + (Number(a.softStreak || 0) > 1 ? ' title="连续软限流 ' + Number(a.softStreak) + ' 次，冷却时间按 2 倍递增"' : '') + '>冷却 ' + (a.cooldownFor||0) + 's</span>'
               : a.expiresIn === 'expired' ? '<span class="badge bad">已过期</span>'
               : '<span class="badge ok">可用</span>';
-  const pills = coolPills(a);
-  const limitPills = modelLimitPills(a);
+  // 模型冷却 / 达日限额的胶囊不放在账号列里：那里只有 180px，长模型名必然被
+  // 省略号切掉。它们改成账号行之后紧跟的一整行（coolRow / limitRow）在
+  // </tr> 之后输出，宽度够把话说全。
   // The visible label keeps the exact truncation it had before; the tooltip carries
   // the whole upstream body (lastErrorDetail) so a 429 reason is readable on hover
   // without widening the card.
+  // 「到期 358 days」收成「到期：358d」；完整原值（data-tip）保持后端给的原样。
+  const expRaw = String(a.expiresIn || '?');
+  const expShort = expRaw.replace(/\s*days?$/i, 'd').replace(/\s*hours?$/i, 'h');
+  // 报错只画可扫读的短标签「HTTP 429 · code:6004」；完整响应进悬浮气泡
+  // （data-tip），行尾的 ⓘ 提示可悬停查看。原样打印整段响应会把账号列
+  // 拉宽、也读不出重点。
   const errFull = a.lastErrorDetail || a.lastError || '';
-  const err = a.lastError && !(pills && a.lastError === 'HTTP 429 (model throttled)')
-    ? '<div class="hint" style="color:var(--warn);margin:2px 0 0;cursor:help" data-tip="' + esc(errFull) + '">' + esc(a.lastError) + '</div>' : '';
+  let err = '';
+  // 模型级 429（6004）由 coolRow 画「撞线 / 恢复」；lastError 只是那次的
+  // 历史记录，冷却到期后也不能把旧记录再画成账号级错误（#454）。
+  if (a.lastError && a.lastError !== 'HTTP 429 (model throttled)') {
+    const httpM = String(a.lastError).match(/HTTP\s+(\d{3})/);
+    const codeM = String(errFull).match(/"code"\s*:\s*(\d+)/);
+    const label = httpM
+      ? ('HTTP ' + httpM[1] + (codeM ? ' · code:' + codeM[1] : ''))
+      : String(a.lastError).slice(0, 60);
+    err = '<div class="acct-err" data-tip="' + esc(errFull) + '">'
+        + '<span class="err-label">' + esc(label) + '</span>'
+        + '<span class="err-info" aria-hidden="true">ⓘ</span></div>';
+  }
   const cred = a.credits;
   let expBadge = '';
   if(cred && cred.earliest_expiring && cred.earliest_expiring.days_left !== undefined && cred.earliest_expiring.days_left !== null){
     const d = Number(cred.earliest_expiring.days_left);
     if(d <= 3 && d >= 0){
-      expBadge = '<span class="badge mini bad" style="font-size:10px;padding:1px 4px" title="最近套餐包将于 ' + esc(cred.earliest_expiring.cycle_end_time.slice(5,10)) + ' 到期 (剩' + d.toFixed(1) + '天)">临期</span>';
+      const expEnd = String(cred.earliest_expiring.cycle_end_time || '');
+      expBadge = '<span class="badge mini bad" style="font-size:10px;padding:1px 4px" title="最近套餐包将于 ' + esc(expEnd.slice(5,10)) + ' 到期 (剩' + d.toFixed(1) + '天)">临期</span>';
     } else if(d <= 7 && d >= 0){
-      expBadge = '<span class="badge mini warn" style="font-size:10px;padding:1px 4px" title="最近套餐包将于 ' + esc(cred.earliest_expiring.cycle_end_time.slice(5,10)) + ' 到期 (剩' + Math.ceil(d) + '天)">7天内到期</span>';
+      const expEnd = String(cred.earliest_expiring.cycle_end_time || '');
+      expBadge = '<span class="badge mini warn" style="font-size:10px;padding:1px 4px" title="最近套餐包将于 ' + esc(expEnd.slice(5,10)) + ' 到期 (剩' + Math.ceil(d) + '天)">7天内到期</span>';
     }
   }
   const credText = (a.provider === 'trae')
@@ -8834,34 +9654,55 @@ function accountRow(a){
     weightOpts += '<option value="' + i + '"' + (weight === i ? ' selected' : '') + '>' + i + '</option>';
   }
   if(weight > 10) weightOpts += '<option value="' + weight + '" selected>' + weight + '</option>';
-  return '<tr>'
+  // 人工禁用的模型名单（账号级黑名单，与自动冷却无关）
+  const deny = (a.disabledModels || []);
+  // 冷却 / 达日限额的胶囊紧跟本账号行另起一整行：账号列只有 180px，长模型名
+  // 在那里必然被省略号切掉，整行才放得下完整文本。colspan 跨满表头列数，
+  // 所以桌面与窄屏（grid 下 td[colspan] 已跨满 6 栏）都不用再各自的宽度。
+  // 有续行时给账号行打 has-alert：两行是同一块内容，中间不该有分割线（见 CSS）。
+  const alertRows = coolRow(a) + limitRow(a);
+  return '<tr' + (alertRows ? ' class="has-alert"' : '') + '>'
     + '<td style="text-align:center;white-space:nowrap" data-label="版本">' + realmBadge + '</td>'
     + '<td style="text-align:left" data-label="账号">'
-    +   '<div style="font-weight:600;font-size:13px;color:var(--fg)">' + esc(a.nickname) + '</div>'
-    + '<div class="mono" style="color:var(--dim);font-size:11px;white-space:nowrap">' + esc(a.uid.slice(0,8)) + ' · ' + esc(a.source) + ' · 到期 ' + esc(a.expiresIn || '?') + '</div>'
-    + (a.machineId ? ('<div class="mono" style="color:var(--dim);font-size:10px;margin-top:2px;white-space:nowrap" title="由账号UID稳定派生的专属设备码，防多号关联风控">设备码: ' + esc(a.machineId.slice(0,14)) + '...</div>') : '')
-    + (a.note
-        ? '<div style="font-size:11px;color:var(--accent2);margin-top:2px;cursor:pointer" title="点击编辑备注" onclick="editAccountNote(&quot;' + uidAttr + '&quot;)">备注: ' + esc(a.note) + '</div>'
-        : '<div style="font-size:10px;color:var(--dim);margin-top:2px;cursor:pointer;opacity:.7" title="点击添加备注，比如「批量」/「自用」" onclick="editAccountNote(&quot;' + uidAttr + '&quot;)">+ 备注</div>')
-    + err + pills + limitPills + '</td>'
+    // 账号名（大一号）+ 备注 chip 同一行；备注从独立一行收进账号后面。
+    +   '<div class="acct-name-row">'
+    +     '<span class="acct-name" title="' + esc(a.nickname) + '">' + esc(a.nickname) + '</span>'
+    +     (a.note
+          ? '<span class="note-chip has" title="点击编辑备注" onclick="editAccountNote(&quot;' + uidAttr + '&quot;)">' + esc(a.note) + '</span>'
+          : '<span class="note-chip" title="点击添加备注，比如「批量」/「自用」" onclick="editAccountNote(&quot;' + uidAttr + '&quot;)">+ 备注</span>')
+    +   '</div>'
+    // 次要信息收成一行：值截断到几个字符，完整值走悬浮气泡（data-tip）。
+    +   '<div class="acct-meta mono">'
+    +     '<span data-tip="账号 ID：' + esc(String(a.uid || '')) + '">' + esc(a.source) + '：' + esc(String(a.uid || '').slice(0, 5)) + '…</span>'
+    +     ' · <span data-tip="凭证到期：' + esc(expRaw) + '">到期：' + esc(expShort) + '</span>'
+    +     (a.machineId ? ' · <span data-tip="设备码：' + esc(String(a.machineId)) + '（由账号 UID 稳定派生的专属设备码，防多号关联风控）">设备码:' + esc(String(a.machineId).slice(0, 4)) + '…</span>' : '')
+    +   '</div>'
+    + (deny.length
+        // 这一行的可见文本没有 ellipsis，名单再长也会换行显示完整，所以悬停里
+        // 只留「点击能干什么」，不再把名单重复一遍（重复即噪音）。
+        ? '<div style="font-size:11px;color:var(--warn);margin-top:2px;cursor:pointer" title="' + esc('点击编辑该账号禁用的模型（逗号分隔；留空 = 不限制）') + '" onclick="editAccountDisabledModels(&quot;' + uidAttr + '&quot;)">禁用的模型: ' + esc(deny.join(', ')) + '</div>'
+        : '<div style="font-size:10px;color:var(--dim);margin-top:2px;cursor:pointer;opacity:.7" title="点击设置该账号禁用的模型：命中的模型不再派给这个号，池子里其他号照常接单" onclick="editAccountDisabledModels(&quot;' + uidAttr + '&quot;)">+ 禁用模型</div>')
+    + err + '</td>'
     + '<td style="text-align:center" data-label="状态">' + state + '</td>'
     + '<td style="text-align:center" data-label="今日活动">' + activityStatusChip(a) + '</td>'
     + '<td style="text-align:center" data-label="出口">' + slotSelectHtml(a) + '</td>'
     + '<td style="text-align:center;white-space:nowrap" data-label="权重">'
     +   '<select class="mini-select" title="' + esc(WEIGHT_TIP) + '" onchange="setAccountWeight(&quot;' + uidAttr + '&quot;, this.value, this)">' + weightOpts + '</select></td>'
-    + '<td style="text-align:left;white-space:nowrap" data-label="积分">' + credText + '</td>'
+    + '<td style="text-align:left;white-space:normal" data-label="积分">' + credText + '</td>'
     + '<td style="text-align:right" data-label="请求">' + fmt(usage.requests) + '</td>'
-    + '<td style="text-align:right" data-label="总 token">' + fmt(usage.total_tokens) + '</td>'
-    + '<td style="text-align:right" data-label="缓存">' + fmt(usage.cached_tokens) + '</td>'
-    + '<td class="acct-actions" style="text-align:center;white-space:nowrap;vertical-align:middle">'
+    + '<td style="text-align:right" data-label="总 token" data-tip="' + fmt(usage.total_tokens) + '">' + fmtCompact(usage.total_tokens) + '</td>'
+    + '<td style="text-align:right" data-label="缓存" data-tip="' + fmt(usage.cached_tokens) + '">' + fmtCompact(usage.cached_tokens) + '</td>'
+    + '<td class="acct-actions" style="text-align:center;vertical-align:middle">'
     + '<div class="acct-actions-col">'
     +   '<div class="acct-actions-row">'
     +     '<button class="sec mini" onclick="toggleAccount(&quot;' + uidAttr + '&quot;,' + (!a.enabled) + ', this)">' + (a.enabled ? '停用' : '启用') + '</button>'
     // Qoder 账号的「测试」发一条最小聊天请求（服务端按 provider 走 COSY）。
     +     '<button class="sec mini" onclick="testAccount(&quot;' + uidAttr + '&quot;, this)">测试</button>'
-    +     '<button class="sec mini" onclick="refreshOne(&quot;' + uidAttr + '&quot;, this)">刷新凭证</button>'
+    +     (isTokenBad
+          ? '<button class="bad mini" onclick="openLoginModal(&quot;' + realmAttr + '&quot;)" title="凭证已失效，点击重新登录">重新登录</button>'
+          : '<button class="sec mini" onclick="refreshOne(&quot;' + uidAttr + '&quot;, this)">刷新凭证</button>')
     +     (a.provider === 'workbuddy'
-          ? '<button class="sec mini" onclick="syncProfile(&quot;' + uidAttr + '&quot;, this)" title="从 Web 控制台同步最新昵称（改名后免重登）">同步昵称</button>'
+          ? '<button class="sec mini" onclick="syncProfile(&quot;' + uidAttr + '&quot;, this)" title="从 Web 端同步账号昵称">同步昵称</button>'
           : '')
     +   '</div>'
     +   '<div class="acct-actions-row">'
@@ -8877,7 +9718,8 @@ function accountRow(a){
     +     '<button class="danger mini" onclick="deleteAccount(&quot;' + uidAttr + '&quot;,&quot;' + nameAttr + '&quot;, this)">删除</button>'
     +   '</div>'
     + '</div>'
-    + '</td></tr>';
+    + '</td></tr>'
+    + alertRows;
 }
 
 // 悬停气泡（全局单例）。用自定义 DOM 而不是原生 title：原生 tooltip 由浏览器
@@ -8972,11 +9814,20 @@ function disabledRows(){
     }
     (Array.isArray(a.modelCooldowns) ? a.modelCooldowns : []).forEach(c => {
       if(!c || !c.model) return;
-      // 带 cappedAt 的是 6004 撞线（恢复时间来自上游）：撞线时间单独一列，
-      // 没有撞线记录的临时限流窗口该列为「—」。
+      // 带 cappedAt 的是 6004 撞线（恢复时间来自上游）：撞线时间单独一列。
       const hit = c.cappedAt ? fmtCoolAt(c.cappedAt) : '';
+      // 起始时刻：6004 用上游给的撞线时刻；其余 429 用 hub 记下的限流时刻
+      // （c.startedAt）。两者都取不到时才留空——不用假值填充表格。
+      const started = hit || (c.startedAt ? fmtCoolAt(c.startedAt) : '');
+      // 两类模型级限流的原因必须分开写：带 cappedAt 的是上游 6004 配额耗尽
+      // （恢复时间以小时计），不带 cappedAt 的只是一次 429 临时限流（60s~10m
+      // 的短窗口，到点自动恢复）。共用一句「配额耗尽」会把短时 parking 说成
+      // 要等几小时，也让真正该关注的 6004 淹没在里面。
       rows.push({who, realm, scope: c.model, kind: '上游限流', detail, cappedAt: hit,
-                 reason: '该模型配额耗尽（code 6004），同账号其他模型不受影响',
+                 startedAt: started,
+                 reason: hit
+                   ? '该模型配额耗尽（code 6004），同账号其他模型不受影响'
+                   : '该模型被上游临时限流（429），仅此模型受限，到点自动恢复',
                  until: fmtCoolAt(c.expiresAt)});
     });
     if(a.dailyLimitBlocked){
@@ -9021,7 +9872,7 @@ function renderDisabled(){
     + '<th style="text-align:left">范围</th>'
     + '<th style="text-align:center;width:100px">类型</th>'
     + '<th style="text-align:left">原因</th>'
-    + '<th style="text-align:center;width:156px">撞线时间</th>'
+    + '<th style="text-align:center;width:156px">开始时间</th>'
     + '<th style="text-align:center;width:156px">恢复时间</th>'
     + '</tr></thead><tbody>'
     + rows.map(r => '<tr>'
@@ -9031,8 +9882,10 @@ function renderDisabled(){
         + '<td style="text-align:center"><span class="badge ' + badge(r.kind) + '">' + esc(r.kind) + '</span></td>'
         + '<td style="text-align:left"' + (r.detail ? ' data-tip="' + esc(r.detail) + '"' : '') + '>'
           + esc(r.reason) + '</td>'
-        // 撞线时间：只有 6004 撞线（持久化的 model_caps）才有；其余行「—」。
-        + '<td style="text-align:center">' + esc(r.cappedAt || '—') + '</td>'
+        // 开始时间：这一行是何时进入该状态的。模型级限流两类都有真实时刻——
+        // 6004 是上游给的撞线时刻（cappedAt），临时 429 是 hub 记下的限流时刻
+        // （startedAt）；其余行类没有起始时刻，留「—」。
+        + '<td style="text-align:center">' + esc(r.startedAt || '—') + '</td>'
         + '<td style="text-align:center">' + (r.manual ? '—（需手动启用）' : (r.until || '—')) + '</td>'
         + '</tr>').join('')
     + '</tbody></table></div>';
@@ -9221,17 +10074,17 @@ function renderAccounts(){
     return;
   }
   box.innerHTML = '<div class="table-wrap"><table class="data-cards account-cards"><thead><tr>'
-    + '<th style="text-align:center;width:76px">版本</th>'
+    + '<th style="text-align:center">版本</th>'
     + '<th style="text-align:left">账号</th>'
-    + '<th style="text-align:center;width:84px">状态</th>'
-    + '<th style="text-align:center;width:118px">今日活动</th>'
-    + '<th style="text-align:center;width:150px">出口</th>'
-    + '<th style="text-align:center;width:64px">权重</th>'
-    + '<th style="text-align:left;width:120px">积分</th>'
-    + '<th style="text-align:right;width:70px">请求</th>'
-    + '<th style="text-align:right;width:88px">总 token</th>'
-    + '<th style="text-align:right;width:80px">缓存</th>'
-    + '<th style="text-align:center;width:232px">操作</th>'
+    + '<th style="text-align:center">状态</th>'
+    + '<th style="text-align:center">今日活动</th>'
+    + '<th style="text-align:center">出口</th>'
+    + '<th style="text-align:center">权重</th>'
+    + '<th style="text-align:left">积分</th>'
+    + '<th style="text-align:right">请求</th>'
+    + '<th style="text-align:right">总 token</th>'
+    + '<th style="text-align:right">缓存</th>'
+    + '<th style="text-align:center">操作</th>'
     + '</tr></thead><tbody>' + list.map(accountRow).join('') + '</tbody></table></div>';
   // 表下不再堆两行说明图例（出站身份解释留在每行身份按钮组的悬停提示里，
   // 轮询/粘性说明挂到「账号列表」标题上），表格底部保持干净。
@@ -9326,6 +10179,96 @@ async function editAccountNote(uid){
     toast('备注保存失败: ' + e.message, 'bad');
   }
 }
+
+async function editAccountDisabledModels(uid){
+  const cur = (window.ACCOUNTS || []).find(a => a.uid === uid);
+  if(!cur) return;
+  // 按**该账号自己的**区域取模型清单：看板当前视图切到别的区域时，
+  // MODELS_DATA 里那份是另一个区域的，用它会给出对不上的选项。
+  const realm = cur.realm || window.VIEW_REALM;
+  let models = [];
+  try{
+    const r = await getJSON('/v1/models?realm=' + encodeURIComponent(realm));
+    models = (r.data || []).map(m => m.id).filter(Boolean).sort();
+  }catch(e){
+    toast('取模型清单失败: ' + e.message, 'bad');
+    return;
+  }
+  if(!models.length){ toast('该区域没有可用模型', 'bad'); return; }
+
+  const denied = new Set(cur.disabledModels || []);
+  // 面板按「启用的模型」勾选，默认全选 = 不限制；**取消勾选即禁用**。
+  const picked = new Set(models.filter(m => !denied.has(m)));
+  const nick = esc(cur.nickname || uid.slice(0, 8));
+
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask';
+  mask.style.display = 'flex';
+  mask.innerHTML = '<div class="modal" role="dialog" aria-modal="true" style="width:min(560px,100%)">'
+    + '<div class="modal-hd"><h2>启用模型 · ' + nick + '</h2>'
+    +   '<button class="modal-x" aria-label="关闭">×</button></div>'
+    + '<div class="modal-bd">'
+    +   '<div style="font-size:12px;color:var(--dim);line-height:1.7;margin-bottom:10px">'
+    +     '取消勾选的模型<b>不再派给这个账号</b>，请求会自动落到池子里其他账号；其余模型不受影响。'
+    +     '<br>默认全部勾选 = 不限制。区域 <b>' + esc(realm) + '</b>，共 ' + models.length + ' 个模型。'
+    +   '</div>'
+    +   '<div id="mdmList" style="max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px 10px"></div>'
+    +   '<div style="display:flex;align-items:center;gap:8px;margin-top:12px">'
+    +     '<button class="sec" id="mdmAll">全选</button>'
+    +     '<button class="sec" id="mdmNone">全不选</button>'
+    +     '<span style="flex:1"></span><span id="mdmCount" style="font-size:12px"></span>'
+    +   '</div>'
+    + '</div>'
+    + '<div class="modal-ft">'
+    +   '<button class="sec" id="mdmCancel">取消</button>'
+    +   '<button id="mdmSave">保存</button>'
+    + '</div></div>';
+
+  const listEm = mask.querySelector('#mdmList');
+  const countEm = mask.querySelector('#mdmCount');
+  listEm.innerHTML = models.map(m =>
+    '<label style="display:flex;align-items:center;gap:8px;padding:5px 2px;cursor:pointer;font-size:13px">'
+    + '<input type="checkbox" data-model="' + esc(m) + '"' + (picked.has(m) ? ' checked' : '') + '>'
+    + '<span class="mono">' + esc(m) + '</span></label>').join('');
+  function updateCount(){
+    const off = models.length - picked.size;
+    countEm.textContent = off ? ('将禁用 ' + off + ' 个') : '不限制';
+    countEm.style.color = off ? 'var(--warn)' : 'var(--dim)';
+  }
+  updateCount();
+  // 只更新计数、不重建复选框：重建会把滚动位置和焦点抖掉。
+  listEm.addEventListener('change', function(ev){
+    const box = ev.target;
+    if(!box || box.type !== 'checkbox') return;
+    if(box.checked) picked.add(box.dataset.model);
+    else picked.delete(box.dataset.model);
+    updateCount();
+  });
+  function setAll(on){
+    picked.clear();
+    if(on) models.forEach(m => picked.add(m));
+    listEm.querySelectorAll('input[type=checkbox]').forEach(b => { b.checked = on; });
+    updateCount();
+  }
+  mask.querySelector('#mdmAll').onclick = function(){ setAll(true); };
+  mask.querySelector('#mdmNone').onclick = function(){ setAll(false); };
+  function close(){ mask.remove(); }
+  mask.querySelector('.modal-x').onclick = close;
+  mask.querySelector('#mdmCancel').onclick = close;
+  mask.addEventListener('click', function(ev){ if(ev.target === mask) close(); });
+  mask.querySelector('#mdmSave').onclick = async function(){
+    const denyList = models.filter(m => !picked.has(m));   // 未勾选 = 禁用
+    try{
+      await postJSON('/accounts/set', {uid: uid, disabledModels: denyList});
+      await loadAccounts();
+      toast(denyList.length ? ('已禁用 ' + denyList.length + ' 个模型') : '已取消模型禁用', 'ok');
+      close();
+    }catch(e){
+      toast('保存失败: ' + e.message, 'bad');
+    }
+  };
+  document.body.appendChild(mask);
+}
 async function setAccountProduct(uid, prod, btn){
   const names = {
     'workbuddy': 'WorkBuddy 独立桌面客户端 (WB)',
@@ -9419,6 +10362,9 @@ async function testAccount(uid, btn){
     const r = await postJSON('/accounts/test', {uid: uid, provider: currentProvider()});
     if(r.ok){
       toast('测试通过 (' + r.elapsed_ms + 'ms) [' + r.model + ']: ' + (r.reply || '正常'), 'ok');
+    } else if(r.network){
+      // 本机断网时上游一个字节都没收到：说清是网络问题，别让人以为账号坏了。
+      toast('本机网络不可用: ' + (r.error || 'DNS/路由失败'), 'bad');
     } else {
       toast('测试失败: ' + (r.error || r.status || '异常'), 'bad');
     }
@@ -9428,6 +10374,95 @@ async function testAccount(uid, btn){
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = '测试'; }
   }
+}
+
+/* 一键测试：区域内每个已启用账号 + 本机连通性一次看全。
+   池子出问题时最需要分辨的就是「账号真不行」与「本机没网 / 只是被本地窗口关着」，
+   红点一屏的时候，逐个点测出来的结论往往是错的。 */
+function openTestAll(){
+  const m = document.getElementById('testAllModal');
+  const body = document.getElementById('testAllBody');
+  if(body) body.innerHTML = '<p class="hint">正在测试…</p>';
+  if(m) m.classList.add('show');
+}
+function closeTestAll(){
+  const m = document.getElementById('testAllModal');
+  if(m) m.classList.remove('show');
+}
+
+async function testAccounts(btn){
+  if(btn){ btn.disabled = true; btn.textContent = '测试中...'; }
+  openTestAll();
+  try{
+    const r = await postJSON('/accounts/test', {realm: window.VIEW_REALM});
+    renderTestAll(r);
+    const s = r.summary || {};
+    if(s.networkDown){
+      toast('本机网络不通：' + ((r.network || {}).error || 'DNS/路由失败') + '（账号未被计入熔断）', 'bad');
+    } else {
+      toast('一键测试: ' + (s.passed || 0) + '/' + (s.tested || 0) + ' 通过 (' + (s.elapsed_ms || 0) + 'ms)',
+            (s.failed ? 'warn' : 'ok'));
+    }
+    await loadAccounts();
+  }catch(e){
+    const body = document.getElementById('testAllBody');
+    if(body) body.innerHTML = '<p class="hint" style="color:var(--warn)">测试请求失败: ' + esc(e.message) + '</p>';
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '一键测试'; }
+  }
+}
+
+function renderTestAll(r){
+  const body = document.getElementById('testAllBody');
+  if(!body) return;
+  const net = r.network || {};
+  const s = r.summary || {};
+  const rows = r.results || [];
+  let html = '';
+  // 本机连通性单独一行放最前面：它不通的话，下面的红点一个都不能算账号的账。
+  html += '<div style="background:' + (net.ok ? 'var(--accent2-soft)' : 'var(--bad-soft)')
+    + ';border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px">'
+    + '<b>' + (net.ok ? '本机网络正常' : '本机网络不通') + '</b>'
+    + '<span class="hint" style="margin-left:8px">' + esc(net.host || '')
+    + (net.ip ? ' → ' + esc(net.ip) : '')
+    + (net.dns_ms !== null && net.dns_ms !== undefined ? ' · DNS ' + net.dns_ms + 'ms' : '')
+    + (net.tcp_ms !== null && net.tcp_ms !== undefined ? ' · TCP ' + net.tcp_ms + 'ms' : '')
+    + (net.ok ? '' : ' · ' + esc(net.error || ''))
+    + '</span></div>';
+  html += '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;font-size:13px">'
+    + '<span>共测 <b>' + esc(String(s.tested || 0)) + '</b></span>'
+    + '<span>通过 <b style="color:var(--accent2)">' + esc(String(s.passed || 0)) + '</b></span>'
+    + '<span>失败 <b style="color:var(--warn)">' + esc(String(s.failed || 0)) + '</b></span>'
+    + '<span class="hint">模型 ' + esc(s.model || '') + ' · 耗时 ' + esc(String(s.elapsed_ms || 0)) + 'ms</span>'
+    + '</div>';
+  if(!rows.length){
+    html += '<p class="hint">该区域没有已启用的账号。</p>';
+  } else {
+    html += '<div class="table-wrap"><table class="data-cards"><thead><tr>'
+      + '<th style="text-align:left">账号</th><th style="text-align:center">结果</th>'
+      + '<th style="text-align:center;width:90px">耗时</th>'
+      + '<th style="text-align:left">回复 / 原因</th></tr></thead><tbody>';
+    rows.forEach(row => {
+      // 本机断网的行单独标出来：这不是账号的问题，不该跟真失败画成一个颜色。
+      const badge = row.ok ? '<span class="badge ok">通过</span>'
+                  : row.network ? '<span class="badge warn">本机网络</span>'
+                  : '<span class="badge bad">失败</span>';
+      const detail = row.ok ? (row.reply || '正常') : (row.error || '');
+      // 失败行带上「连续失败 N 次」：这是熔断的唯一依据，看得见才知道离熔断还有多远。
+      const ladder = (!row.ok && Number(row.fails || 0) > 0)
+        ? '（连续失败 ' + Number(row.fails) + ' 次）' : '';
+      html += '<tr>'
+        + '<td style="text-align:left"><b>' + esc(row.nickname || (row.uid || '').slice(0, 8)) + '</b>'
+        + '<div class="mono" style="font-size:11px;color:var(--dim)">'
+        + esc((row.uid || '').slice(0, 8)) + ' · ' + esc(row.realm === 'cn' ? '国内版' : '国际版') + '</div></td>'
+        + '<td style="text-align:center">' + badge + '</td>'
+        + '<td style="text-align:center">' + esc(String(row.elapsed_ms || 0)) + 'ms</td>'
+        + '<td style="text-align:left;font-size:12px">' + esc(detail + ladder) + '</td>'
+        + '</tr>';
+    });
+    html += '</tbody></table></div>';
+  }
+  body.innerHTML = html;
 }
 async function refreshAccounts(btn){
   if(btn){ btn.disabled = true; btn.textContent = '刷新中...'; }
@@ -9694,6 +10729,11 @@ async function openCreditsDetail(uid, forceRefresh = false){
   const m = document.getElementById("creditsDetailModal");
   if(m) m.classList.add("show");
 
+  const errEl = document.getElementById("creditsModalError");
+  if(errEl) errEl.style.display = "none";
+  const contEl = document.getElementById("creditsModalContent");
+  if(contEl) contEl.style.display = "block";
+
   const searchInput = document.getElementById("cmPkgSearch");
   if(searchInput) searchInput.value = "";
   const sortSelect = document.getElementById("cmPkgSort");
@@ -9743,7 +10783,9 @@ async function reloadCreditsDetail(btn){
   if(btnEl){ btnEl.disabled = true; btnEl.textContent = "刷新中..."; }
   const loadingEl = document.getElementById("creditsModalLoading");
   const contentEl = document.getElementById("creditsModalContent");
+  const errorEl = document.getElementById("creditsModalError");
   if(loadingEl && (!contentEl || contentEl.style.display === 'none')) loadingEl.style.display = "block";
+  if(errorEl) errorEl.style.display = "none";
 
   try {
     const res = await postJSON("/accounts/credits/detail", { uid: CURRENT_CREDIT_DETAIL_UID, refresh: true, provider: currentProvider() });
@@ -9753,17 +10795,51 @@ async function reloadCreditsDetail(btn){
       const acct = (window.ACCOUNTS || []).find(a => a.uid === CURRENT_CREDIT_DETAIL_UID);
       if(acct){
         acct.credits = res.credits;
+        acct.tokenExpired = false;
         renderAccounts();
       }
+      if(errorEl) errorEl.style.display = "none";
+      if(contentEl) contentEl.style.display = "block";
       renderCreditsDetail(res.credits, acct);
     } else {
-      toast("拉取积分明细失败: " + ((res && res.error) || "请确认后端代理服务已重启以加载新代码"));
+      const errMsg = (res && res.error) || "请确认后端代理服务已重启以加载新代码";
+      const isAuthErr = errMsg.includes("401") || errMsg.includes("登录") || errMsg.includes("过期")
+        || errMsg.includes("Unauthorized") || errMsg.includes("Authorization")
+        || errMsg.toLowerCase().includes("token") || !!(res && res.need_relogin);
+      if(contentEl) contentEl.style.display = "none";
+      if(errorEl){
+        errorEl.style.display = "block";
+        const titleEl = document.getElementById("creditsModalErrorTitle");
+        const msgEl = document.getElementById("creditsModalErrorMsg");
+        const btnRelogin = document.getElementById("btnCreditsRelogin");
+        if(titleEl) titleEl.textContent = isAuthErr ? "登录凭证已失效" : "拉取积分明细失败";
+        if(msgEl) msgEl.textContent = errMsg;
+        if(btnRelogin) btnRelogin.style.display = isAuthErr ? "inline-block" : "none";
+      }
+      if(isAuthErr){
+        const acct = (window.ACCOUNTS || []).find(a => a.uid === CURRENT_CREDIT_DETAIL_UID);
+        if(acct){
+          acct.tokenExpired = true;
+          acct.lastError = errMsg;
+          renderAccounts();
+        }
+      }
+      toast(isAuthErr ? "登录已过期，请重新登录" : ("拉取积分明细失败: " + errMsg), "bad");
     }
   } catch(e) {
-    toast("网络异常: " + e.message);
+    if(contentEl) contentEl.style.display = "none";
+    if(errorEl){
+      errorEl.style.display = "block";
+      const titleEl = document.getElementById("creditsModalErrorTitle");
+      const msgEl = document.getElementById("creditsModalErrorMsg");
+      const btnRelogin = document.getElementById("btnCreditsRelogin");
+      if(titleEl) titleEl.textContent = "网络异常";
+      if(msgEl) msgEl.textContent = e.message;
+      if(btnRelogin) btnRelogin.style.display = "none";
+    }
+    toast("网络异常: " + e.message, "bad");
   } finally {
     if(loadingEl) loadingEl.style.display = "none";
-    if(contentEl) contentEl.style.display = "block";
     if(btnEl){ btnEl.disabled = false; btnEl.textContent = "刷新明细"; }
   }
 }
@@ -10091,6 +11167,13 @@ function renderCreditsPackagesTable(){
       + '</td>'
       + '</tr>';
   }).join('');
+}
+
+function reloginFromCreditsModal(){
+  const acct = (window.ACCOUNTS || []).find(a => a.uid === CURRENT_CREDIT_DETAIL_UID);
+  const realm = acct ? acct.realm : (window.VIEW_REALM || "intl");
+  closeCreditsDetail();
+  openLoginModal(realm);
 }
 
 function closeCreditsDetail(){
@@ -10484,14 +11567,14 @@ async function refreshInner(gen){
   const recentFp = [
     total, RECENT_PAGE, RECENT_LIMIT, window.VIEW_REALM,
     PRICING_ON ? '1' : '0', costCurrency, costUsdRate,
-    rows.map(r => acctName(r.account)).join('\u0001'),
+    rows.map(r => acctName(r.account) + '\u0000' + (r.key_name || '')).join('\u0001'),
     JSON.stringify(rows),
   ].join('\u0002');
   if(recentFp === lastRecentFp) return;
   lastRecentFp = recentFp;
   COST_TIP_ROWS.clear();
   document.getElementById('recent').innerHTML = rows.length ?
-    '<table class="data-cards"><thead><tr><th>时间</th><th>模型</th><th>推理强度</th><th>账号</th><th>模式</th><th>结果</th><th>耗时</th><th>首字</th><th>速度</th><th>输入</th><th>输出</th><th>思考</th><th>缓存</th><th>总 token</th><th>积分</th><th class="pricing-col" style="color:var(--warn)">估算价格</th></tr></thead><tbody>'
+    '<table class="data-cards"><thead><tr><th>时间</th><th>模型</th><th>推理强度</th><th>账号</th><th>API Key</th><th>模式</th><th>结果</th><th>耗时</th><th>首字</th><th>速度</th><th>输入</th><th>输出</th><th>思考</th><th>缓存</th><th>总 token</th><th>积分</th><th class="pricing-col" style="color:var(--warn)">估算价格</th></tr></thead><tbody>'
     + rows.map((r, i) => {
         // 关闭时不登记悬停明细，也不挂 data-cost-key：列还在（观感不变），
         // 但没有任何可解释的价格，省掉整张表的明细构建与 hover 开销。
@@ -10507,6 +11590,7 @@ async function refreshInner(gen){
         + '<td class="mono" data-label="模型">' + esc(r.model) + (free ? ' <span class="badge ok" style="background:var(--accent2-soft);color:var(--accent2);font-size:10px" title="限时免费模型：不消耗积分，也不计入「积分消耗」与「API 等价花费」">限时免费</span>' : '') + '</td>'
         + '<td data-label="推理强度">' + (r.reasoning_effort ? ('<span class="badge-effort">' + esc(r.reasoning_effort) + '</span>') : '<span style="color:var(--dim)">—</span>') + '</td>'
         + '<td class="mono" style="font-size:11px;color:var(--dim)" data-label="账号" title="' + esc(r.account||'') + '">' + esc(acctName(r.account)) + '</td>'
+        + '<td class="mono" style="font-size:11px;color:var(--dim)" data-label="API Key" title="' + esc(r.key||'') + '">' + esc(r.key_name || '—') + '</td>'
         + '<td data-label="模式"><span class="badge ' + (r.stream?'s':'') + '">' + (r.stream?'流式':'非流式') + '</span></td>'
         + '<td data-label="结果">' + outcomeBadge(r) + '</td>'
         + '<td data-label="耗时">' + ms(r.elapsed_ms) + '</td>'
@@ -11643,6 +12727,22 @@ async function loadSettings(showToast){
         if(gaps) gaps.innerHTML = '';
       }
       const autoSwitch = data.auto_switch_product === true;
+      const creditFallback = data.free_model_credit_fallback === true;
+      const anthropicMsg = data.enable_anthropic_messages === true;
+      const anthropicMsgInput = document.getElementById('setAnthropicMessages');
+      if(anthropicMsgInput) anthropicMsgInput.checked = anthropicMsg;
+      const anthropicMsgState = document.getElementById('setAnthropicMessagesState');
+      if(anthropicMsgState){
+        anthropicMsgState.textContent = anthropicMsg ? '(已启用)' : '(未启用)';
+        anthropicMsgState.style.color = anthropicMsg ? 'var(--accent2)' : 'var(--dim)';
+      }
+      const creditFallbackInput = document.getElementById('setCreditFallback');
+      if(creditFallbackInput) creditFallbackInput.checked = creditFallback;
+      const creditFallbackState = document.getElementById('setCreditFallbackState');
+      if(creditFallbackState){
+        creditFallbackState.textContent = creditFallback ? '(已启用)' : '(未启用)';
+        creditFallbackState.style.color = creditFallback ? 'var(--accent2)' : 'var(--dim)';
+      }
       const autoSwitchInput = document.getElementById('setAutoSwitch');
       if(autoSwitchInput) autoSwitchInput.checked = autoSwitch;
       const autoSwitchState = document.getElementById('setAutoSwitchState');
@@ -11650,6 +12750,13 @@ async function loadSettings(showToast){
         autoSwitchState.textContent = autoSwitch ? '(已启用)' : '(未启用)';
         autoSwitchState.style.color = autoSwitch ? 'var(--accent2)' : 'var(--dim)';
       }
+      const autoSwitchProducts = Array.isArray(data.auto_switch_products)
+        ? data.auto_switch_products : ['workbuddy', 'vscode', 'cli'];
+      [['setAutoSwitchWB', 'workbuddy'], ['setAutoSwitchVSC', 'vscode'],
+       ['setAutoSwitchCLI', 'cli']].forEach(function(pair){
+        const input = document.getElementById(pair[0]);
+        if(input) input.checked = autoSwitchProducts.indexOf(pair[1]) >= 0;
+      });
       const dailyWeb = data.daily_chat_web !== false;
       const dailyWebInput = document.getElementById('setDailyChatWeb');
       if(dailyWebInput) dailyWebInput.checked = dailyWeb;
@@ -11659,6 +12766,33 @@ async function loadSettings(showToast){
         dailyWebState.style.color = dailyWeb ? 'var(--accent2)' : 'var(--dim)';
       }
       renderDailyChatModel(data.daily_chat_model || '', data.daily_chat_model_default || '');
+      // 网页通道重试：没配过时后端给的是「开」，只有显式 false 才当关闭。
+      const dailyWebRetry = data.daily_chat_web_retry !== false;
+      const dailyWebRetryInput = document.getElementById('setDailyChatWebRetry');
+      if(dailyWebRetryInput) dailyWebRetryInput.checked = dailyWebRetry;
+      const dailyWebTimeoutDefault = Number(data.daily_chat_web_timeout_default || 120);
+      const dailyWebTimeout = Number(data.daily_chat_web_timeout || dailyWebTimeoutDefault);
+      const dailyWebAttemptsDefault = Number(data.daily_chat_web_attempts_default || 3);
+      const dailyWebAttempts = Number(data.daily_chat_web_attempts || dailyWebAttemptsDefault);
+      const dailyWebAttemptsInput = document.getElementById('setDailyChatWebAttempts');
+      if(dailyWebAttemptsInput){
+        dailyWebAttemptsInput.value = String(dailyWebAttempts);
+        // 关掉重试就只跑一轮，次数没有意义；等待时间仍对那唯一一轮有效，保持可改。
+        dailyWebAttemptsInput.disabled = !dailyWebRetry;
+      }
+      const dailyWebTimeoutInput = document.getElementById('setDailyChatWebTimeout');
+      if(dailyWebTimeoutInput) dailyWebTimeoutInput.value = String(dailyWebTimeout);
+      const dailyWebRetryState = document.getElementById('setDailyChatWebRetryState');
+      if(dailyWebRetryState){
+        // 状态行把实际的等待序列算出来，省得对着两个数字自己乘。
+        const waits = [];
+        const rounds = dailyWebRetry ? dailyWebAttempts : 1;
+        for(let i = 0; i < rounds; i++) waits.push(dailyWebTimeout * Math.pow(2, i));
+        dailyWebRetryState.textContent = dailyWebRetry
+          ? ('最多尝试 ' + dailyWebAttempts + ' 次 · ' + waits.join(' / ') + ' 秒')
+          : ('只跑一轮 · ' + dailyWebTimeout + ' 秒');
+        dailyWebRetryState.style.color = dailyWebRetry ? 'var(--accent2)' : 'var(--dim)';
+      }
       const localWeb = data.local_web_tools === true;
       const localWebInput = document.getElementById('setLocalWebTools');
       if(localWebInput) localWebInput.checked = localWeb;
@@ -11675,6 +12809,14 @@ async function loadSettings(showToast){
         remainingPriorityState.textContent = remainingPriority ? '(已启用)' : '(未启用)';
         remainingPriorityState.style.color = remainingPriority ? 'var(--accent2)' : 'var(--dim)';
       }
+      const windowProbe = data.window_probe !== false;
+      const windowProbeInput = document.getElementById('setWindowProbe');
+      if(windowProbeInput) windowProbeInput.checked = windowProbe;
+      const windowProbeState = document.getElementById('setWindowProbeState');
+      if(windowProbeState){
+        windowProbeState.textContent = windowProbe ? '(已启用)' : '(未启用)';
+        windowProbeState.style.color = windowProbe ? 'var(--accent2)' : 'var(--dim)';
+      }
       const egressBackoff = data.egress_backoff_enabled === true;
       const egressBackoffInput = document.getElementById('setEgressBackoff');
       if(egressBackoffInput) egressBackoffInput.checked = egressBackoff;
@@ -11683,6 +12825,11 @@ async function loadSettings(showToast){
         egressBackoffState.textContent = egressBackoff ? '(已启用)' : '(未启用)';
         egressBackoffState.style.color = egressBackoff ? 'var(--accent2)' : 'var(--dim)';
       }
+      SAVED_QUOTA_SCAN_MODELS = Array.isArray(data.quota_scan_models) ? data.quota_scan_models.slice() : [];
+      QUOTA_SCAN_SELECTED = SAVED_QUOTA_SCAN_MODELS.slice();
+      await loadQuotaScanCatalog();
+      renderQuotaScanModels();
+      renderQuotaScanState(data);
       // 上游响应头超时：没改过时后端给的就是默认 120，所以「等于 120」按默认态
       // 显示，只有被改过才标出实际秒数。
       const headerTimeout = (data.upstream || {}).header_timeout_seconds;
@@ -11719,6 +12866,7 @@ async function loadSettings(showToast){
       masked: k.masked || '',
       realm: k.realm || '',
       models: Array.isArray(k.models) ? k.models.slice() : [],
+      concurrency_limit: parseInt(k.concurrency_limit || 0, 10) || 0,
       enabled: k.enabled !== false,
       created_at: k.created_at || '',
       _editing: false,
@@ -12199,12 +13347,53 @@ async function refreshPricingNow(btn){
   }
 }
 
-async function saveAutoSwitchProduct(btn){
-  const el = document.getElementById('setAutoSwitch');
+async function saveAnthropicMessages(btn){
+  const el = document.getElementById('setAnthropicMessages');
   const value = !!(el && el.checked);
   if(btn) btn.disabled = true;
   try {
-    await postJSON('/settings/save', {auto_switch_product: value});
+    await postJSON('/settings/save', {enable_anthropic_messages: value});
+    toast(value ? '已启用：Anthropic Messages 接口' : '已关闭：Anthropic Messages 接口', 'ok');
+    loadSettings();
+  } catch(e) {
+    toast('保存失败: ' + e.message, 'bad');
+  } finally {
+    if(btn) btn.disabled = false;
+  }
+}
+
+async function saveCreditFallback(btn){
+  const el = document.getElementById('setCreditFallback');
+  const value = !!(el && el.checked);
+  if(btn) btn.disabled = true;
+  try {
+    await postJSON('/settings/save', {free_model_credit_fallback: value});
+    toast(value ? '已启用：免费额度耗尽自动回退付费积分版' : '已关闭自动回退付费积分版', 'ok');
+    loadSettings();
+  } catch(e) {
+    toast('保存失败: ' + e.message, 'bad');
+  } finally {
+    if(btn) btn.disabled = false;
+  }
+}
+
+async function saveAutoSwitchProduct(btn){
+  const el = document.getElementById('setAutoSwitch');
+  const value = !!(el && el.checked);
+  const products = [];
+  [['setAutoSwitchWB', 'workbuddy'], ['setAutoSwitchVSC', 'vscode'],
+   ['setAutoSwitchCLI', 'cli']].forEach(function(pair){
+    const input = document.getElementById(pair[0]);
+    if(input && input.checked) products.push(pair[1]);
+  });
+  if(!products.length){
+    toast('至少选择一个身份', 'bad');
+    return;
+  }
+  if(btn) btn.disabled = true;
+  try {
+    await postJSON('/settings/save', {auto_switch_product: value,
+                                      auto_switch_products: products});
     toast(value ? '已启用：429 时自动切换出站身份' : '已关闭自动切换出站身份', 'ok');
     loadSettings();
   } catch(e) {
@@ -12221,6 +13410,50 @@ async function saveDailyChatWeb(btn){
   try {
     await postJSON('/settings/save', {daily_chat_web: value});
     toast(value ? '已启用：国际版打卡走网页通道' : '已关闭：国际版打卡只发桌面端对话', 'ok');
+    loadSettings();
+  } catch(e) {
+    toast('保存失败: ' + e.message, 'bad');
+  } finally {
+    if(btn) btn.disabled = false;
+  }
+}
+
+/* 网页通道失败重试。后端只接受严格布尔，所以这里直接发勾选状态；存失败时
+   把开关拨回去，免得界面显示一个其实没落盘的状态。 */
+async function saveDailyChatWebRetry(){
+  const el = document.getElementById('setDailyChatWebRetry');
+  const value = !!(el && el.checked);
+  try {
+    await postJSON('/settings/save', {daily_chat_web_retry: value});
+    toast(value ? '已启用：网页通道失败后最多重试 3 次（等待翻倍）'
+                : '已关闭：网页通道只跑一轮', 'ok');
+    loadSettings();
+  } catch(e) {
+    toast('保存失败: ' + e.message, 'bad');
+    if(el) el.checked = !value;
+  }
+}
+
+/* 每轮等待时间（秒）与最多尝试次数。与「上游响应头超时」同一套收口：空值、
+   小数、非数字就地拦下，不发上去换一个 400 回来。上限由后端把关。 */
+async function saveDailyChatWebTuning(btn){
+  const attemptsEl = document.getElementById('setDailyChatWebAttempts');
+  const timeoutEl = document.getElementById('setDailyChatWebTimeout');
+  const attempts = Math.floor(Number(attemptsEl && attemptsEl.value));
+  const timeout = Math.floor(Number(timeoutEl && timeoutEl.value));
+  if(!isFinite(attempts) || attempts < 1){
+    toast('请输入不小于 1 的整数次数', 'bad');
+    return;
+  }
+  if(!isFinite(timeout) || timeout < 1){
+    toast('请输入不小于 1 的整数秒', 'bad');
+    return;
+  }
+  if(btn) btn.disabled = true;
+  try {
+    await postJSON('/settings/save', {daily_chat_web_attempts: attempts,
+                                      daily_chat_web_timeout: timeout});
+    toast('已保存：最多尝试 ' + attempts + ' 次，首轮等待 ' + timeout + ' 秒', 'ok');
     loadSettings();
   } catch(e) {
     toast('保存失败: ' + e.message, 'bad');
@@ -12318,6 +13551,21 @@ async function saveRemainingPriority(btn){
   try {
     await postJSON('/settings/save', {remaining_priority_enabled: value});
     toast(value ? '已启用：剩余用量接近耗尽的组合优先调度' : '已关闭剩余用量优先调度', 'ok');
+    loadSettings();
+  } catch(e) {
+    toast('保存失败: ' + e.message, 'bad');
+  } finally {
+    if(btn) btn.disabled = false;
+  }
+}
+
+async function saveWindowProbe(btn){
+  const el = document.getElementById('setWindowProbe');
+  const value = !!(el && el.checked);
+  if(btn) btn.disabled = true;
+  try {
+    await postJSON('/settings/save', {window_probe: value});
+    toast(value ? '已启用：额度窗口到点自动请求' : '已关闭额度窗口探针', 'ok');
     loadSettings();
   } catch(e) {
     toast('保存失败: ' + e.message, 'bad');
@@ -12430,14 +13678,9 @@ async function saveLogDb(btn){
   }
 }
 
-/* ---- 更新检查 ----
-   面板只负责「问一句、把结论显示出来」：真正的查询由后端匿名拉取公开
-   Release 列表完成，浏览器不直接接触 GitHub，也不需要任何凭证。
-
-   这一版是**只检查**：没有下载、没有安装、没有重启，所以「安装更新」按钮
-   固定禁用并说明原因——与其给一个点了会假装成功的按钮，不如让它看起来
-   就是还没有。 */
-const UPDATE_INSTALL_AVAILABLE = false;
+/* ---- 更新检查与手动安装 ----
+   浏览器只请求本机面板接口，不直接下载更新包或访问 GitHub。安装状态由
+   root-owned systemd 更新服务回报；自动检查开关永远不会自动安装。 */
 
 /* 200 不等于成功：后端把「检查根本没跑起来」（ok=false）和「这一次查询失败」
    （last_error 非空）都放在 200 的响应体里回来。两处都要看，否则按钮会对着
@@ -12473,10 +13716,37 @@ function applyUpdateStatus(data){
   if(enabled) enabled.checked = data.enabled === true;
   const err = document.getElementById('setUpdateError');
   if(err) err.textContent = failure ? ('上次检查失败：' + failure) : '';
+  const installation = data.installation || {};
+  const installState = String(installation.state || 'idle');
+  const installLabels = {
+    idle: '尚未开始', queued: '等待安装', downloading: '正在下载更新包',
+    verifying: '正在校验更新包', backing_up: '正在备份程序文件',
+    stopping: '正在停止网关', applying: '正在安装程序',
+    restarting: '正在重启网关', checking: '正在检查网关',
+    succeeded: '更新完成', rolling_back: '更新失败，正在回滚',
+    rolled_back: '更新已回滚', failed: '更新失败', unavailable: '更新服务未安装'
+  };
+  const installStatus = document.getElementById('setUpdateInstallStatus');
+  if(installStatus){
+    const label = installLabels[installState] || '更新状态暂时无法读取';
+    installStatus.textContent = label;
+  }
+  if(err && !failure && (installState === 'failed' || installState === 'rolled_back')){
+    const prefix = installState === 'rolled_back' ? '更新已回滚：' : '更新失败：';
+    err.textContent = prefix + String(installation.message || '');
+  }
   const install = document.getElementById('setUpdateInstallBtn');
   if(install){
-    install.disabled = !UPDATE_INSTALL_AVAILABLE;
-    install.title = UPDATE_INSTALL_AVAILABLE ? '' : '本版只做检查，安装更新尚未提供';
+    const busy = ['queued','downloading','verifying','backing_up','stopping',
+      'applying','restarting','checking','rolling_back'].includes(installState);
+    const canInstall = data.install_enabled === true && data.update_available === true
+      && !!data.latest_tag && !!data.release_url && !data.checking && !busy
+      && installState !== 'unavailable';
+    install.disabled = !canInstall;
+    install.title = !data.install_enabled ? '更新服务未安装'
+      : busy ? '已有更新任务正在运行'
+      : !data.update_available ? '当前没有可安装的新版本'
+      : (!data.latest_tag || !data.release_url) ? '请先点击立即检查更新' : '';
   }
 }
 
@@ -12505,6 +13775,58 @@ async function checkUpdateNow(btn){
   }
 }
 
+async function installUpdateNow(btn){
+  if(btn) btn.disabled = true;
+  try {
+    const current = await getJSON('/updates');
+    applyUpdateStatus(current);
+    if(current.install_enabled !== true){
+      toast('安装更新服务尚未配置', 'bad');
+      return;
+    }
+    if(!current.update_available || !current.latest_tag || !current.release_url){
+      toast('请先点击立即检查更新', 'warn');
+      return;
+    }
+    if(btn) btn.disabled = true;
+    if(!confirm('安装更新会短暂重启网关。账号与用量数据会保留。继续吗？')) return;
+    const accepted = await postJSON('/updates/install', {});
+    if(accepted && accepted.ok === false) throw new Error(accepted.msg || '提交更新任务失败');
+    toast('已开始安装更新', 'ok');
+    await pollUpdateInstall();
+  } catch(e) {
+    toast('安装更新失败: ' + e.message, 'bad');
+    loadUpdateStatus();
+  } finally {
+    if(btn) btn.disabled = false;
+    loadUpdateStatus();
+  }
+}
+
+async function pollUpdateInstall(){
+  for(let i = 0; i < 120; i++){
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    try {
+      const data = await getJSON('/updates');
+      applyUpdateStatus(data);
+      const state = String((data.installation || {}).state || '');
+      if(state === 'succeeded'){
+        toast('更新已完成，正在刷新页面', 'ok');
+        setTimeout(() => window.location.reload(), 1200);
+        return;
+      }
+      if(state === 'failed' || state === 'rolled_back'){
+        const detail = (data.installation || {}).message || '';
+        toast((state === 'rolled_back' ? '更新已回滚：' : '更新失败：') + detail, 'bad');
+        return;
+      }
+    } catch(e) {
+      // The gateway briefly stops while the root updater replaces its files.
+    }
+  }
+  toast('更新仍在执行，请稍后刷新', 'warn');
+}
+
 async function saveUpdateCheckEnabled(btn){
   const el = document.getElementById('setUpdateCheckEnabled');
   const value = !!(el && el.checked);
@@ -12518,6 +13840,156 @@ async function saveUpdateCheckEnabled(btn){
   } finally {
     if(btn) btn.disabled = false;
   }
+}
+
+/* ---- Model quota scan: watch a chosen set of models on a fixed timer ---- */
+let SAVED_QUOTA_SCAN_MODELS = [];
+let QUOTA_SCAN_SELECTED = [];
+
+let QUOTA_MODEL_CATALOG = [];
+
+async function loadQuotaScanCatalog(){
+  // Only the "all realms" listing can offer every model to watch: MODELS_DATA
+  // follows whichever realm tab is open, so half the catalogue would be
+  // missing when the panel is showing the other one.
+  if(QUOTA_MODEL_CATALOG.length) return QUOTA_MODEL_CATALOG;
+  try{
+    const r = await getJSON('/v1/models?realm=all');
+    QUOTA_MODEL_CATALOG = (r.data || []).filter(m => m && m.id);
+  }catch(e){
+    QUOTA_MODEL_CATALOG = [];
+  }
+  // Fall back to whatever the models tab already cached rather than showing
+  // an empty box when the listing call fails. Go through window so a test
+  // stub that never defined MODELS_DATA reads undefined instead of throwing.
+  if(!QUOTA_MODEL_CATALOG.length && Array.isArray(window.MODELS_DATA)){
+    QUOTA_MODEL_CATALOG = window.MODELS_DATA.filter(m => m && m.id);
+  }
+  return QUOTA_MODEL_CATALOG;
+}
+
+function renderQuotaScanModels(){
+  const box = document.getElementById('quotaScanModels');
+  const hint = document.getElementById('quotaScanHint');
+  if(!box) return;
+  const models = QUOTA_MODEL_CATALOG || [];
+  if(!models.length){
+    box.innerHTML = '<span style="font-size:12px;color:var(--dim)">暂无可用模型目录</span>';
+    if(hint) hint.textContent = '';
+    return;
+  }
+  const selected = {};
+  (QUOTA_SCAN_SELECTED || []).forEach(m => { selected[m] = true; });
+  box.innerHTML = models.map(m => {
+    const id = String(m.id || '');
+    if(!id) return '';
+    return '<label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer">'
+         + '<input type="checkbox" data-model="' + esc(id) + '"'
+         + (selected[id] ? ' checked' : '') + ' style="width:14px;height:14px">'
+         + '<span class="mono">' + esc(id) + '</span></label>';
+  }).join('');
+  // A model that was saved earlier but is no longer published upstream cannot
+  // be unchecked through the catalogue; say so rather than silently dropping it.
+  const missing = SAVED_QUOTA_SCAN_MODELS.filter(
+    m => !models.some(x => String((x && x.id) || '') === m));
+  if(hint){
+    hint.textContent = missing.length
+      ? ('已有 ' + missing.length + ' 个勾选模型不在当前目录中（' + missing.join(', ') + '），保存时保留')
+      : ('共 ' + models.length + ' 个模型可选');
+  }
+}
+
+function toggleAllQuotaScanModels(on){
+  const box = document.getElementById('quotaScanModels');
+  if(!box) return;
+  box.querySelectorAll('input[type=checkbox]').forEach(el => { el.checked = !!on; });
+}
+
+async function saveQuotaScanModels(btn){
+  const box = document.getElementById('quotaScanModels');
+  if(btn){ btn.disabled = true; btn.textContent = '保存中...'; }
+  try{
+    const checked = [];
+    if(box){
+      box.querySelectorAll('input[type=checkbox]').forEach(el => {
+        if(el.checked && el.dataset.model) checked.push(el.dataset.model);
+      });
+    }
+    const catalogued = {};
+    (QUOTA_MODEL_CATALOG || []).forEach(m => { catalogued[String(m.id)] = true; });
+    // Keep watch entries the catalogue no longer publishes: they were chosen
+    // deliberately and would otherwise vanish on the next save.
+    (SAVED_QUOTA_SCAN_MODELS || []).forEach(m => {
+      if(m && !catalogued[m] && checked.indexOf(m) < 0) checked.push(m);
+    });
+    await postJSON('/settings/save', {quota_scan_models: checked});
+    toast(checked.length ? ('已保存：定时查询 ' + checked.length + ' 个模型') : '已清空：不再定时查询任何模型', 'ok');
+    loadSettings();
+  }catch(e){
+    toast('保存失败: ' + e.message, 'bad');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '保存勾选'; }
+  }
+}
+
+async function runQuotaScan(btn){
+  if(btn){ btn.disabled = true; btn.textContent = '查询中...'; }
+  try{
+    const r = await postJSON('/quota-scan/run', {});
+    toast(r.msg || '查询完成', r.ok ? 'ok' : 'bad');
+    loadSettings();
+  }catch(e){
+    toast('查询失败: ' + e.message, 'bad');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '立即查询'; }
+  }
+}
+
+function fmtDueSec(sec){
+  const s = Math.max(0, Math.round(Number(sec) || 0));
+  if(s < 60) return s + ' 秒';
+  const m = Math.floor(s / 60);
+  if(m < 60) return m + ' 分钟';
+  const h = Math.floor(m / 60);
+  return h + ' 小时' + (m % 60 ? (m % 60) + ' 分' : '');
+}
+
+function renderQuotaScanState(data){
+  const stateEm = document.getElementById('setQuotaScanState');
+  const box = document.getElementById('quotaScanState');
+  const watched = Array.isArray(data.quota_scan_models) ? data.quota_scan_models.length : 0;
+  const hours = Number(data.quota_scan_interval_hours || 6);
+  if(stateEm){
+    stateEm.textContent = watched ? ('(已监视 ' + watched + ' 个模型)') : '(未启用)';
+    stateEm.style.color = watched ? 'var(--accent2)' : 'var(--dim)';
+  }
+  if(!box) return;
+  const rows = Array.isArray(data.quota_scans) ? data.quota_scans : [];
+  if(!rows.length){
+    box.innerHTML = '<div style="font-size:12px;color:var(--dim)">'
+      + (watched ? '尚无查询记录，第一条记录会在首次查询后写入。' : '勾选上方模型并保存后开始定时查询。')
+      + '</div>';
+    return;
+  }
+  const label = {ok: '正常 (未达限额)', throttled: '已达限额', error: '查询失败'};
+  box.innerHTML = '<table><thead><tr><th>模型</th><th>账号</th><th>最近结果</th>'
+    + '<th>上次查询</th><th>下次查询</th></tr></thead><tbody>'
+    + rows.map(r => {
+        const status = r.pending
+          ? '<span class="badge s">已登记 429，交给窗口探针</span>'
+          : '<span class="badge ' + (r.last_result === 'ok' ? 'ok' : 'warn') + '">'
+            + esc(label[r.last_result] || r.last_result || '等待首次查询') + '</span>';
+        const last = Number(r.last_scan) || 0
+          ? (fmtDueSec((Date.now() / 1000) - Number(r.last_scan)) + ' 前')
+          : '尚未查询';
+        return '<tr><td class="mono">' + esc(r.model || '-') + '</td>'
+             + '<td class="mono">' + esc(r.uid8 || '-') + '</td>'
+             + '<td>' + status + '</td><td>' + last + '</td>'
+             + '<td>' + (r.pending ? '-' : fmtDueSec(r.due_in) + ' 后') + '</td></tr>';
+      }).join('')
+    + '</tbody></table>'
+    + '<div style="font-size:12px;color:var(--dim);margin-top:8px">查询周期：每 '
+    + hours + ' 小时；已登记 429 窗口的配额线不再轮询。</div>';
 }
 
 /* ---- API key list: several keys, each bound to an upstream exit ---- */
@@ -12613,7 +14085,12 @@ function renderKeyRows(){
         +     '<div style="font-size:12px;color:var(--dim);margin-bottom:4px;font-weight:500">出口绑定</div>'
         +     '<select id="editKeyRealm_' + i + '" style="width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit;color:var(--fg)">'
         +       options
-        +     '</select>'
+        +       '</select>'
+        +   '</div>'
+        +   '<div>'
+        +     '<div style="font-size:12px;color:var(--dim);margin-bottom:4px;font-weight:500">最大并发限制 <span style="color:var(--dim-light)">(选填，0 = 不限)</span></div>'
+        +     '<input type="number" min="0" max="1000" id="editKeyConc_' + i + '" value="' + (row.concurrency_limit || '') + '" placeholder="0 代表不限制" '
+        +       'style="width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit;color:var(--fg)">'
         +   '</div>'
         +   '<div style="grid-column:1 / -1">'
         +     '<div style="font-size:12px;color:var(--dim);margin-bottom:4px;font-weight:500">模型限制 <span style="color:var(--dim-light)">(选填，留空 = 不限制)</span></div>'
@@ -12646,6 +14123,9 @@ function renderKeyRows(){
       ? '<span class="realm-badge-cn" style="font-size:11px">固定国内版出口</span>'
       : '<span class="badge s" style="font-size:11px">跟随面板切换</span>';
 
+    const concBadge = (row.concurrency_limit && row.concurrency_limit > 0)
+      ? '<span class="badge s mini" style="font-size:11px">并发上限 ' + row.concurrency_limit + '</span>'
+      : '';
     const modelBadge = (Array.isArray(row.models) && row.models.length)
       ? '<span class="badge s" style="font-size:11px">限 ' + esc(modelPatternsText(row.models)) + '</span>'
       : '';
@@ -12661,6 +14141,7 @@ function renderKeyRows(){
       +       statusBadge
       +       realmBadge
       +       modelBadge
+        +       concBadge
       +     '</div>'
       +     '<div style="font-size:12px;color:var(--dim);display:flex;align-items:center;gap:16px;flex-wrap:wrap">'
       +       '<span>Key: <span class="mono" style="color:var(--fg);font-weight:500">' + esc(displayKey) + '</span></span>'
@@ -12708,6 +14189,7 @@ async function saveSingleKey(index, btn){
   const realmSelect = document.getElementById('editKeyRealm_' + index);
   const keyInput = document.getElementById('editKeyValue_' + index);
   const modelsInput = document.getElementById('editKeyModels_' + index);
+    const concInput = document.getElementById('editKeyConc_' + index);
 
   const name = nameInput ? nameInput.value.trim() : (row.name || '');
   const realm = realmSelect ? realmSelect.value : (row.realm || '');
@@ -12721,6 +14203,7 @@ async function saveSingleKey(index, btn){
   row.name = name || '未命名';
   row.realm = realm;
   row.models = parseModelPatterns(modelsInput ? modelsInput.value : modelPatternsText(row.models));
+    row.concurrency_limit = Math.max(0, parseInt((concInput ? concInput.value : row.concurrency_limit) || 0, 10) || 0);
   if(keyVal) row.key = keyVal;
   row._editing = false;
 
@@ -12779,6 +14262,7 @@ function addApiKeyRow(){
     key: randomKeyValue(),
     realm: '',
     models: [],
+      concurrency_limit: 0,
     enabled: true,
     masked: '',
     _editing: true
@@ -12790,27 +14274,60 @@ function addApiKeyRow(){
   }, 50);
 }
 /* Copy the key in a row, fetching the stored value when the field is blank
-   (the panel only ever displays a masked key). */
+   (the panel only ever displays a masked key).
+
+   Safari ties navigator.clipboard to the click's transient activation: an
+   `await` before the write drops it and the promise rejects with
+   NotAllowedError ("... not allowed by the user agent ..."). Chrome is looser
+   about "recent activation", which is why only Safari fails here. So copy
+   synchronously when the value is already in hand, and when it has to be
+   fetched hand the plaintext to the clipboard as a promise inside a
+   ClipboardItem -- the one asynchronous copy form Safari accepts. */
 async function copyKeyRow(index){
   const row = API_KEY_ROWS[index];
   if(!row) return;
   const btn = document.getElementById('copyBtn' + index);
-  let value = (row.key || '').trim();
+  const markCopied = () => {
+    if(!btn) return;
+    const old = btn.textContent;
+    btn.textContent = '已复制';
+    setTimeout(() => { btn.textContent = old; }, 1600);
+  };
+  const value = (row.key || '').trim();
   try {
-    if(!value && row.id){
-      const data = await getJSON('/settings/reveal?id=' + encodeURIComponent(row.id));
-      value = data.key || '';
+    if(value){
+      // Already in hand: copy without yielding, keeping the click activation.
+      await writeClipboard(value);
+      markCopied();
+      toast('已复制到剪贴板', 'ok');
+      return;
     }
-    if(!value){
+    if(!row.id){
       toast('这一行还没有 Key，点「随机生成」或直接填写', 'warn');
       return;
     }
-    await writeClipboard(value);
-    if(btn){
-      const old = btn.textContent;
-      btn.textContent = '已复制';
-      setTimeout(() => { btn.textContent = old; }, 1600);
+    const reveal = () => getJSON('/settings/reveal?id=' + encodeURIComponent(row.id))
+      .then(d => (d.key || '').trim());
+    if(window.ClipboardItem && navigator.clipboard && window.isSecureContext){
+      // write() is called synchronously inside the click handler; the plaintext
+      // arrives later through the item's promise.
+      const item = new ClipboardItem({
+        'text/plain': reveal().then(k => {
+          if(!k) throw new Error('这一行还没有 Key');
+          return new Blob([k], { type: 'text/plain' });
+        }),
+      });
+      await navigator.clipboard.write([item]);
+    } else {
+      // Older engines / insecure context: fetch first, then the textarea path.
+      const k = await reveal();
+      if(!k){
+        toast('这一行还没有 Key，点「随机生成」或直接填写', 'warn');
+        return;
+      }
+      await writeClipboard(k);
     }
+    markCopied();
     toast('已复制到剪贴板', 'ok');
   } catch(e) {
     toast('复制失败: ' + e.message, 'bad');
@@ -12851,6 +14368,7 @@ async function saveApiKeys(btn){
       name: row.name || '',
       realm: row.realm || '',
       models: row.models || [],
+        concurrency_limit: parseInt(row.concurrency_limit || 0, 10) || 0,
       enabled: row.enabled !== false,
       // Blank means "keep the stored key", which the server honours per row.
       key: (row.key || '').trim(),
@@ -13915,7 +15433,9 @@ function copyFilteredLogs(){
     return true;
   });
   const text = filtered.map(x => '[' + (x.ts || x.time) + '] [' + x.level + '] [' + x.tag + '] ' + x.msg).join('\n');
-  navigator.clipboard.writeText(text).then(() => {
+  // Same secure-context caveat as writeClipboard(): plain http on a LAN address
+  // has no navigator.clipboard at all, so reuse the shared helper.
+  writeClipboard(text).then(() => {
     toast('已复制 ' + filtered.length + ' 行日志', 'ok');
   }).catch(e => {
     toast('复制失败: ' + e.message, 'bad');
@@ -14588,8 +16108,48 @@ const emptyRow = '<tr><td colspan="6" style="text-align:center;color:var(--dim)"
         + '</tr>';
     }).join('');
   });
+  const sampleBody = document.getElementById('remainingSamplesBody');
+  if(sampleBody){
+    const groups = budgets.filter(b => Array.isArray(b.samples_list) && b.samples_list.length);
+    if(!groups.length){
+      sampleBody.textContent = '暂无撞线样本。';
+    } else {
+      sampleBody.innerHTML = groups.map(b => {
+        const rows = b.samples_list.map(s =>
+          '<div style="margin-left:12px">'
+          + esc((s.at_iso || '').slice(5, 16)) + ' · '
+          + esc((s.account || '').slice(0, 8)) + ' · '
+          + fmtTok(s.sample) + ' tok</div>').join('');
+        return '<div style="margin:6px 0"><b>'
+          + esc(b.realm === 'cn' ? '国内版' : '国际版') + ' / ' + esc(b.model)
+          + '</b> <span style="color:var(--dim)">n=' + b.n
+          + ' · ' + fmtTok(b.min) + ' ~ ' + fmtTok(b.max) + '</span>'
+          + rows + '</div>';
+      }).join('');
+    }
+  }
     applyTableSort('remainingUsageTableIntl');
     applyTableSort('remainingUsageTableCn');
+}
+
+function remainingSamplesText(){
+  const budgets = (lastRemainingData && lastRemainingData.budgets) || [];
+  const lines = [];
+  budgets.forEach(b => {
+    const rows = b.samples_list || [];
+    if(!rows.length) return;
+    const vals = rows.map(s => fmtTok(s.sample)).join(' / ');
+    lines.push((b.realm === 'cn' ? '国内版' : '国际版') + ' / ' + b.model + ' / ' + vals);
+  });
+  return lines.join('\n');
+}
+
+function copyRemainingSamples(){
+  const text = remainingSamplesText();
+  if(!text){ toast('暂无撞线样本', 'warn'); return; }
+  writeClipboard(text).then(() => {
+    toast('已复制 ' + text.split('\n').length + ' 组样本', 'ok');
+  }).catch(e => toast('复制失败: ' + e.message, 'bad'));
 }
 
 function loadUsageSeries(){
@@ -14616,7 +16176,7 @@ function renderUsageSeries(data){
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
   if(!series.length){
-    ctx.fillStyle = '#64748b';
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--chart-text').trim() || '#64748b';
     ctx.font = '12px sans-serif';
     ctx.fillText('当前范围没有请求数据', 12, 24);
     return;
@@ -14628,7 +16188,7 @@ function renderUsageSeries(data){
   const maxReq = Math.max(1, ...series.map(b => b.requests || 0));
   const slot = plotW / series.length;
   const barW = Math.max(1, slot - 2);
-  ctx.strokeStyle = '#1e293b';
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--chart-axis').trim() || '#1e293b';
   ctx.beginPath();
   ctx.moveTo(pad.l, pad.t);
   ctx.lineTo(pad.l, pad.t + plotH);
@@ -14637,10 +16197,10 @@ function renderUsageSeries(data){
   series.forEach((b, i) => {
     const h = plotH * (b.total_tokens || 0) / maxTokens;
     const x = pad.l + slot * i + 1;
-    ctx.fillStyle = 'rgba(56,189,248,.55)';
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--chart-bar').trim() || 'rgba(56,189,248,.55)';
     ctx.fillRect(x, pad.t + plotH - h, barW, h);
   });
-  ctx.strokeStyle = '#a78bfa';
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--chart-line').trim() || '#a78bfa';
   ctx.beginPath();
   series.forEach((b, i) => {
     const x = pad.l + slot * (i + 0.5);
@@ -14648,7 +16208,7 @@ function renderUsageSeries(data){
     if(i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   });
   ctx.stroke();
-  ctx.fillStyle = '#64748b';
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--chart-text').trim() || '#64748b';
   ctx.font = '10px monospace';
   ctx.fillText(fmt(maxTokens), 4, pad.t + 8);
   ctx.fillText('0', 4, pad.t + plotH);
@@ -15149,8 +16709,10 @@ const state = {
 let prevSummary = null; /* B 版：上一等长周期汇总（环比） */
 
 /* ---------- B 版：环比 / sparkline / 环形卡 / 活动流 ---------- */
-function prevRange(){
-  const now = Math.floor(Date.now() / 1000);
+function prevRange(untilAt){
+  // 环比窗口的上界同样来自调用方：轮询时与 rangeParams 共用同一个量化时刻，
+  // 否则 /usage/timeseries?…&until=… 这一条照样每轮都换 URL。
+  const now = (untilAt === undefined || untilAt === null) ? Math.floor(Date.now() / 1000) : untilAt;
   if (state.range === 'today'){
     const d = new Date(); d.setHours(0,0,0,0);
     const startToday = Math.floor(d.getTime() / 1000);
@@ -15175,8 +16737,8 @@ function prevRange(){
   if (state.range === 'd30') return [now - 60 * 86400, now - 30 * 86400];
   return null;
 }
-async function loadPrevSummary(){
-  const pr = prevRange();
+async function loadPrevSummary(untilAt){
+  const pr = prevRange(untilAt);
   if (!pr) return null;
   try{
     const p = await api(`/usage/timeseries?realm=all&range=custom&since=${pr[0]}&until=${pr[1]}`);
@@ -15376,8 +16938,19 @@ async function loadRecent(){
   }catch(e){ console.error('recent failed', e); }
 }
 
-function rangeParams(range){
-  const now = Math.floor(Date.now() / 1000);
+/* 轮询类请求的窗口上界量化：服务端 _json_cached 只在「调用前后的缓存条目一模一样」
+ * 时才发 ETag（wb_proxy.py:16872），而缓存键里含 until。until 每轮都取 now()，
+ * 缓存键每轮都是新的 → before 永远是 None → 304 一次都命不中外加整份重传。
+ * 量化到服务端聚合缓存自己的 TTL（wb_proxy.py:1778 _STATS_TTL = 15s）：同一个 15 秒
+ * 桶内 URL 逐字相同，第 2、3 轮直接吃 304；代价是最多 15 秒的新鲜度延迟。
+ * 只有轮询走这条（loadRange(true)），用户手点区间仍用精确 now。 */
+const POLL_UNTIL_BUCKET = 15;
+function pollUntil(){
+  return Math.floor(Math.floor(Date.now() / 1000) / POLL_UNTIL_BUCKET) * POLL_UNTIL_BUCKET;
+}
+function rangeParams(range, untilAt){
+  // since 必须和 until 用同一个时间点推导，否则 since 仍在逐秒变化，URL 照样每轮都新。
+  const now = (untilAt === undefined || untilAt === null) ? Math.floor(Date.now() / 1000) : untilAt;
   if (range === 'd3')  return `range=custom&since=${now - 3*86400}&until=${now}`;
   if (range === 'd30') return `range=custom&since=${now - 30*86400}&until=${now}`;
   if (range === 'all') return `range=custom&since=${now - 365*86400}&until=${now}`;
@@ -15401,19 +16974,27 @@ if(typeof MutationObserver !== 'undefined'){
 /* ============================================================
    加载与渲染
    ============================================================ */
-async function loadRange(){
+/* 区间/轮询的代次。与 refreshInner 里 REFRESH_GEN 同一套理由：取数期间又发起了更新
+ * 的一轮（刚切了区间、或轮询撞上点击），这批结果已经过期，直接丢掉——否则慢的那一轮
+ * 晚到，会把上一个区间的数字画到新区间的标题下面（实测有 1.2~1.8 秒的错位窗口）。 */
+let WBA_GEN = 0;
+async function loadRange(polled){
+  const gen = ++WBA_GEN;
+  const untilAt = polled ? pollUntil() : null;
   $('kpis').style.opacity = .55;
-  const rp = rangeParams(state.range);
+  const rp = rangeParams(state.range, untilAt);
   try{
     const [analytics, series, prev] = await Promise.all([
       api(`/usage/analytics?realm=all&${rp}`),
       api(`/usage/timeseries?realm=all&${rp}`),
-      loadPrevSummary(),
+      loadPrevSummary(untilAt),
     ]);
+    if (gen !== WBA_GEN) return;
     state.analytics = analytics;
     state.series = series;
     prevSummary = prev;
   } catch(e){
+    if (gen !== WBA_GEN) return;
     console.error('load range failed', e);
   }
   $('kpis').style.opacity = 1;
@@ -16215,6 +17796,10 @@ function drawSeries(){
   // hover
   cv.onmousemove = ev => {
     if (!seriesLayout) return;
+    // 空数据（今日还没有请求 / 新装实例）时 series.length 是 0，而下面那行的夹取是
+    // Math.max(0, Math.min(n - 1, idx))：n-1 = -1 会被 Math.max 拉回 0，于是
+    // series[0] 是 undefined，B 版气泡里的 b.at 直接抛 TypeError。没有点就收起返回。
+    if (!series.length) { tip.style.opacity = 0; return; }
     const rect = cv.getBoundingClientRect();
     const mx = ev.clientX - rect.left;
     let idx = Math.round((mx - padL) / gap - .5);
@@ -16325,7 +17910,13 @@ function buildHeatGrid(heat){
 /* ---------------- 用量明细（维度切换） ---------------- */
 const dimDefs = {
   model: {
-    head: ['模型', '请求', 'Token', '平均速度', '缓存命中', '花费'],
+    head: ['模型', '请求', 'Token', '平均速度', '缓存命中', '消耗积分', '花费'],
+    columns: [
+      {id:'who', label:'模型'}, {id:'req', label:'请求', align:'num'},
+      {id:'tok', label:'Token'}, {id:'speed', label:'平均速度', align:'num'},
+      {id:'cache', label:'缓存命中', align:'num'}, {id:'credit', label:'消耗积分', align:'num'},
+      {id:'cost', label:'花费', align:'num'},
+    ],
     rows(){
       const a = state.analytics; if (!a) return [];
       const list = Array.isArray(a.models) ? a.models : Object.entries(a.models || {}).map(([name,v])=>({model:name, window:v}));
@@ -16337,12 +17928,19 @@ const dimDefs = {
         tokSub: `思考 ${fmtCompact(m.window.reasoning_tokens ?? m.window.reasoning ?? 0)} · 缓存 ${fmtCompact(m.window.cached_tokens ?? 0)}`,
         speed: m.window.speed_avg,
         cache: m.window.cache_hit_pct,
+        credit: m.window.credit != null ? Number(m.window.credit).toFixed(2) : '—',
         cost: m.window.cost_cny,
       }));
     }
   },
   account: {
-    head: ['账号', '请求', 'Token', '平均速度', '缓存命中', '剩余积分', '花费'],
+    head: ['账号', '请求', 'Token', '平均速度', '缓存命中', '消耗积分', '花费'],
+    columns: [
+      {id:'who', label:'账号'}, {id:'req', label:'请求', align:'num'},
+      {id:'tok', label:'Token'}, {id:'speed', label:'平均速度', align:'num'},
+      {id:'cache', label:'缓存命中', align:'num'}, {id:'credit', label:'消耗积分', align:'num'},
+      {id:'cost', label:'花费', align:'num'},
+    ],
     rows(){
       const a = state.analytics; if (!a) return [];
       return (a.accounts || []).map(acc => ({
@@ -16353,13 +17951,19 @@ const dimDefs = {
         tokSub: `思考 ${fmtCompact(acc.window.reasoning_tokens)} · 缓存 ${fmtCompact(acc.window.cached_tokens)}`,
         speed: acc.window.speed_avg,
         cache: acc.window.cache_hit_pct,
-        remain: acc.credits ? acc.credits.remain : null,
+        credit: acc.window.credit != null ? Number(acc.window.credit).toFixed(2) : '—',
         cost: acc.window.cost_cny,
       }));
     }
   },
   key: {
-    head: ['API Key', '请求', 'Token', '平均速度', '缓存命中', '花费'],
+    head: ['API Key', '请求', 'Token', '平均速度', '缓存命中', '消耗积分', '花费'],
+    columns: [
+      {id:'who', label:'API Key'}, {id:'req', label:'请求', align:'num'},
+      {id:'tok', label:'Token'}, {id:'speed', label:'平均速度', align:'num'},
+      {id:'cache', label:'缓存命中', align:'num'}, {id:'credit', label:'消耗积分', align:'num'},
+      {id:'cost', label:'花费', align:'num'},
+    ],
     rows(){
       const a = state.analytics; if (!a) return [];
       return (a.keys || []).map(k => ({
@@ -16370,11 +17974,55 @@ const dimDefs = {
         tokSub: `思考 ${fmtCompact(k.window.reasoning_tokens)} · 缓存 ${fmtCompact(k.window.cached_tokens)}`,
         speed: k.window.speed_avg,
         cache: k.window.cache_hit_pct,
+        credit: k.window.credit != null ? Number(k.window.credit).toFixed(2) : '—',
         cost: k.window.cost_cny,
       }));
     }
   },
 };
+const DIM_LAYOUT_KEY = 'wb-analytics-dim-layout-v1';
+function dimLayout(dim){
+  const known = dimDefs[dim].columns.map(c => c.id);
+  const fallback = {order: known.slice(), hidden: []};
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(DIM_LAYOUT_KEY + ':' + dim) || 'null'); } catch(e){}
+  const order = [], seen = new Set();
+  (saved && Array.isArray(saved.order) ? saved.order : []).forEach(id => {
+    if(known.includes(id) && !seen.has(id)){ seen.add(id); order.push(id); }
+  });
+  known.forEach(id => { if(!seen.has(id)) order.push(id); });
+  const hidden = new Set(saved && Array.isArray(saved.hidden) ? saved.hidden.filter(id => known.includes(id)) : []);
+  hidden.delete('who');
+  if(order.every(id => hidden.has(id))) hidden.delete('who');
+  return {order, hidden: Array.from(hidden)};
+}
+function saveDimLayout(dim, layout){
+  try { localStorage.setItem(DIM_LAYOUT_KEY + ':' + dim, JSON.stringify(layout)); } catch(e){}
+}
+function visibleDimColumns(dim){
+  const def = dimDefs[dim], layout = dimLayout(dim);
+  return layout.order.map(id => def.columns.find(c => c.id === id)).filter(c => c && !layout.hidden.includes(c.id));
+}
+function renderDimColumnsMenu(){
+  const menu = $('dimColumnsMenu'); if(!menu) return;
+  const def = dimDefs[state.dim], layout = dimLayout(state.dim);
+  const byId = Object.fromEntries(def.columns.map(c => [c.id, c]));
+  menu.innerHTML = layout.order.map(id => {
+    const c = byId[id]; if(!c) return '';
+    const locked = id === 'who';
+    return `<label class="dim-col-item ${locked ? 'locked' : ''}" draggable="${locked ? 'false' : 'true'}" data-dim-col="${id}">
+      <span class="dim-col-grip">${locked ? '•' : '⋮⋮'}</span><input type="checkbox" ${layout.hidden.includes(id) ? '' : 'checked'} ${locked ? 'disabled checked' : ''} data-dim-toggle="${id}"><span>${c.label}</span></label>`;
+  }).join('');
+}
+function updateDimLayout(dim, mutate){
+  const layout = dimLayout(dim); mutate(layout);
+  layout.order = layout.order.filter((id, i, arr) => arr.indexOf(id) === i && dimDefs[dim].columns.some(c => c.id === id));
+  dimDefs[dim].columns.forEach(c => { if(!layout.order.includes(c.id)) layout.order.push(c.id); });
+  layout.hidden = layout.hidden.filter(id => id !== 'who' && layout.order.includes(id));
+  if(layout.order.every(id => layout.hidden.includes(id))) layout.hidden = layout.hidden.filter(id => id !== 'who');
+  saveDimLayout(dim, layout); renderDim();
+}
+
 
 function renderDim(){
   const a = state.analytics;
@@ -16385,12 +18033,13 @@ function renderDim(){
     $('cntKey').textContent = a ? cnt('key') : 0;
   }
   const def = dimDefs[state.dim];
+  const columns = visibleDimColumns(state.dim);
   const rows = def.rows()
     .filter(r => (r.req || 0) > 0 || (r.tok || 0) > 0)
     .sort((a, b) => (b.tok || 0) - (a.tok || 0));
-  $('dimHead').innerHTML = '<tr>' + def.head.map((h, i) => `<th class="${i ? 'num' : ''}">${h}</th>`).join('') + '</tr>';
+  $('dimHead').innerHTML = '<tr>' + columns.map(c => `<th data-dim-col="${c.id}" draggable="true" class="${c.align === 'num' ? 'num' : ''}">${c.label}</th>`).join('') + '</tr>';
   if (!rows.length){
-    $('dimBody').innerHTML = `<tr><td colspan="${def.head.length}" class="skel">该区间暂无数据</td></tr>`;
+    $('dimBody').innerHTML = `<tr><td colspan="${columns.length}" class="skel">该区间暂无数据</td></tr>`;
     return;
   }
   const maxTok = Math.max(1, ...rows.map(r => r.tok || 0));
@@ -16402,19 +18051,17 @@ function renderDim(){
     const remainTxt = r.remain != null
       ? (r.remain > 100 ? `${fmtCompact(r.remain)}` : `<span class="${r.remain > 10 ? '' : 'ratio-bad'}">${Number(r.remain).toFixed(1)}</span>`)
       : '—';
-    return `<tr class="dim-row" data-key="${encodeURIComponent(r.key || '')}">
-      <td>${canExpand ? '<span class="expander">▶</span>' : ''}${r.who}</td>
-      <td class="num">${numSpan(r.req)}</td>
-      <td>
-        <div class="tokcell"><span class="t">${numSpan(r.tok)}</span>
-          <div class="minibar"><i style="width:${Math.max(2,pct)}%;--bar-color:${colors[ri % colors.length]}"></i></div>
-          <span class="sub">${r.tokSub || ''}</span></div>
-      </td>
-      <td class="num">${r.speed != null ? Number(r.speed).toFixed(0) + ' tok/s' : '—'}</td>
-      <td class="num ${cacheCls}">${fmtPct(r.cache)}</td>
-      ${r.remain !== undefined ? `<td class="num">${remainTxt}</td>` : ''}
-      <td class="num">${r.cost != null ? fmtCostCny(r.cost) : '—'}</td>
-    </tr>`;
+    const cells = {
+      who: `${canExpand ? '<span class="expander">▶</span>' : ''}${r.who}`,
+      req: numSpan(r.req),
+      tok: `<div class="tokcell"><span class="t">${numSpan(r.tok)}</span><div class="minibar"><i style="width:${Math.max(2,pct)}%;--bar-color:${colors[ri % colors.length]}"></i></div><span class="sub">${r.tokSub || ''}</span></div>`,
+      speed: r.speed != null ? Number(r.speed).toFixed(0) + ' tok/s' : '—',
+      cache: fmtPct(r.cache),
+      credit: (r.credit != null && r.credit !== '—') ? (Number(r.credit) > 0 ? '<b style="color:var(--warn)">'+r.credit+'</b>' : r.credit) : '—',
+      remain: remainTxt,
+      cost: r.cost != null ? fmtCostCny(r.cost) : '—',
+    };
+    return `<tr class="dim-row" data-key="${encodeURIComponent(r.key || '')}">` + columns.map(c => `<td class="${c.align === 'num' ? 'num ' : ''}${c.id === 'cache' ? cacheCls : ''}" data-dim-col="${c.id}">${cells[c.id] == null ? '—' : cells[c.id]}</td>`).join('') + '</tr>';
   }).join('');
   applyOpenKey();
 }
@@ -16471,7 +18118,7 @@ function donutHTML(items, colors){
   </div>`;
 }
 function buildExpandRow(rowKey){
-  const cols = dimDefs[state.dim].head.length;
+  const cols = visibleDimColumns(state.dim).length;
   let items = [], label = '';
   if (state.dim === 'model'){
     items = modelByAccount(decodeURIComponent(rowKey));
@@ -16556,6 +18203,9 @@ $('rangeSeg').addEventListener('click', ev => {
   // 换区间后，明细弹窗里的账号 / 模型筛选一起复位：新区间不一定还有这些
   // 名字，留着会让下拉指向一个不存在的选项。
   state.kpiFilter = {acct: 'all', model: 'all'};
+  // ????????????????????????????????????????
+  // ?????????????????????????? renderKpis() ??????
+  $('pageSub').textContent = '?';
   loadRange();
 });
 /* KPI 卡：点击 / 回车 / 空格打开明细；卡上的 spark 用 ←/→ 逐点读数（设计系统缺口
@@ -16600,7 +18250,59 @@ $('dimTabs').addEventListener('click', ev => {
   state.dim = btn.dataset.dim;
   state.openKey = null;
   renderDim();
+  renderDimColumnsMenu();
 });
+const dimColumnsBtn = $('dimColumnsBtn');
+const dimColumnsMenu = $('dimColumnsMenu');
+if(dimColumnsBtn && dimColumnsMenu){
+  dimColumnsBtn.addEventListener('click', ev => {
+    ev.stopPropagation();
+    const open = dimColumnsMenu.hidden;
+    dimColumnsMenu.hidden = !open;
+    dimColumnsBtn.setAttribute('aria-expanded', String(open));
+    if(open) renderDimColumnsMenu();
+  });
+  dimColumnsMenu.addEventListener('change', ev => {
+    const id = ev.target && ev.target.dataset && ev.target.dataset.dimToggle;
+    if(!id || id === 'who') return;
+    updateDimLayout(state.dim, layout => {
+      const hidden = new Set(layout.hidden);
+      if(ev.target.checked) hidden.delete(id); else hidden.add(id);
+      layout.hidden = Array.from(hidden);
+    });
+    renderDimColumnsMenu();
+  });
+  let dragId = '';
+  dimColumnsMenu.addEventListener('dragstart', ev => {
+    const item = ev.target.closest('.dim-col-item');
+    if(!item || item.classList.contains('locked')) return;
+    dragId = item.dataset.dimCol;
+    ev.dataTransfer.effectAllowed = 'move';
+    ev.dataTransfer.setData('text/plain', dragId);
+  });
+  dimColumnsMenu.addEventListener('dragover', ev => {
+    if(ev.target.closest('.dim-col-item')) ev.preventDefault();
+  });
+  dimColumnsMenu.addEventListener('drop', ev => {
+    ev.preventDefault();
+    const target = ev.target.closest('.dim-col-item');
+    const toId = target && target.dataset.dimCol;
+    if(!dragId || !toId || dragId === toId) return;
+    updateDimLayout(state.dim, layout => {
+      const from = layout.order.indexOf(dragId), to = layout.order.indexOf(toId);
+      if(from < 0 || to < 0) return;
+      layout.order.splice(from, 1); layout.order.splice(to, 0, dragId);
+    });
+    dragId = '';
+    renderDimColumnsMenu();
+  });
+  document.addEventListener('click', ev => {
+    if(!dimColumnsMenu.hidden && !ev.target.closest('#dimColumnsMenu, #dimColumnsBtn')){
+      dimColumnsMenu.hidden = true; dimColumnsBtn.setAttribute('aria-expanded', 'false');
+    }
+  });
+}
+renderDimColumnsMenu();
 window.addEventListener('resize', () => { drawSeries(); drawSparks(); });
 
 /* 数字悬停：复用面板全局 [data-tip] 气泡（ensureHoverTip 的委托监听），
@@ -16637,7 +18339,7 @@ function wbaTick(){
     if (sel) sel.value = analyticsProvider;
   }
   if (!wbaStarted){ wbaStarted = true; loadStatic(); }
-  loadRange();
+  loadRange(true);   // 轮询：窗口上界按 15 秒桶量化，连续两轮同桶才有可能吃 304
 }
 /* 数据看板的提供商筛选：切换后清空上一口径的缓存（KPI、曲线、最近请求、
    性能分位、工作回溯），再整套重取；wbaStarted 复位是为了让 loadStatic 也重跑。
@@ -16672,6 +18374,217 @@ if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TAB
   ['dimTable', 'foldPerf'].forEach(function(id){ SORT_DENY_TABLES.add(id); });
 }
 
+})();
+</script>
+
+<!-- ══════════ 色彩配置（调色台）══════════
+     入口在右上角主题菜单的「色彩配置」项（见 toggleThemeTuner）；面板默认
+     隐藏，打开后可拖动标题栏移动、点 × 关闭。颜色改动实时生效并写入
+     localStorage（刷新保留），「重置」恢复出厂值；「导出 JSON」把两套
+     调色结果复制出来，可落成正式变量。面板自身的配色走主题变量，所以
+     亮/暗主题下自动跟随。 -->
+<div id="tunerBox" role="dialog" aria-label="色彩配置">
+  <div id="tunerHead"><span>色彩配置</span><span id="tunerTheme"></span><button type="button" id="tunerClose" title="关闭" aria-label="关闭色彩配置">×</button></div>
+  <div id="tunerRows"></div>
+  <div id="tunerFoot"><button type="button" id="tunerReset">重置</button><button type="button" id="tunerExport">导出 JSON</button></div>
+</div>
+<style>
+#tunerBox{display:none;position:fixed;top:64px;right:14px;z-index:99999;width:258px;background:var(--panel);
+  border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-md);
+  font:12px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;color:var(--fg)}
+#tunerBox.open{display:block}
+#tunerHead{display:flex;align-items:center;gap:6px;padding:7px 10px;background:var(--panel2);
+  border-bottom:1px solid var(--line);border-radius:10px 10px 0 0;cursor:move;user-select:none;font-weight:600}
+#tunerHead #tunerTheme{margin-left:auto;font-weight:400;font-size:11px;color:var(--dim)}
+#tunerClose{border:0;background:transparent;cursor:pointer;font-size:15px;line-height:1;padding:0 5px;color:var(--dim)}
+#tunerClose:hover{color:var(--fg)}
+#tunerRows{padding:6px 10px;max-height:56vh;overflow:auto}
+.tuner-row{display:flex;align-items:center;gap:7px;padding:2.5px 0}
+.tuner-row label{width:50px;flex-shrink:0;font-size:11px;color:var(--dim)}
+.tuner-row input[type=color]{width:28px;height:20px;border:1px solid var(--line);border-radius:4px;padding:0;cursor:pointer;background:none}
+.tuner-row code{font-size:10px;color:var(--dim);width:56px;font-family:ui-monospace,Consolas,monospace}
+.tuner-row .ratio{margin-left:auto;font-size:10px;font-weight:600;color:var(--dim);white-space:nowrap}
+.tuner-row .ratio.ok{color:var(--accent2)}
+.tuner-row .ratio.low{color:var(--warn)}
+#tunerFoot{display:flex;gap:8px;padding:8px 10px;border-top:1px solid var(--line)}
+#tunerFoot button{flex:1;padding:5px 0;font-size:11px;border:1px solid var(--line);border-radius:6px;background:var(--panel);cursor:pointer;color:var(--fg)}
+#tunerFoot button:hover{background:var(--panel2)}
+</style>
+<script>
+(function(){
+  var VARS = [
+    ['--accent', '强调色', 'signal'],
+    ['--accent2', '成功色', 'signal'],
+    ['--warn', '警告色', 'signal'],
+    ['--bad', '错误色', 'signal'],
+    ['--bg', '页面底', 'layer'],
+    ['--panel', '卡片', 'layer'],
+    ['--panel2', '内嵌块', 'layer'],
+    ['--fg', '主文字', 'text'],
+    ['--dim', '次文字', 'text'],
+    ['--line', '边框', 'edge']
+  ];
+  /* 看板页 scoped 变量里名字不同的三个（成功/警告/错误） */
+  var SCOPE = { '--accent2': '--green', '--warn': '--gold', '--bad': '--red' };
+  var KEY = 'wb-theme-tuner';
+  var switching = false, styleEl = null;
+  var box = document.getElementById('tunerBox');
+  var rowsEl = document.getElementById('tunerRows');
+  var themeLabel = document.getElementById('tunerTheme');
+
+  function theme(){ return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'; }
+  function readVar(n){
+    if (typeof getComputedStyle !== 'function') return '';
+    const style = getComputedStyle(document.documentElement);
+    return style && typeof style.getPropertyValue === 'function'
+      ? (style.getPropertyValue(n) || '').trim() : '';
+  }
+  /* 同步临时切主题读取原始值（同一帧内还原，不闪烁） */
+  function readThemeVals(t){
+    switching = true;
+    var cur = document.documentElement.getAttribute('data-theme') || 'light';
+    document.documentElement.setAttribute('data-theme', t);
+    var out = {};
+    for (var i = 0; i < VARS.length; i++) out[VARS[i][0]] = readVar(VARS[i][0]) || '#000000';
+    document.documentElement.setAttribute('data-theme', cur);
+    switching = false;
+    return out;
+  }
+  function chan(v){ v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+  function lum(hex){
+    hex = String(hex).replace('#', '');
+    if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+    var r = parseInt(hex.slice(0,2),16), g = parseInt(hex.slice(2,4),16), b = parseInt(hex.slice(4,6),16);
+    if (isNaN(r) || isNaN(g) || isNaN(b)) return null;
+    return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b);
+  }
+  function ratio(a, b){
+    var la = lum(a), lb = lum(b);
+    if (la == null || lb == null) return null;
+    return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+  }
+
+  var edits;
+  try { var saved = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch(e){ saved = null; }
+  if (saved && saved.light && saved.dark && saved.light['--accent'] && saved.dark['--accent']) {
+    edits = saved;
+  } else {
+    edits = { light: readThemeVals('light'), dark: readThemeVals('dark') };
+  }
+
+  function apply(){
+    if (!styleEl){ styleEl = document.createElement('style'); styleEl.id = 'tunerStyle'; document.head.appendChild(styleEl); }
+    function block(t){ return Object.keys(edits[t]).map(function(k){ return k + ':' + edits[t][k]; }).join(';'); }
+    function scoped(t){ return Object.keys(edits[t]).map(function(k){ return (SCOPE[k] || k) + ':' + edits[t][k]; }).join(';'); }
+    styleEl.textContent =
+      ':root{' + block('light') + '}\n' +
+      '[data-theme="dark"]{' + block('dark') + '}\n' +
+      '#pageAnalytics{' + scoped('light') + '}\n' +
+      '[data-theme="dark"] #pageAnalytics{' + scoped('dark') + '}';
+  }
+  function save(){ try { localStorage.setItem(KEY, JSON.stringify(edits)); } catch(e){} }
+
+  function renderRows(){
+    var t = theme();
+    themeLabel.textContent = t === 'dark' ? '暗色' : '亮色';
+    rowsEl.innerHTML = '';
+    VARS.forEach(function(v){
+      var name = v[0], label = v[1];
+      var val = edits[t][name] || '#000000';
+      var row = document.createElement('div');
+      row.className = 'tuner-row';
+      var lab = document.createElement('label'); lab.textContent = label;
+      var inp = document.createElement('input'); inp.type = 'color'; inp.value = val;
+      var code = document.createElement('code'); code.textContent = val;
+      var rat = document.createElement('span'); rat.className = 'ratio';
+      row.appendChild(lab); row.appendChild(inp); row.appendChild(code); row.appendChild(rat);
+      inp.addEventListener('input', function(){
+        edits[t][name] = inp.value;
+        code.textContent = inp.value;
+        apply(); renderRatios(); save();
+      });
+      rowsEl.appendChild(row);
+    });
+    renderRatios();
+  }
+  function renderRatios(){
+    var t = edits[theme()];
+    var panel = t['--panel'];
+    var rows = rowsEl.children;
+    for (var i = 0; i < VARS.length; i++){
+      var name = VARS[i][0], kind = VARS[i][2];
+      if(!rows || !rows[i] || !rows[i].children) continue;
+      var el = rows[i].children[3];
+      if(!el) continue;
+      var r = ratio(t[name], panel);
+      if (kind === 'layer'){
+        if (name === '--panel') r = ratio(t['--panel'], t['--bg']);   /* 卡片行显示与页面底的层次 */
+        el.textContent = '层次 ' + (r ? r.toFixed(2) : '-'); el.className = 'ratio';
+      }
+      else if (kind === 'edge'){ el.textContent = '边框 ' + (r ? r.toFixed(2) : '-'); el.className = 'ratio'; }
+      else {
+        var ok = r != null && r >= 4.5;
+        el.textContent = (r ? r.toFixed(2) : '-') + (ok ? ' ✓' : ' ⚠');
+        el.className = 'ratio ' + (ok ? 'ok' : 'low');
+      }
+    }
+  }
+
+  /* 主题菜单入口：打开/关闭面板，并同步菜单项的选中态 */
+  window.toggleThemeTuner = function(evt){
+    if (evt){ evt.preventDefault(); evt.stopPropagation(); }
+    var menu = document.getElementById('themeDropdown');
+    if (menu) menu.classList.remove('open');
+    var btn = document.getElementById('themeToggleBtn');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+    var open = box.classList.toggle('open');
+    var opt = document.getElementById('themeOptTuner');
+    if (opt) opt.classList.toggle('active', open);
+  };
+
+  /* 拖动 */
+  document.getElementById('tunerHead').addEventListener('mousedown', function(e){
+    if (e.target.id === 'tunerClose') return;
+    var r = box.getBoundingClientRect();
+    var ox = e.clientX - r.left, oy = e.clientY - r.top;
+    function mv(ev){
+      box.style.left = Math.max(0, ev.clientX - ox) + 'px';
+      box.style.top = Math.max(0, ev.clientY - oy) + 'px';
+      box.style.right = 'auto';
+    }
+    function up(){ document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); }
+    document.addEventListener('mousemove', mv);
+    document.addEventListener('mouseup', up);
+    e.preventDefault();
+  });
+  document.getElementById('tunerClose').addEventListener('click', function(){
+    box.classList.remove('open');
+    var opt = document.getElementById('themeOptTuner');
+    if (opt) opt.classList.remove('active');
+  });
+  document.getElementById('tunerReset').addEventListener('click', function(){
+    try { localStorage.removeItem(KEY); } catch(e){}
+    if (styleEl){ styleEl.remove(); styleEl = null; }
+    edits = { light: readThemeVals('light'), dark: readThemeVals('dark') };
+    apply(); renderRows();
+  });
+  document.getElementById('tunerExport').addEventListener('click', function(){
+    var txt = JSON.stringify(edits, null, 2);
+    function fallback(){ window.prompt('复制以下调色结果：', txt); }
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(txt).then(function(){ alert('已复制到剪贴板 ✓'); }, fallback);
+    } else { fallback(); }
+  });
+  /* 页面切主题时，调色台的值跟着切 */
+  if (typeof MutationObserver !== 'undefined') {
+    new MutationObserver(function(){
+      if (switching) return;
+      renderRows();
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  }
+
+  apply();
+  renderRows();
 })();
 </script>
 </body>

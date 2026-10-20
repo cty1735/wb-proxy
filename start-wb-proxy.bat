@@ -10,15 +10,83 @@ rem
 rem  NOTE: this script puts no %VAR% inside an if( ... ) block,
 rem  because a path containing ( or ) breaks the cmd.exe parser.
 rem  All checks use if/errorlevel/goto instead.
+rem
+rem  SILENT MODE: with a GUI-subsystem pythonw the service runs
+rem  with NO console window and nothing in the taskbar; closing
+rem  any window never stops it. A separate live log viewer opens
+rem  on top - closing the viewer only closes the viewer. When no
+rem  pythonw exists we fall back to the visible-window launcher.
 rem ===========================================================
 
 set "PORT=%~1"
 if "%PORT%"=="" set "PORT=8788"
 set "HERE=%~dp0"
 set "SCRIPT=%HERE%wb_proxy.py"
+set "PYARGS=--port %PORT%"
 
 if not exist "%SCRIPT%" goto no_script
 
+rem ---- prefer pythonw (GUI subsystem: no console window) ----
+if exist "%HERE%python\pythonw.exe" goto pyw_bundled
+if exist "%HERE%.venv\Scripts\pythonw.exe" goto pyw_venv
+pythonw --version >nul 2>nul
+if not errorlevel 1 goto pyw_path
+pyw --version >nul 2>nul
+if not errorlevel 1 goto pyw_path_pyw
+goto use_python
+
+:pyw_bundled
+set "PYW=%HERE%python\pythonw.exe"
+goto run_silent
+
+:pyw_venv
+set "PYW=%HERE%.venv\Scripts\pythonw.exe"
+goto run_silent
+
+:pyw_path
+set "PYW=pythonw"
+goto run_silent
+
+:pyw_path_pyw
+set "PYW=pyw"
+goto run_silent
+
+:run_silent
+rem Launch the service headless: no console window, nothing in the
+rem taskbar, and closing any window never stops it.
+start "" "%PYW%" "%SCRIPT%" %PYARGS%
+
+rem Open a live log viewer in its own console window. The viewer
+rem waits quietly while the service starts and closes itself when
+rem the service is shut down. pythonw has no window, so a console
+rem python is needed for the viewer.
+if exist "%HERE%python\python.exe" goto viewer_bundled
+if exist "%HERE%.venv\Scripts\python.exe" goto viewer_venv
+python --version >nul 2>nul
+if not errorlevel 1 goto viewer_path
+exit /b 0
+
+:viewer_bundled
+set "VIEWERPY=%HERE%python\python.exe"
+goto viewer_go
+
+:viewer_venv
+set "VIEWERPY=%HERE%.venv\Scripts\python.exe"
+goto viewer_go
+
+:viewer_path
+set "VIEWERPY=python"
+goto viewer_go
+
+:viewer_go
+if not exist "%HERE%console_tail.py" exit /b 0
+start "" "%VIEWERPY%" "%HERE%console_tail.py" --port %PORT%
+exit /b 0
+
+:use_python
+rem ===========================================================
+rem  Visible-window launcher (fallback, pythonw unavailable)
+rem ===========================================================
 set "PYEXE="
 
 rem ---- 1) bundled runtime (ships with the zip) ----
@@ -97,7 +165,7 @@ echo   Press Ctrl+C to stop.
 echo ===========================================================
 echo.
 
-"%PYEXE%" "%SCRIPT%" --port %PORT%
+"%PYEXE%" "%SCRIPT%" %PYARGS%
 
 echo.
 echo [server exited]

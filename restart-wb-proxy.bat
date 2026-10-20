@@ -20,7 +20,7 @@ rem  All checks use if/errorlevel/goto instead.
 rem ===========================================================
 
 echo Stopping other wb_proxy instances ...
-powershell -NoProfile -Command "$p = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.Name -eq 'python.exe' -and $_.CommandLine -like '*wb_proxy.py*' }; if ($p) { $p | ForEach-Object { Write-Host ('  stopping: PID ' + $_.ProcessId); Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Start-Sleep -Seconds 1; if (Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.Name -eq 'python.exe' -and $_.CommandLine -like '*wb_proxy.py*' }) { Write-Host '  [WARN] some wb_proxy processes survived; they may still hold the port.' } else { Write-Host '  all wb_proxy instances stopped.' } } else { Write-Host '  no running wb_proxy instance.' }"
+powershell -NoProfile -Command "$p = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.Name -in @('python.exe','pythonw.exe') -and $_.CommandLine -like '*wb_proxy.py*' }; if ($p) { $p | ForEach-Object { Write-Host ('  stopping: PID ' + $_.ProcessId); Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Start-Sleep -Seconds 1; if (Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.Name -in @('python.exe','pythonw.exe') -and $_.CommandLine -like '*wb_proxy.py*' }) { Write-Host '  [WARN] some wb_proxy processes survived; they may still hold the port.' } else { Write-Host '  all wb_proxy instances stopped.' } } else { Write-Host '  no running wb_proxy instance.' }"
 
 echo.
 echo Starting LAN mode ...

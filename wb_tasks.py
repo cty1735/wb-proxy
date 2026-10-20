@@ -13,11 +13,15 @@ import urllib.error
 import urllib.request
 
 import wb_accounts as _accounts
+import wb_identity
 
-CHAT_BASE = "https://copilot.tencent.com"
+# 默认 https://copilot.tencent.com；WB_CN_CHAT_UPSTREAM 可覆盖（见 wb_identity.CN_CHAT_BASE）。
+CHAT_BASE = wb_identity.CN_CHAT_BASE
 BILL_BASE = "https://www.codebuddy.cn"
 WEB_BASE = "https://www.workbuddy.cn"
-DESKTOP_UA = "WorkBuddy/5.5.6 WorkBuddy/5.5.6 CLI/2.137.1"
+#: 本模块只跑国内版，桌面端 UA 与 wb_identity 同一来源，避免两处各写一份
+#: 版本号（国际版 5.8.4 对齐时就是这么漏掉一份的）。
+DESKTOP_UA = wb_identity.DESKTOP_UA_CN
 WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
 
 
