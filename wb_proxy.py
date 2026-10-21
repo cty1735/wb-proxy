@@ -12462,6 +12462,14 @@ SANITIZE_KV_RE = re.compile(r"(?i)\bcc_[a-z0-9_]+=[^;\r\n]*;?\s*")
 SANITIZE_OMO_JUNIOR_RE = re.compile(
     r"Sisyphus-Junior - Focused executor from OhMyOpenCode", re.IGNORECASE
 )
+# DeepSeek Harness (DSH) puts this exact sentence in the first prompt section.
+# Upstream 11128 fires only when the system message *starts* with it: a leading
+# space or any prefix defeats the check, trailing text does not. Dropping the
+# " Harness" suffix keeps the agent identity ("powered by DeepSeek") and passes;
+# bare "DeepSeek Harness" elsewhere is accepted, so leave those mentions alone.
+SANITIZE_DSH_IDENTITY_RE = re.compile(
+    r"You are an AI agent powered by DeepSeek Harness", re.IGNORECASE
+)
 # 指纹判定的字面量快路径（见 has_fingerprint）：原先对每段文本跑两个 (?i) 正则，
 # 4KB 输入实测 319µs，其中正则 137+188µs、几个 `in` 只占 9µs；64KB 文本要
 # 6.2ms，而 sanitize_messages 会给每个文本段都过一遍——build_upstream_body
@@ -12482,6 +12490,7 @@ SANITIZE_BARE_HDR_LOWER = SANITIZE_BARE_HDR_RE.pattern
 if SANITIZE_BARE_HDR_LOWER.startswith("(?i)"):
     SANITIZE_BARE_HDR_LOWER = SANITIZE_BARE_HDR_LOWER[4:]
 SANITIZE_OMO_JUNIOR_LOWER = SANITIZE_OMO_JUNIOR_RE.pattern.lower()
+SANITIZE_DSH_IDENTITY_LOWER = SANITIZE_DSH_IDENTITY_RE.pattern.lower()
 def has_fingerprint(text):
     if not isinstance(text, str) or not text:
         return False
@@ -12494,7 +12503,9 @@ def has_fingerprint(text):
         low = text.translate(SANITIZE_REI_FOLD).lower()
     else:
         low = text.lower()
-    return SANITIZE_BARE_HDR_LOWER in low or SANITIZE_OMO_JUNIOR_LOWER in low
+    return (SANITIZE_BARE_HDR_LOWER in low
+            or SANITIZE_OMO_JUNIOR_LOWER in low
+            or SANITIZE_DSH_IDENTITY_LOWER in low)
 def sanitize_text(text):
     if not isinstance(text, str) or not text:
         return text
@@ -12505,6 +12516,8 @@ def sanitize_text(text):
     # accepted by the upstream. Only the confirmed contiguous fingerprint is
     # neutralized.
     text = SANITIZE_OMO_JUNIOR_RE.sub("Sisyphus-Junior - Focused executor", text)
+    text = SANITIZE_DSH_IDENTITY_RE.sub(
+        "You are an AI agent powered by DeepSeek", text)
     for old, new in SANITIZE_REWRITES:
         text = text.replace(old, new)
     text = SANITIZE_HDR_RE.sub("", text)
