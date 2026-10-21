@@ -135,6 +135,9 @@ body.win-capped #pageAnalytics section.panel .pbody{overflow-y:clip!important;ma
 body.win-capped .main-page section>:first-child{position:sticky;top:0;z-index:3;
   background:var(--panel);padding-top:18px;margin-bottom:0!important;padding-bottom:14px}
 body.win-capped #logTerminalBody{max-height:var(--win-max-h)}
+/* 限高模式下区块自己滚动，模型清单的滚动区按区块限高再收一截，免得外层区块
+   与内层滚动区各出一根滚动条。 */
+body.win-capped #modelsTableScroll{max-height:max(160px,min(calc(var(--win-max-h) - 120px),72vh))}
 section h2{margin:0 0 14px;font-size:13px;font-weight:700;color:var(--dim);
   text-transform:uppercase;letter-spacing:.6px}
 section h2 em{color:var(--fg);font-style:normal;text-transform:none;letter-spacing:0;margin-left:6px}
@@ -142,14 +145,39 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 /* 网关模型清单：固定列布局 + 百分比列宽 → 占满整行、消除右侧空位；
    单元格 nowrap 防止长模型 ID / 思考档位换行，超长用省略号兜底。 */
 #modelsTable{table-layout:fixed}
+/* 列头固定：清单动辄三十多行，滑到下面就分不清哪列是哪列。外层容器自己
+   纵向滚动，表头吸在容器上沿；表头底色本来就是不透明的 --panel2，加 sticky
+   即可盖住滚上来的行。边框用 inset 阴影补一道（折叠边框在 sticky 下会跟着
+   内容一起滚走）。做法与「积分扣减 / 获取历史」那两张表一致。 */
+#modelsTableScroll{overflow:auto;max-height:min(72vh,680px)}
+#modelsTable thead th{position:sticky;top:0;z-index:2;
+  box-shadow:inset 0 -1px 0 var(--line)}
 #modelsTable th,#modelsTable td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #modelsTable td[data-label="思考档位"]{white-space:nowrap}
 /* 采样参数：放不下时 chips 折行显示完整，不截断 */
 #modelsTable td[data-label="默认采样参数"]{white-space:normal}
 /* 测试列：按钮 + 结果两行，挤在固定列宽里必须允许换行，否则「✓ 可用 1.2s」
-   会被 cells 的 ellipsis 切掉。 */
-#modelsTable td[data-label="测试"]{white-space:normal;overflow:visible}
-#modelsTable td[data-label="测试"] button{padding:2px 10px;font-size:11px}
+   会被 cells 的 ellipsis 切掉。用 class 挂钩而不是 data-label —— data-label
+   会跟着界面语言变（中文「测试」→ 英文「Test」），拿它当选择器在英文/繁体
+   界面下会失配。 */
+#modelsTable td.test-cell{white-space:normal;overflow:visible}
+#modelsTable td.test-cell button{padding:2px 10px;font-size:11px}
+/* 可用性列：徽标不能被单元格 ellipsis 切掉，徽标本身自带底色和描边。 */
+#modelsTable td.ava-cell{white-space:normal;overflow:visible}
+/* 可用性徽标：颜色即状态 —— 绿=可用、红=不可用、琥珀=测试中、灰=还没测过。
+   圆点用 currentColor，跟着徽标一起换色，浅色/深色/其它主题都不会串色；
+   底色走各主题自己的 --accent2-soft / --bad-soft / --warn-soft，不写死色值。 */
+.ava{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;
+  font-size:11px;font-weight:600;line-height:1.7;white-space:nowrap;font-family:var(--sans);
+  border:1px solid transparent}
+.ava-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.ava-ok{color:var(--accent2);background:var(--accent2-soft);border-color:rgba(94,140,79,.30)}
+.ava-bad{color:var(--bad);background:var(--bad-soft);border-color:rgba(181,71,59,.30)}
+.ava-run{color:var(--warn);background:var(--warn-soft);border-color:rgba(183,121,31,.30)}
+.ava-run .ava-dot{animation:ava-blink 1.1s ease-in-out infinite}
+.ava-idle{color:var(--dim);background:var(--panel2);border-color:var(--line)}
+@keyframes ava-blink{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.7)}}
+@media (prefers-reduced-motion: reduce){ .ava-run .ava-dot{animation:none} }
 /* 启用列用设置页那套胶囊开关（.switch / .switch-track）。表格行高有限，
    收掉 .switch 为触屏准备的 40px 点击区；卡片视图里那条给普通复选框的
    20px 尺寸也要压回去，否则隐藏的 checkbox 会撑出一块看不见的点击区。 */
@@ -912,6 +940,9 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
   .meta .meta-secondary{display:none}
   /* Table → card */
   .table-wrap{overflow:visible}
+  /* 窄屏下模型清单变卡片、表头隐藏，滚动区（列头固定用的那层）也一并撤掉，
+     否则整块被限高框住，页面里还多一根多余的滚动条。 */
+  body.win-capped #modelsTableScroll,#modelsTableScroll{overflow:visible;max-height:none}
   table.data-cards{min-width:0!important;display:block}
   table.data-cards thead{display:none}
   table.data-cards tbody{display:block}
@@ -2751,6 +2782,26 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '测试口径': 'Test mode',
     '✓ 可用 ': '✓ usable ',
     '✗ 不可用': '✗ unavailable',
+    // 网关模型清单的「可用性」列 + 一键测试模型。
+    '可用性': 'Availability',
+    '不可用': 'Unavailable',
+    '未测试': 'Not tested',
+    '测试中': 'Testing',
+    '一键测试模型': 'Test all models',
+    // 「不可用」进了字典，下面两条更长的得排在它前面，否则会被拆成
+    // 「CurrentUnavailable」这种夹生词。
+    '当前不可用': 'currently unavailable',
+    '本次不可用': 'unavailable this time',
+    '当前视图没有可测试的模型（已停用的模型会被网关直接拒绝，已跳过）': 'No testable models in the current view (disabled models are rejected by the gateway and were skipped)',
+    '正在测试这条模型…': 'Testing this model…',
+    '停止测试': 'Stop test',
+    '已叫停，正在收尾已经在跑的请求…': 'Stopped — finishing the requests already in flight…',
+    '叫停这一轮：已经在跑的请求跑完就收手，没开始的就不再测；测到一半的结果照样留着。': 'Stop this round: the requests already in flight finish up, the ones not started are skipped; the results collected so far are kept.',
+    '把当前视图下所有启用的模型挨个真发一次请求（走网关自己的 /v1/chat/completions，和 agent 同一条链路），逐条更新「可用性」列；已停用的模型会被网关直接拒绝，所以跳过。4 条并发、单条最多等 30 秒，三十来条一般一分多钟就完。': 'Send a real request for every enabled model in the current view (through the gateway\'s own /v1/chat/completions, the same path an agent takes) and refresh the "Availability" column row by row; disabled models are rejected by the gateway, so they are skipped. 4 at a time, 30s each, so thirty-odd models usually take a little over a minute.',
+    '测试于 ': 'Tested at ',
+    '展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率；每行可单独测试与启用/停用，测过的可用性记在本机、刷新后还在': 'Official chat models in the current view, with their context size, reasoning/vision abilities, thinking controls, default sampling parameters and current rate; each row can be tested and enabled/disabled on its own, and the availability you measured is remembered on this machine and survives a refresh',
+    '这条模型已在面板停用，网关会直接拒绝请求，所以还没有可用性结论。': 'This model is disabled in the panel. The gateway rejects requests for it, so there is no availability verdict yet.',
+    '还没测过。点这一行的「测试」，或用上面的「一键测试模型」跑一次真请求。': 'Not tested yet. Click "Test" on this row, or use "Test all models" above to send a real request.',
     '个已停用': ' disabled',
     '可用（': 'usable (',
     '，工具调用正常': ', tool call OK',
@@ -4032,6 +4083,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     "经": "經",
     "绑": "綁",
     "结": "結",
+    "论": "論",
     "给": "給",
     "络": "絡",
     "绝": "絕",
@@ -4129,6 +4181,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     "验": "驗"
   };
   var RULES = [
+    [/批量测试已停止：已测 (\d+) 个 · 可用 (\d+) 个 · 不可用 (\d+) 个/,
+     function(m, a, b, c){ return 'Batch test stopped: ' + a + ' tested · ' + b + ' usable · ' + c + ' unavailable'; }],
+    [/超时：(\d+) 秒内没有完成回答/,
+     function(m, n){ return 'Timed out: no reply within ' + n + 's'; }],
+    [/批量测试完成：可用 (\d+) 个 · 不可用 (\d+) 个（共 (\d+) 个模型）(?:，另跳过 (\d+) 个已停用的模型)?/,
+     function(m, a, b, c, d){ return 'Batch test done: ' + a + ' usable · ' + b + ' unavailable (of ' + c + ' models)'
+       + (d ? ' · ' + d + ' disabled models skipped' : ''); }],
     [/（国际版共 (\d+) 个，启用 (\d+) 个）/, function(m, n, e){ return '(Global: ' + n + ' total, ' + e + ' enabled)'; }],
     [/（国内版共 (\d+) 个，启用 (\d+) 个）/, function(m, n, e){ return '(China: ' + n + ' total, ' + e + ' enabled)'; }],
     [/有 (\d+) 把 Key 没有绑定出口/, function(m, n){ return n + ' keys have no exit bound'; }],
@@ -4996,32 +5055,42 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
           <option value="agent">测试口径：Agent（带工具）</option>
           <option value="chat">测试口径：对话（不带工具）</option>
         </select>
-        <div style="font-size:12px;color:var(--dim)" id="modelsTableDesc">展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率；每行可单独测试与启用/停用</div>
+        <div style="font-size:12px;color:var(--dim)" id="modelsTableDesc">展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率；每行可单独测试与启用/停用，测过的可用性记在本机、刷新后还在</div>
         <!-- 手动刷新：强制走一次上游 /v3/config（只在当前视图的版本上，用该
              版本的账号），成功后本表立即重载。服务端同一版本 30s 冷却。 -->
         <button class="sec mini" id="btnRefreshModels" onclick="refreshModelCatalog(this)"
                 title="立即从上游 API 重新拉取当前视图版本的模型清单（不走缓存；同一版本 30 秒内只能刷一次）">刷新模型清单</button>
+        <!-- 一键测试：把当前视图（当前池子筛选后）里每条启用的模型挨个真发一次
+             请求，逐条把「可用性」列刷成绿/红。4 条并发（串行太慢，看着像卡住），
+             单条 30 秒超时。测试期间亮出「停止测试」，随时能收手。 -->
+        <button class="sec mini" id="btnTestAllModels" onclick="testAllGatewayModels(this)"
+                title="把当前视图下所有启用的模型挨个真发一次请求（走网关自己的 /v1/chat/completions，和 agent 同一条链路），逐条更新「可用性」列；已停用的模型会被网关直接拒绝，所以跳过。4 条并发、单条最多等 30 秒，三十来条一般一分多钟就完。">一键测试模型</button>
+        <button class="sec mini" id="btnStopModelTests" onclick="stopModelBatchTest()"
+                style="display:none" title="叫停这一轮：已经在跑的请求跑完就收手，没开始的就不再测；测到一半的结果照样留着。">停止测试</button>
       </div>
     </div>
     <!-- 清单来源横幅：API 获取 → 绿色状态条（附刷新时间）；非 API（项目默认
          信息/缓存文件）→ 黄色警示「模型、倍率数据可能不一致」。内容由
          /v1/models 的 catalog 字段驱动，见 renderModelsSourceLine。 -->
     <div id="modelsSourceLine" style="font-size:12px;color:var(--dim);margin:0 0 12px;min-height:16px"></div>
-    <div style="overflow-x:auto">
+    <!-- 清单自己纵向滚动：列头（表头）吸在容器上沿，滑到下面也还看得出
+         哪列是哪列。做法与「积分扣减 / 获取历史」那两张表一致。 -->
+    <div id="modelsTableScroll">
       <table id="modelsTable" class="data-cards">
         <thead>
           <tr>
-            <th style="text-align:left;width:13%">模型 ID</th>
-            <th style="text-align:left;width:9%">名称</th>
-            <th style="text-align:center;width:9%">免费池</th>
-            <th style="text-align:center;width:10%">消费倍率 / 优惠</th>
-            <th style="text-align:center;width:11%">模型能力</th>
-            <th style="text-align:center;width:7%">上下文窗口</th>
-            <th style="text-align:center;width:7%">最大输出</th>
-            <th style="text-align:left;width:11%">思考档位</th>
-            <th style="text-align:left;width:8%;white-space:nowrap">默认采样参数</th>
+            <th style="text-align:left;width:12%">模型 ID</th>
+            <th style="text-align:left;width:8%">名称</th>
+            <th style="text-align:center;width:8%">免费池</th>
+            <th style="text-align:center;width:9%">消费倍率 / 优惠</th>
+            <th style="text-align:center;width:10%">模型能力</th>
+            <th style="text-align:center;width:6%">上下文窗口</th>
+            <th style="text-align:center;width:6%">最大输出</th>
+            <th style="text-align:left;width:10%">思考档位</th>
+            <th style="text-align:left;width:7%;white-space:nowrap">默认采样参数</th>
             <th style="text-align:center;width:6%">启用</th>
-            <th style="text-align:center;width:9%">测试</th>
+            <th style="text-align:center;width:8%">可用性</th>
+            <th style="text-align:center;width:10%">测试</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -7601,6 +7670,100 @@ window.MODELS_DATA = [];
 // 逐条模型测试的结果：键是「提供商|版本|模型 id」。表会被切换/刷新重画，
 // 结果存在表外才不会一点「刷新」就消失；同时避免同一行并发发起多条测试。
 const MODEL_TEST_STATE = {};
+// 测试结论也落到 localStorage：面板刷新、换标签页回来，上一次测出来的绿/红
+// 还在，不用每次都重测一遍（一条模型要真发一次请求，等一轮 30 来条很花时间）。
+// 键里带提供商 + 出口，所以每个视图各存各的，互不串味。
+const MODEL_TEST_STORE_KEY = 'wb-model-test-state';
+// 结论的有效期：模型可用性会变（上游改版、免费池轮换、账号被限额），放太久的
+// 结论会误导人。超过这个时间的直接作废，不再当作「当前状态」显示。
+const MODEL_TEST_STATE_TTL_MS = 24 * 3600 * 1000;
+// 本地存的条数上限：模型多、又轮流换提供商，条目会越攒越多，超了丢最旧的。
+const MODEL_TEST_STATE_MAX = 400;
+
+/* 记一条结论：内存 + localStorage 一起写。写 localStorage 失败（隐私模式、
+   配额满）时不能让测试本身跟着失败，吞掉异常即可 —— 内存里那份还在。 */
+function setModelTestState(key, value){
+  MODEL_TEST_STATE[key] = value;
+  // 「测试中」是进行中的临时状态，不落盘（saveModelTestState 也会把它滤掉），
+  // 省一次没必要的写。
+  if(!value || value.status !== 'running') saveModelTestState();
+  return value;
+}
+
+/* 删掉一条结论（例如模型被停用 —— 上一次的结论已经不代表当前状态）。 */
+function clearModelTestState(key){
+  if(!(key in MODEL_TEST_STATE)) return;
+  delete MODEL_TEST_STATE[key];
+  saveModelTestState();
+}
+
+/* 落盘。顺手把过期条目清掉、条数收一收，别让 localStorage 越攒越大。 */
+function saveModelTestState(){
+  try{
+    const now = Date.now();
+    const keep = [];
+    Object.keys(MODEL_TEST_STATE).forEach(k => {
+      const s = MODEL_TEST_STATE[k];
+      // 「测试中」是进行中的临时状态，不落盘 —— 刷新回来它早就不成立了。
+      if(!s || s.status === 'running') return;
+      if(s.at && (now - s.at) > MODEL_TEST_STATE_TTL_MS) return;
+      keep.push(k);
+    });
+    // 新的在前，超出上限就从最旧的开始丢。
+    keep.sort((a, b) => (MODEL_TEST_STATE[b].at || 0) - (MODEL_TEST_STATE[a].at || 0));
+    const out = {};
+    keep.slice(0, MODEL_TEST_STATE_MAX).forEach(k => { out[k] = MODEL_TEST_STATE[k]; });
+    localStorage.setItem(MODEL_TEST_STORE_KEY, JSON.stringify(out));
+  }catch(e){}
+}
+
+/* 取一条结论：超过有效期的当作没有（模型可用性会变，放太久的结论会误导人）。
+   页面开着不动也可能跨过有效期，所以不能只在读盘时查一次 —— 画表时也要查，
+   否则一个开了三天的标签页里，昨天测的绿点还亮着。 */
+function modelTestStateOf(id, provider, realm){
+  if(!id) return null;
+  const s = MODEL_TEST_STATE[modelTestKey(id, provider, realm)];
+  if(!s) return null;
+  if(s.status === 'running') return s;
+  if(s.at && (Date.now() - s.at) > MODEL_TEST_STATE_TTL_MS) return null;
+  return s;
+}
+
+/* 读回上次测出来的结论。过期的不认（可用性会变），坏数据直接当没有。 */
+function loadModelTestState(){
+  let raw = '';
+  try{ raw = localStorage.getItem(MODEL_TEST_STORE_KEY) || ''; }catch(e){ return; }
+  if(!raw) return;
+  let obj = null;
+  try{ obj = JSON.parse(raw); }catch(e){ return; }
+  if(!obj || typeof obj !== 'object') return;
+  const now = Date.now();
+  Object.keys(obj).forEach(k => {
+    const s = obj[k];
+    if(!s || typeof s !== 'object') return;
+    if(s.status !== 'ok' && s.status !== 'bad') return;
+    if(s.at && (now - s.at) > MODEL_TEST_STATE_TTL_MS) return;
+    MODEL_TEST_STATE[k] = s;
+  });
+}
+// 页面一进来就把上次测出来的结论读回来：表首次渲染时就能直接显示绿/红。
+loadModelTestState();
+/* 过期作废：页面开着不动也可能跨过 24 小时，徽标不能一直亮着昨天的绿点。
+   挂在那 5 秒轮询上跟着走（轮询本来就在跑，不另开定时器）—— 有结论过期
+   就丢掉并重画一次，顺手把过期的从 localStorage 里清掉。 */
+function expireModelTestState(){
+  const now = Date.now();
+  let dirty = false;
+  Object.keys(MODEL_TEST_STATE).forEach(k => {
+    const s = MODEL_TEST_STATE[k];
+    if(s && s.status !== 'running' && s.at && (now - s.at) > MODEL_TEST_STATE_TTL_MS){
+      delete MODEL_TEST_STATE[k];
+      dirty = true;
+    }
+  });
+  if(dirty){ saveModelTestState(); renderAvailableModels(); }
+  return dirty;
+}
 window.ACCOUNTS = [];
 // 当前提供商（workbuddy|qoder|trae），也是网关真实上游：头部切换器改的是服务端
 // 持久化的 provider（POST /realm），提供商与它记住的出口一起落盘；面板每个按
@@ -8158,7 +8321,7 @@ function renderModelsLoading(){
   const tb = document.querySelector('#modelsTable tbody');
   const countEm = document.getElementById('availModelCount');
   if(countEm) countEm.textContent = '(加载中…)';
-  if(tb) tb.innerHTML = '<tr><td colspan="11" class="empty">正在加载当前提供商 · 版本的模型清单…</td></tr>';
+  if(tb) tb.innerHTML = '<tr><td colspan="12" class="empty">正在加载当前提供商 · 版本的模型清单…</td></tr>';
   const src = document.getElementById('modelsSourceLine');
   if(src){
     src.style.cssText = CATALOG_BANNER_BASE + 'background:transparent;border:1px dashed var(--line);color:var(--dim)';
@@ -8188,7 +8351,7 @@ async function loadModels(){
     // 切换时表已经被清空：失败就明确说失败，别一直停在「加载中…」。
     if(!MODELS_DATA.length){
       const tb = document.querySelector('#modelsTable tbody');
-      if(tb) tb.innerHTML = '<tr><td colspan="11" class="empty">模型清单加载失败，点「刷新模型清单」重试</td></tr>';
+      if(tb) tb.innerHTML = '<tr><td colspan="12" class="empty">模型清单加载失败，点「刷新模型清单」重试</td></tr>';
       const countEm = document.getElementById('availModelCount');
       if(countEm) countEm.textContent = '(加载失败)';
     }
@@ -9701,16 +9864,29 @@ function renderAvailableModels(){
   if(countEm){
     const total = rows.length;
     const offNote = disabledInRows ? (' · ' + disabledInRows + ' 个已停用') : '';
-    countEm.textContent = EGG_POOL_FILTER
-      ? '(共 ' + rows.length + ' / ' + MODELS_DATA.length + ' 个' + offNote + ')'
-      : '(共 ' + total + ' 个' + offNote + ')';
+    // 已测过的那些里，可用 / 不可用各几条 —— 不用逐行扫，一眼就知道这个
+    // 视图整体能不能用。没测过就不显示，免得让人以为「一条都没测」。
+    let okCount = 0, badCount = 0;
+    rows.forEach(m => {
+      const t = modelTestStateOf(m && m.id);
+      if(!t) return;
+      if(t.status === 'ok') okCount++;
+      else if(t.status === 'bad') badCount++;
+    });
+    const testedNote = (okCount + badCount)
+      ? (' · <span style="color:var(--accent2)">可用 ' + okCount + '</span>'
+         + ' · <span style="color:var(--bad)">不可用 ' + badCount + '</span>')
+      : '';
+    countEm.innerHTML = EGG_POOL_FILTER
+      ? '(共 ' + rows.length + ' / ' + MODELS_DATA.length + ' 个' + offNote + testedNote + ')'
+      : '(共 ' + total + ' 个' + offNote + testedNote + ')';
   }
   if(!MODELS_DATA.length){
-    tb.innerHTML = '<tr><td colspan="11" class="empty">暂无可用模型</td></tr>';
+    tb.innerHTML = '<tr><td colspan="12" class="empty">暂无可用模型</td></tr>';
     return;
   }
   if(!rows.length){
-    tb.innerHTML = '<tr><td colspan="11" class="empty">这个池子当前没有模型</td></tr>';
+    tb.innerHTML = '<tr><td colspan="12" class="empty">这个池子当前没有模型</td></tr>';
     return;
   }
   tb.innerHTML = rows.map(m => {
@@ -9920,25 +10096,20 @@ function renderAvailableModels(){
 
     // 10. 测试（真请求，走网关自己的 /v1/chat/completions）。结果按
     //     「提供商 + 版本 + 模型」记在 MODEL_TEST_STATE 里，表被重新渲染也还在。
-    const tkey = modelTestKey(m.id);
-    const tst = MODEL_TEST_STATE[tkey];
+    const tst = modelTestStateOf(m.id);
     let testStateText = '';
     if(tst && tst.status === 'running'){
-      testStateText = '<div style="font-size:11px;color:var(--accent);margin-top:3px">测试中...</div>';
+      // 「测试中」不用在这里再写一遍：按钮本身已经变成「测试中...」，
+      // 左边的「可用性」列也有琥珀色的徽标，三处重复反而乱。
     } else if(tst && tst.status === 'ok'){
       const secs = (tst.ms / 1000).toFixed(tst.ms >= 10000 ? 0 : 1);
-      const detail = '可用 · 总耗时 ' + secs + ' 秒'
-        + (tst.ttft != null ? ' · 首字 ' + tst.ttft + 'ms' : '')
-        + (tst.tool ? ' · 工具调用正常' : (MODEL_TEST_MODE === 'agent' ? ' · 未调用工具（只回答了内容）' : ''))
-        + (tst.reasoning ? ' · 有推理片段' : '')
-        + (tst.text ? '\n回复：' + String(tst.text).slice(0, 400) : '');
       testStateText = '<div style="font-size:11px;color:var(--accent2);margin-top:3px;font-weight:600"'
-        + ' title="' + esc(detail) + '">✓ 可用 ' + esc(secs) + 's</div>';
+        + ' title="' + esc(modelTestDetail(tst)) + '">✓ 可用 ' + esc(secs) + 's</div>';
     } else if(tst && tst.status === 'bad'){
       testStateText = '<div style="font-size:11px;color:var(--bad);margin-top:3px;font-weight:600"'
         + ' title="' + esc(String(tst.error || '测试失败')) + '">✗ 不可用</div>';
     }
-    const testCell = '<td style="text-align:center" data-label="测试">'
+    const testCell = '<td class="test-cell" style="text-align:center" data-label="测试">'
       + '<button class="sec mini"' + (modelOff ? ' disabled' : '')
       + ' onclick="testGatewayModel(&quot;' + esc(m.id) + '&quot;, this)"'
       + ' title="' + esc((modelOff ? '这条模型已停用，请求会在网关入口被拒绝；先在左边打开「启用」开关再测试。'
@@ -9948,6 +10119,13 @@ function renderAvailableModels(){
               : '当前是对话口径：不带工具，只要求正常回答。'))
       + '">' + (tst && tst.status === 'running' ? '测试中...' : '测试') + '</button>'
       + testStateText
+      + '</td>';
+
+    // 11. 可用性：同一条结论，换成一眼能扫完一列的徽标 —— 绿=可用、
+    //     红=不可用、琥珀=测试中、灰=还没测过。跟「测试」列同源同数据，
+    //     区别只是这里不用逐行读耗时就能看出整列的状态分布。
+    const availCell = '<td class="ava-cell" style="text-align:center" data-label="可用性">'
+      + modelAvailabilityBadge(tst, modelOff)
       + '</td>';
 
     return '<tr' + rowStyle + '>'
@@ -9961,6 +10139,7 @@ function renderAvailableModels(){
       + '<td style="text-align:left" data-label="思考档位">' + effort + '</td>'
       + sampleCell
       + enabledCell
+      + availCell
       + testCell
       + '</tr>';
   }).join('');
@@ -10002,10 +10181,13 @@ function setModelTestMode(mode){
   try{ localStorage.setItem('wb-model-test-mode', MODEL_TEST_MODE); }catch(e){}
 }
 
-/* 测试结果的键：同一个模型 id 在不同提供商 / 版本下是两条独立的记录。 */
-function modelTestKey(id){
-  return currentProvider() + '|' + (window.VIEW_REALM === 'cn' ? 'cn' : 'intl')
-         + '|' + String(id || '');
+/* 测试结果的键：同一个模型 id 在不同提供商 / 版本下是两条独立的记录。
+   provider / realm 允许外部钉死 —— 批量测试那一轮要钉死，中途切了提供商
+   也不能把后面那几条发到别家去（id 不通用，跑了白跑，结论还会记错地方）。 */
+function modelTestKey(id, provider, realm){
+  const p = provider || currentProvider();
+  const r = realm || (window.VIEW_REALM === 'cn' ? 'cn' : 'intl');
+  return p + '|' + r + '|' + String(id || '');
 }
 
 /* 一次测试要发什么。Agent 口径刻意带上工具定义：很多模型能闲聊、但一到
@@ -10105,22 +10287,69 @@ async function readModelTestStream(res){
   return out;
 }
 
-/* 点一行的「测试」：真发一条请求，结论写进 MODEL_TEST_STATE 并就地渲染。
-   不弹确认框、不阻塞其它行；同一条模型在测的时候按钮置灰防重复。 */
-async function testGatewayModel(id, btn){
-  const key = modelTestKey(id);
-  const prev = MODEL_TEST_STATE[key];
-  if(prev && prev.status === 'running') return;
+/* 结论的时间戳：可用性会变，写清楚「什么时候测的」比只写绿/红有用 ——
+   面板刷新后读回来的还是上次那次的结论，悬停就能看到它有多旧。 */
+function modelTestStamp(tst){
+  if(!tst || !tst.at) return '';
+  try{ return '测试于 ' + new Date(tst.at).toLocaleString(); }
+  catch(e){ return ''; }
+}
+
+/* 把一条测试结论拼成 tooltip 文案：耗时 / 首字 / 有没有工具调用 / 有没有
+   推理片段，末尾附上模型原话。测试列和可用性徽标共用这一份，别各写一套。 */
+function modelTestDetail(tst){
+  if(!tst || tst.status !== 'ok') return '';
+  const secs = (tst.ms / 1000).toFixed(tst.ms >= 10000 ? 0 : 1);
+  return '可用 · 总耗时 ' + secs + ' 秒'
+    + (tst.ttft != null ? ' · 首字 ' + tst.ttft + 'ms' : '')
+    + (tst.tool ? ' · 工具调用正常' : (MODEL_TEST_MODE === 'agent' ? ' · 未调用工具（只回答了内容）' : ''))
+    + (tst.reasoning ? ' · 有推理片段' : '')
+    + (modelTestStamp(tst) ? ' · ' + modelTestStamp(tst) : '')
+    + (tst.text ? '\n回复：' + String(tst.text).slice(0, 400) : '');
+}
+
+/* 可用性徽标：把 MODEL_TEST_STATE 里那条结论翻成一个一眼能看的状态。
+   绿=可用、红=不可用、琥珀=测试中、灰=还没测过。徽标自带底色和描边，
+   圆点用 currentColor 跟着换色 —— 绿点/红点是「状态」本身，不靠文案区分。 */
+function modelAvailabilityBadge(tst, modelOff){
+  if(tst && tst.status === 'running'){
+    return '<span class="ava ava-run" title="正在测试这条模型…">'
+      + '<i class="ava-dot"></i>测试中</span>';
+  }
+  if(tst && tst.status === 'ok'){
+    return '<span class="ava ava-ok" title="' + esc(modelTestDetail(tst)) + '">'
+      + '<i class="ava-dot"></i>可用</span>';
+  }
+  if(tst && tst.status === 'bad'){
+    const why = String(tst.error || '测试失败') + (modelTestStamp(tst) ? '\n' + modelTestStamp(tst) : '');
+    return '<span class="ava ava-bad" title="' + esc(why) + '">'
+      + '<i class="ava-dot"></i>不可用</span>';
+  }
+  const why = modelOff
+    ? '这条模型已在面板停用，网关会直接拒绝请求，所以还没有可用性结论。'
+    : '还没测过。点这一行的「测试」，或用上面的「一键测试模型」跑一次真请求。';
+  return '<span class="ava ava-idle" title="' + esc(why) + '">'
+    + '<i class="ava-dot"></i>未测试</span>';
+}
+
+/* 真发一次请求，测一条模型，返回 MODEL_TEST_STATE 里那条结论（ok / bad）。
+   单条「测试」按钮和「一键测试模型」共用这一段：两条路径的判定口径必须
+   完全一样，都是走网关自己的 /v1/chat/completions（选号、路由、上游 body、
+   流式聚合、扣费记账都在里面）。
+   timeoutMs：这条请求最多等多久。单条测试给 120 秒（大模型慢，别急着判
+   死刑）；批量里给 45 秒 —— 45 秒还没回话，对「能不能用」已经是不可用了。 */
+async function runModelTest(id, timeoutMs, provider, realm){
+  const key = modelTestKey(id, provider, realm);
   const started = Date.now();
-  MODEL_TEST_STATE[key] = {status: 'running', at: started};
-  if(btn){ btn.disabled = true; btn.textContent = '测试中...'; }
+  const limit = Number(timeoutMs) > 0 ? Number(timeoutMs) : 120000;
+  setModelTestState(key, {status: 'running', at: started});
   const ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-  const timer = ctl ? setTimeout(() => ctl.abort(), 120000) : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), limit) : null;
   try{
-    const provider = currentProvider();
-    const realm = window.VIEW_REALM === 'cn' ? 'cn' : 'intl';
-    const url = '/v1/chat/completions?provider=' + encodeURIComponent(provider)
-              + '&realm=' + encodeURIComponent(realm);
+    const p = provider || currentProvider();
+    const r = realm || (window.VIEW_REALM === 'cn' ? 'cn' : 'intl');
+    const url = '/v1/chat/completions?provider=' + encodeURIComponent(p)
+              + '&realm=' + encodeURIComponent(r);
     const res = await fetch(url, {
       method: 'POST',
       cache: 'no-store',
@@ -10144,22 +10373,147 @@ async function testGatewayModel(id, btn){
       throw new Error('上游返回 200，但没有任何回答内容（空响应）');
     }
     const ms = Date.now() - started;
-    MODEL_TEST_STATE[key] = {status: 'ok', at: Date.now(), ms: ms, ttft: agg.ttft,
-                             tool: agg.tool, text: agg.text, reasoning: agg.reasoning};
-    toast('「' + id + '」可用（' + (ms / 1000).toFixed(1) + 's'
-          + (agg.tool ? '，工具调用正常' : '') + '）', 'ok');
+    setModelTestState(key, {status: 'ok', at: Date.now(), ms: ms, ttft: agg.ttft,
+                             tool: agg.tool, text: agg.text, reasoning: agg.reasoning});
   }catch(e){
     const aborted = !!(e && e.name === 'AbortError');
-    const msg = aborted ? '超时：120 秒内没有完成回答'
+    const msg = aborted ? ('超时：' + Math.max(1, Math.round(limit / 1000)) + ' 秒内没有完成回答')
                         : ('测试请求失败：' + ((e && e.message) || e));
-    MODEL_TEST_STATE[key] = {status: 'bad', at: Date.now(),
-                             ms: Date.now() - started, error: msg};
-    toast('「' + id + '」不可用：' + msg, 'bad');
+    setModelTestState(key, {status: 'bad', at: Date.now(),
+                             ms: Date.now() - started, error: msg});
   }finally{
     if(timer) clearTimeout(timer);
-    // 只重画表格，不整页刷新：其它行的结果与滚动位置都保持原样。
+  }
+  return MODEL_TEST_STATE[key];
+}
+
+/* 点一行的「测试」：真发一条请求，结论写进 MODEL_TEST_STATE 并就地渲染。
+   不弹确认框、不阻塞其它行；同一条模型在测的时候按钮置灰防重复。 */
+async function testGatewayModel(id, btn){
+  const key = modelTestKey(id);
+  const prev = MODEL_TEST_STATE[key];
+  if(prev && prev.status === 'running') return;
+  if(btn){ btn.disabled = true; btn.textContent = '测试中...'; }
+  const res = await runModelTest(id);
+  if(res && res.status === 'ok'){
+    toast('「' + id + '」可用（' + (res.ms / 1000).toFixed(1) + 's'
+          + (res.tool ? '，工具调用正常' : '') + '）', 'ok');
+  }else{
+    toast('「' + id + '」不可用：' + ((res && res.error) || '测试失败'), 'bad');
+  }
+  // 只重画表格，不整页刷新
+  renderAvailableModels();
+}
+
+/* 一键测试：把当前视图（当前池子筛选后）里每条启用的模型挨个真发一次请求，
+   逐条把「可用性」列刷成绿/红。
+
+   并发几条？串行太慢 —— 一条模型要真发一次请求，快的 3~5 秒、慢的十几秒，
+   三十多条串起来要好几分钟，用户看着就是「一直不动」。全并发又容易撞上游
+   限流、两个请求抢同一个账号，反而测出假失败。取 4 条并行，是个平衡点。
+
+   单条超时也分两种：单独点「测试」给 120 秒（大模型慢，别急着判死刑）；
+   批量里只给 MODEL_BATCH_TIMEOUT_MS —— 一条模型 30 秒还没回话，对「能不能
+   用」这个问题已经是不可用了，让它占着整轮只是浪费时间。 */const MODEL_BATCH_CONCURRENCY = 4;
+const MODEL_BATCH_TIMEOUT_MS = 30000;
+
+/* 并发高了偶尔会撞上游限流（429 / 503 / no usable account）—— 那不是模型
+   不可用，是这一轮太挤、账号池暂时借不出号。这种再单独重试一次，别把它
+   算成模型的锅。 */
+const MODEL_TEST_TRANSIENT = /429|50[234]|no usable account|rate.?limit|too many requests|限流|busy/i;
+
+/* 这一轮跑了多久（mm:ss）。按钮上一直显示着，让人知道它还在跑、没卡死。 */
+function fmtElapsed(ms){
+  const s = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+  const mm = Math.floor(s / 60);
+  const ss = s % 60;
+  return mm + ':' + (ss < 10 ? '0' : '') + ss;
+}
+
+let MODEL_BATCH_TEST_RUNNING = false;
+// 「叫停」和「还在跑」是两回事：叫停之后，已经发出去的那几条跑完就收手，
+// 没开始的不再测；但在途请求收尾前，状态仍是「还在跑」，别让人能重开一轮。
+let MODEL_BATCH_TEST_STOP = false;
+
+async function testAllGatewayModels(btn){
+  if(MODEL_BATCH_TEST_RUNNING) return;
+  const all = eggFilteredModels().filter(m => m && m.id);
+  const list = all.filter(m => m.disabled !== true);
+  const skipped = all.length - list.length;
+  if(!list.length){
+    toast('当前视图没有可测试的模型（已停用的模型会被网关直接拒绝，已跳过）', 'warn');
+    return;
+  }
+  MODEL_BATCH_TEST_RUNNING = true;
+  MODEL_BATCH_TEST_STOP = false;
+  const total = list.length;
+  const startedAt = Date.now();
+  const label = btn ? btn.textContent : '';
+  const stopBtn = document.getElementById('btnStopModelTests');
+  // 这一轮测的是哪个视图的模型，开跑时就钉死：中途切了提供商 / 出口，
+  // 后面那几条不能跟着跑到别家去（模型 id 不通用，跑了也是白跑，
+  // 结论还会记到别家的键下面）。
+  const provider = currentProvider();
+  const realm = window.VIEW_REALM === 'cn' ? 'cn' : 'intl';
+  let next = 0, done = 0, ok = 0, bad = 0;
+  // 按钮上带进度 + 已用时间；停止按钮亮出来，让人随时能收手。
+  const paint = () => {
+    if(btn) btn.textContent = '测试中 ' + done + '/' + total + ' · ' + fmtElapsed(Date.now() - startedAt);
+    if(stopBtn) stopBtn.style.display = 'inline-block';
+  };
+  if(btn) btn.disabled = true;
+  paint();
+  // 每秒刷一次按钮：正在等的那几条可能要等满 30 秒，光靠「测完一条刷一次」
+  // 会让时间戳看着卡住不动 —— 那正是「一直不动」的观感来源。
+  const ticker = setInterval(paint, 1000);
+  // 一个 worker 就是一条并发线：谁先空出来谁接下一条。
+  const worker = async () => {
+    while(!MODEL_BATCH_TEST_STOP){
+      const i = next++;
+      if(i >= list.length) return;
+      let res = await runModelTest(list[i].id, MODEL_BATCH_TIMEOUT_MS, provider, realm);
+      // 撞上限流这类「不是模型的锅」的失败，单独重试一次再下结论。
+      if(res && res.status === 'bad' && MODEL_TEST_TRANSIENT.test(String(res.error || ''))){
+        await new Promise(r => setTimeout(r, 800));
+        res = await runModelTest(list[i].id, MODEL_BATCH_TIMEOUT_MS, provider, realm);
+      }
+      done++;
+      if(res && res.status === 'ok') ok++; else bad++;
+      paint();
+      renderAvailableModels();
+    }
+  };
+  let stopped = false;
+  try{
+    const workers = [];
+    const n = Math.min(MODEL_BATCH_CONCURRENCY, total);
+    for(let i = 0; i < n; i++) workers.push(worker());
+    await Promise.all(workers);
+    stopped = MODEL_BATCH_TEST_STOP;
+  }finally{
+    clearInterval(ticker);
+    MODEL_BATCH_TEST_RUNNING = false;
+    MODEL_BATCH_TEST_STOP = false;
+    if(btn){ btn.disabled = false; btn.textContent = label; }
+    if(stopBtn) stopBtn.style.display = 'none';
     renderAvailableModels();
   }
+  if(stopped){
+    toast('批量测试已停止：已测 ' + done + ' 个 · 可用 ' + ok + ' 个 · 不可用 ' + bad + ' 个',
+          'warn');
+    return;
+  }
+  toast('批量测试完成：可用 ' + ok + ' 个 · 不可用 ' + bad + ' 个（共 ' + list.length + ' 个模型）'
+        + (skipped ? '，另跳过 ' + skipped + ' 个已停用的模型' : ''),
+        bad ? 'warn' : 'ok');
+}
+
+/* 叫停这一轮批量测试：已经在途的那几条跑完就收手，没开始的就不再测。
+   测到一半的结果照样留着（都写进 MODEL_TEST_STATE 了），不算白测。 */
+function stopModelBatchTest(){
+  if(!MODEL_BATCH_TEST_RUNNING) return;
+  MODEL_BATCH_TEST_STOP = true;
+  toast('已叫停，正在收尾已经在跑的请求…', 'warn');
 }
 
 /* 勾选 / 取消勾选一行：「停用」写进 settings.json，下次 /v1/models 起效。 */
@@ -10175,7 +10529,7 @@ async function toggleModelEnabled(id, enabled, input){
     const item = (MODELS_DATA || []).find(m => m && m.id === id);
     if(item) item.disabled = (r && typeof r.disabled === 'boolean') ? r.disabled : !enabled;
     // 开关变了，上一次的测试结论不再代表当前状态：清掉，别让人误读。
-    delete MODEL_TEST_STATE[modelTestKey(id)];
+    clearModelTestState(modelTestKey(id));
     renderAvailableModels();
     toast(enabled
       ? '已启用「' + id + '」：它会重新出现在 agent 的模型清单里。'
@@ -14419,7 +14773,7 @@ const POLL_TASKS = [
   // 每 5 秒在任何页面都跑，顺带把页面上的数据表接上排序（见 applyAllTableSorts）：
   // 表本来就是 5 秒重画一次，扫描跟同一个节奏走，新加一张表不必在它的 render
   // 函数里再写一行，下一轮自己就接上了。
-  {every: 5000, run: function(){ refresh(); applyAllTableSorts(); }},
+  {every: 5000, run: function(){ refresh(); applyAllTableSorts(); expireModelTestState(); }},
   {every: 30000, run: function(){ loadSchedulerStatus(); }},
   {every: 15000, run: function(){ loadAccounts(); }},
 ];

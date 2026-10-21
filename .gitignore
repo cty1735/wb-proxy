@@ -16,3 +16,8 @@
 Thumbs.db
 .vscode/
 .idea/
+
+# ---- 测试产物 ----
+# 端到端测试截的图（tests/_e2e_*.png）与临时 Chrome profile，别进版本库
+tests/_e2e_*.png
+tests/_chrome_profile/

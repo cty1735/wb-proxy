@@ -490,3 +490,5 @@ check('到期格式：分钟',
 console.log('');
 if (FAIL) { console.log('FAILED: ' + FAIL); process.exit(1); }
 console.log('ALL PASS');
+// 页面里可能还挂着定时器（轮询、过期看门狗），主动退出，别让 node 等着。
+process.exit(0);
