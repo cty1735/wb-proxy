@@ -662,6 +662,33 @@ body.provider-trae #btnFetchCredits{display:none !important}
   animation:switchSpin .7s linear infinite;
 }
 @keyframes switchSpin{to{transform:rotate(360deg)}}
+/* 首屏 loading：静态标记里就带着，解锁后到第一批数据回来之前一直盖着。
+   原来这段空档里页面用的全是 HTML 里的初值（0 积分、0/0 账号、0 个 Key、
+   空表），看着和「卡死」一模一样，尤其是首次启动 / 默认鸡蛋时上游汇总
+   免费清单要几十秒。首批数据到齐后由 JS 淡出移除；需要输密码时它留在
+   登录闸门下面，登录成功后接着显示真正的加载进度。 */
+#bootScreen{
+  position:fixed;inset:0;z-index:590;display:flex;align-items:center;justify-content:center;
+  padding:24px;background:var(--bg);transition:opacity .22s ease;
+}
+#bootScreen.off{opacity:0;pointer-events:none}
+#bootScreen .boot-card{
+  display:flex;align-items:flex-start;gap:14px;padding:18px 22px;
+  max-width:min(460px,100%);border-radius:14px;
+  background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow-md);
+}
+#bootScreen .boot-sp{
+  width:22px;height:22px;flex:none;margin-top:2px;border-radius:50%;
+  border:2.5px solid var(--line);border-top-color:var(--accent);
+  animation:switchSpin .8s linear infinite;
+}
+#bootScreen .boot-title{font-size:13.5px;font-weight:600;color:var(--fg);letter-spacing:.01em}
+#bootScreen .boot-sub{font-size:12px;color:var(--dim);line-height:1.65;margin-top:5px}
+#bootScreen .boot-skip{display:none;margin-top:10px}
+@media (prefers-reduced-motion: reduce){
+  #bootScreen .boot-sp{animation:none;border-top-color:var(--line);border-left-color:var(--accent)}
+  #bootScreen{transition:none}
+}
 .theme-option.active{font-weight:600;color:var(--accent)}
 .theme-option.active .theme-opt-icon{color:var(--accent)}
 .theme-sep{height:1px;background:var(--line);margin:4px 6px}
@@ -2060,6 +2087,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '剩余积分 ·': 'Credits left ·',
     '剩余额度最大': 'Most quota left',
     '加载中...': 'Loading...',
+    '正在连接网关…': 'Connecting to the gateway…',
+    '正在读取当前提供商、账号与模型清单，请稍候。': 'Reading the current provider, accounts and model list, please wait.',
+    '先进入面板（后台继续加载）': 'Enter the panel (loading continues in the background)',
+    '正在同步网关状态…': 'Syncing gateway state…',
+    '正在读取当前提供商、默认出口与账号池。': 'Reading the current provider, default exit and account pool.',
+    '正在加载账号与最近请求…': 'Loading accounts and recent requests…',
+    '鸡蛋是免费模型聚合：模型清单在后台汇总 Zen / Kilo / 自建池，可能要多等一会儿。': 'Egg aggregates free models: the list is being collected from Zen / Kilo / your own pools in the background; this can take a while.',
+    '账号与最近请求先上屏，模型清单在后台加载。': 'Accounts and recent requests appear first; the model list keeps loading in the background.',
+    '这次加载比平时久（首次启动或默认鸡蛋时，免费模型清单要从上游汇总）。也可以先进入面板，数据会在后台继续加载。': 'This load is taking longer than usual (on first launch, or with Egg as the default, the free model list is collected upstream). You can enter the panel now; data keeps loading in the background.',
     '加载更多': 'Load more',
     '勾选要导入为槽位的出口：': 'Tick the exits to import as slots:',
     '匹配来源：': 'Match source:',
@@ -4262,6 +4298,18 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
 </script>
 </head>
 <body>
+<!-- 首屏 loading（见 CSS #bootScreen）：解锁后到首批数据回来前先盖住整页，
+     别让「还没加载」被看成「0 积分 / 0 账号 / 空表」的卡死状态。 -->
+<div id="bootScreen">
+  <div class="boot-card" role="status" aria-live="polite" aria-atomic="true">
+    <span class="boot-sp" aria-hidden="true"></span>
+    <div>
+      <div class="boot-title" id="bootTitle">正在连接网关…</div>
+      <div class="boot-sub" id="bootSub">正在读取当前提供商、账号与模型清单，请稍候。</div>
+      <button type="button" class="sec mini boot-skip" id="bootSkip" onclick="bootLoadingDone()">先进入面板（后台继续加载）</button>
+    </div>
+  </div>
+</div>
 <header>
   <div class="header-left" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
     <!-- 品牌位＝「当前网关真实状态」：提供商名 + 网关真实默认出口版本，比如
@@ -7485,6 +7533,48 @@ function syncProviderChrome(force){
 // 切换提供商：切网关真实上游（POST /realm 只带 provider，服务端把它和该家
 // 记住的出口一起落盘）。左上角品牌位、模型清单、未绑定版本的 Key 都跟着换；
 // 只想换出口版本（不改提供商）就点顶部那颗 ⇄ 按钮。
+/* ---------- 首屏 loading ----------
+   静态标记里的 #bootScreen 一解析就开始转，不等任何脚本。这里只负责推进文案、
+   慢的时候给一个「先进入面板」的出口，以及首批数据到齐后把它淡出移除。 */
+const BOOT_HINT_AFTER_MS = 8000;
+let bootHintTimer = 0;
+const bootScreenStarted = Date.now();
+function bootLoadingText(title, sub){
+  const t = document.getElementById('bootTitle');
+  const s = document.getElementById('bootSub');
+  if(t && title) t.textContent = title;
+  if(s && sub) s.textContent = sub;
+}
+function bootLoadingHint(){
+  const el = document.getElementById('bootScreen');
+  // 页面里没有这块遮罩（或已经被移除）就不必排这个定时器。
+  if(!el || !el.isConnected) return;
+  clearTimeout(bootHintTimer);
+  bootHintTimer = setTimeout(function(){
+    const el = document.getElementById('bootScreen');
+    if(!el || el.classList.contains('off')) return;
+    const skip = document.getElementById('bootSkip');
+    if(skip) skip.style.display = 'inline-block';
+    bootLoadingText(null, '这次加载比平时久（首次启动或默认鸡蛋时，免费模型清单要从上游汇总）。'
+                          + '也可以先进入面板，数据会在后台继续加载。');
+  }, BOOT_HINT_AFTER_MS);
+}
+function bootLoadingDone(){
+  const el = document.getElementById('bootScreen');
+  if(!el) return;
+  clearTimeout(bootHintTimer);
+  // 至少露一小会儿：数据快的时候直接消失会闪一下，反而像页面抖了。
+  const wait = Math.max(0, 260 - (Date.now() - bootScreenStarted));
+  setTimeout(function(){
+    if(!el.parentNode) return;
+    el.classList.add('off');
+    setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); }, 260);
+  }, wait);
+}
+// 万一面板状态接口本身没回来（startDashboard 还没跑），8 秒后也要给出出口，
+// 不能让遮罩在没有按钮的情况下一直转。
+bootLoadingHint();
+
 /* ---------- 切换提供商 / 国际国内版时的 loading ----------
    顶部小胶囊 + 至少停留 600ms：切换要重拉账号、模型清单、用量与统计，
    慢的时候一两秒，没有反馈会让人以为没点上；闪一下就消失又看不清。 */
@@ -13024,6 +13114,9 @@ function isAuthError(err){
 }
 
 function panelNeedsLogin(){
+  // 首屏 loading 故意不收：闸门（z-index 600）本来就盖在它上面，留着的话登录
+  // 成功、闸门关掉的那一刻下面还在转，接着就能看到真正的加载进度；收掉反而
+  // 会在登录后先露一屏 0 积分 / 0 账号。
   const gate = document.getElementById('panelGate');
   if(gate) gate.style.display = 'flex';
   const input = document.getElementById('panelPwdInput');
@@ -13249,17 +13342,25 @@ let visHookInstalled = false;
 async function startDashboard(){
   if(PANEL_READY) return;
   PANEL_READY = true;
+  bootLoadingHint();
   // 前两步决定下面各自查什么（VIEW_REALM / 面板可见性），必须先行；之后就并行，
   // 别让国内版那条约 2 秒的成长任务接口把首屏的用量卡片拖在后面。
   await loadSettings();
+  bootLoadingText('正在同步网关状态…', '正在读取当前提供商、默认出口与账号池。');
   await initRealm();
   // 成长任务那条走上游、约 2 秒，只服务「任务与福利」页，而且它自己渲染。原来
   // 它在这一批 Promise.all 里，switchMainTab 因此被押到它后面——落在数据看板
   // 页签时，KPI 要等这两秒过去才开始发 /usage/analytics。这里只把它摘出来让它
   // 并行跑，其余照旧等待；异常自己收，别变成未处理的拒绝。
   loadGrowthTasks().catch(() => {});
-  await Promise.all([loadAccounts(), loadModels(),
-                     loadSchedulerStatus(), refresh(), loadAgentsAvailability()]);
+  // 模型清单先摆上「加载中」占位，且不压着首屏：鸡蛋首次启动要走上游汇总
+  // 免费清单（单源超时就有 45 秒），让账号与最近请求先上屏，表回来后自己重画。
+  renderModelsLoading();
+  loadModels().catch(function(){});
+  bootLoadingText('正在加载账号与最近请求…', currentProvider() === 'egg'
+    ? '鸡蛋是免费模型聚合：模型清单在后台汇总 Zen / Kilo / 自建池，可能要多等一会儿。'
+    : '账号与最近请求先上屏，模型清单在后台加载。');
+  await Promise.all([loadAccounts(), loadSchedulerStatus(), refresh(), loadAgentsAvailability()]);
   // 自建供应商池只在鸡蛋视图下有意义：开局就在鸡蛋视图时把池子拉回来。
   if(currentProvider() === 'egg') await loadEggPools();
   updateRecentLimitButtons();
@@ -13269,6 +13370,9 @@ async function startDashboard(){
   // 首屏把数据表接上排序：静态标记里就有的表不会被任何 loader 触发 render，
   // 轮询那条兜底要等 5 秒才轮到它。
   applyAllTableSorts();
+  // 首批数据到齐：收掉首屏 loading。之后再慢的接口（成长任务、按需的看板）
+  // 各自都有区块内的「加载中」文案，不需要继续盖住整页。
+  bootLoadingDone();
   // Polling only starts after the panel is unlocked, so a locked browser
   // never hammers the server with 401s.
   // 后台标签页不再轮询：浏览器停止绘制后台页，但定时器照跑——实测网关页在后台
@@ -14147,7 +14251,20 @@ async function loadSettings(showToast){
       }
       SAVED_QUOTA_SCAN_MODELS = Array.isArray(data.quota_scan_models) ? data.quota_scan_models.slice() : [];
       QUOTA_SCAN_SELECTED = SAVED_QUOTA_SCAN_MODELS.slice();
-      await loadQuotaScanCatalog();
+      // 配额扫描的模型目录只有「设置」页用，而 /v1/models?realm=all 在首次
+      // 启动（尤其默认鸡蛋）时要走上游汇总免费清单，可能几十秒。别让它压着
+      // 首屏：先画，目录回来再补一次。
+      loadQuotaScanCatalog().then(function(){
+        // 目录是后到的，这期间用户可能已经在设置页勾过模型：先把当前勾选收下，
+        // 重画后再放回去，别把刚点的吞掉。
+        const box = document.getElementById('quotaScanModels');
+        const boxes = box ? box.querySelectorAll('input[data-model]') : [];
+        if(boxes.length){
+          QUOTA_SCAN_SELECTED = Array.prototype.filter.call(boxes, function(el){ return el.checked; })
+            .map(function(el){ return el.getAttribute('data-model'); });
+        }
+        renderQuotaScanModels();
+      }, function(){});
       renderQuotaScanModels();
       renderQuotaScanState(data);
       // 上游响应头超时：没改过时后端给的就是默认 120，所以「等于 120」按默认态
