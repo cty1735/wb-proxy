@@ -125,17 +125,40 @@ let url = ctx.withAnalyticsProvider('/usage/analytics?realm=all');
 check('默认口径是 nongw', url.indexOf('local_scope=nongw') >= 0, url);
 check('参数用 & 续在已有问号后面', url.indexOf('?realm=all&provider=local') >= 0, url);
 
-// 3b. 客户端筛选：网关口径带上 agent，本地口径没有这个维度
+// 3b. 客户端筛选：两个口径都带 agent；跨口径时复位（两套 id 不是同一套）
 check('看板有客户端筛选下拉', /id="analyticsAgent"/.test(html));
-vm.runInContext('analyticsAgent = "dsh"', ctx);
 ctx.setAnalyticsProvider('workbuddy');
+vm.runInContext('analyticsAgent = "dsh"', ctx);
 check('网关口径带 agent 参数',
   ctx.withAnalyticsProvider('/usage/analytics').indexOf('agent=dsh') >= 0,
   ctx.withAnalyticsProvider('/usage/analytics'));
 ctx.setAnalyticsProvider('local');
-check('本地口径不带 agent 参数',
+check('跨口径时客户端筛选复位为全部',
   ctx.withAnalyticsProvider('/usage/analytics').indexOf('agent=') < 0,
   ctx.withAnalyticsProvider('/usage/analytics'));
+
+// 3c. 本地口径的客户端筛选：选项来自 local.clients，选中后带 agent=opencode
+ctx.wbaDebug.setAnalytics({
+  local: {
+    scope: 'nongw', sources: ['opencode'], scan_ms: 3, agent: null,
+    clients: [
+      { id: 'opencode', label: 'OpenCode', requests: 42, tokens: 100 },
+      { id: 'claude', label: 'Claude Code', requests: 0, tokens: 0 },
+    ],
+    gateway_requests: 7, non_gateway_requests: 42, cost_usd: 0,
+  },
+});
+check('本地下拉列出本机客户端',
+  ctx.wbaDebug.agents().map(o => o.id).join(',') === 'opencode,claude',
+  ctx.wbaDebug.agents());
+ctx.setAnalyticsAgent('opencode');
+check('本地口径也能带 agent 参数',
+  ctx.withAnalyticsProvider('/usage/analytics').indexOf('agent=opencode') >= 0,
+  ctx.withAnalyticsProvider('/usage/analytics'));
+check('本地口径仍然只算非网关',
+  ctx.withAnalyticsProvider('/usage/analytics').indexOf('local_scope=nongw') >= 0,
+  ctx.withAnalyticsProvider('/usage/analytics'));
+ctx.setAnalyticsAgent('all');
 vm.runInContext('analyticsAgent = "all"', ctx);
 
 // 4. 本地口径固定排除网关：没有「含网关」开关，参数也不随别的状态变

@@ -656,15 +656,40 @@ def normalize_scope(value):
     return SCOPE_NON_GATEWAY
 
 
-def fingerprint(since=None, until=None, scope=SCOPE_NON_GATEWAY):
+#: 客户端筛选的别名：看板的网关口径用 claude-code / codex / opencode，本地会话
+#: 记录里写的是 claude / codex / opencode，两边都要能筛同一个客户端。
+CLIENT_ALIASES = {
+    "claude-code": "claude",
+    "claude_code": "claude",
+    "claudecode": "claude",
+}
+
+
+def normalize_client(value):
+    """The client filter: None means every local client."""
+    text = str(value or "").strip().lower()
+    if not text or text == "all":
+        return None
+    return CLIENT_ALIASES.get(text, text)
+
+
+def _client_rows(rows, client):
+    """Rows produced by one client (no filter = every client)."""
+    if not client:
+        return rows
+    return [row for row in rows if (row.get("client") or "local") == client]
+
+
+def fingerprint(since=None, until=None, scope=SCOPE_NON_GATEWAY, client=None):
     """A short token describing the current local data.
 
     The panel polls every five seconds, so the payload needs a validator that
     only changes when the data does: how many requests, how many tokens, and
-    when the last one happened.
+    when the last one happened. The client filter joins the token: two clients
+    must never share one validator.
     """
     rows, _sources, _scan_ms = _collect(since if since is not None else 0)
-    window = _scope_rows(rows, scope, since, until)
+    window = _client_rows(_scope_rows(rows, scope, since, until), client)
     count = len(window)
     tokens = 0
     last = 0.0
@@ -796,20 +821,23 @@ def _usd_cny():
         return 7.1
 
 
-def analytics(since=None, until=None, scope=SCOPE_NON_GATEWAY):
+def analytics(since=None, until=None, scope=SCOPE_NON_GATEWAY, client=None):
     """The /usage/analytics payload for the local view."""
     rows, sources, scan_ms = _collect(since if since is not None else 0)
-    window = _scope_rows(rows, scope, since, until)
-    total = _scope_rows(rows, scope, None, None)
+    # 客户端下拉的选项来自「全部客户端」那一份：筛掉一个客户端之后，仍然要能
+    # 切回别的客户端，所以选项按未过滤的行统计；KPI / 曲线 / 明细用过滤后的行。
+    clients_window = _scope_rows(rows, scope, since, until)
+    clients_total = _scope_rows(rows, scope, None, None)
+    window = _client_rows(clients_window, client)
+    total = _client_rows(clients_total, client)
     # 窗口内「经本网关 / 没走网关」的拆分：口径与当前所选区间一致，面板拿它
     # 说明「本地」这一格到底装了什么（这两个数与 scope 无关，切口径时不变）。
-    window_all = _scope_rows(rows, SCOPE_ALL, since, until)
+    window_all = _client_rows(_scope_rows(rows, SCOPE_ALL, since, until), client)
 
     win_stat = _new_stat()
     all_stat = _new_stat()
     win_accts, all_accts = {}, {}
     win_models, all_models = {}, {}
-    clients = {}
     cost_usd = 0.0
     gateway_requests = 0
     non_gateway_requests = 0
@@ -911,23 +939,24 @@ def analytics(since=None, until=None, scope=SCOPE_NON_GATEWAY):
             if not stat.get("ttft_n"):
                 stat["ttft_ms_avg"] = None
 
-    # 每个客户端的请求数（窗口内 / 全部），面板用它讲清「本地」的口径。
-    for client, entry in win_accts.items():
-        clients[client] = {
-            "id": client,
-            "label": CLIENT_LABELS.get(client, client),
-            "requests": entry["window"]["requests"] + entry["window"]["errors"],
-            "tokens": entry["window"]["total_tokens"],
-        }
-    for client, entry in all_accts.items():
-        info = clients.setdefault(client, {
-            "id": client,
-            "label": CLIENT_LABELS.get(client, client),
-            "requests": 0,
-            "tokens": 0,
-        })
-        info["total_requests"] = entry["all_time"]["requests"] + entry["all_time"]["errors"]
-        info["total_tokens"] = entry["all_time"]["total_tokens"]
+    # 每个客户端的请求数（窗口内 / 全部）。这两个数按未过滤的行统计：下拉要
+    # 一直列出所有本机客户端，筛掉一个也还能切回去；数字本身给用户做对照。
+    clients = {}
+    for source, window_key, total_key in (
+            (clients_window, "requests", "tokens"),
+            (clients_total, "total_requests", "total_tokens")):
+        for row in source:
+            cid = row.get("client") or "local"
+            info = clients.get(cid)
+            if info is None:
+                info = clients[cid] = {
+                    "id": cid,
+                    "label": CLIENT_LABELS.get(cid, cid),
+                    "requests": 0, "tokens": 0,
+                    "total_requests": 0, "total_tokens": 0,
+                }
+            info[window_key] += 1
+            info[total_key] += row.get("total_tokens") or 0
 
     accts_list = sorted(win_accts.values(),
                         key=lambda a: (-a["window"]["total_tokens"], -a["all_time"]["total_tokens"]))
@@ -944,6 +973,7 @@ def analytics(since=None, until=None, scope=SCOPE_NON_GATEWAY):
         "model_rates": {},
         "local": {
             "scope": scope,
+            "agent": client,
             "sources": sources,
             "scan_ms": scan_ms,
             "clients": sorted(clients.values(), key=lambda c: -(c.get("tokens") or 0)),
@@ -955,10 +985,11 @@ def analytics(since=None, until=None, scope=SCOPE_NON_GATEWAY):
     }
 
 
-def timeseries(since=None, until=None, bucket_seconds=None, scope=SCOPE_NON_GATEWAY):
+def timeseries(since=None, until=None, bucket_seconds=None, scope=SCOPE_NON_GATEWAY,
+               client=None):
     """The /usage/timeseries payload for the local view."""
     rows, _sources, _scan_ms = _collect(since if since is not None else 0)
-    window = _scope_rows(rows, scope, since, until)
+    window = _client_rows(_scope_rows(rows, scope, since, until), client)
     lo = _as_float(since, 0.0) or (min([r["at"] for r in window]) if window else time.time())
     hi = _as_float(until, 0.0) or (max([r["at"] for r in window]) if window else lo)
     span = max(1.0, hi - lo)
@@ -1017,10 +1048,10 @@ def _bucket_origin(lo, step):
     return lo
 
 
-def recent(limit=100, page=1, scope=SCOPE_NON_GATEWAY):
+def recent(limit=100, page=1, scope=SCOPE_NON_GATEWAY, client=None):
     """The /usage/recent payload for the local view."""
     rows, _sources, _scan_ms = _collect(0)
-    window = _scope_rows(rows, scope, None, None)
+    window = _client_rows(_scope_rows(rows, scope, None, None), client)
     window.sort(key=lambda r: r.get("at") or 0.0, reverse=True)
     try:
         limit = max(1, int(limit))
@@ -1088,7 +1119,7 @@ def _dist(values):
     }
 
 
-def perf(scope=SCOPE_NON_GATEWAY):
+def perf(scope=SCOPE_NON_GATEWAY, client=None):
     """The /usage/perf payload for the local view, in the gateway's shape.
 
     Local clients record how long a turn took, not when its first token arrived,
@@ -1100,7 +1131,7 @@ def perf(scope=SCOPE_NON_GATEWAY):
     no special case.
     """
     rows, _sources, _scan_ms = _collect(0)
-    window = _scope_rows(rows, scope, None, None)
+    window = _client_rows(_scope_rows(rows, scope, None, None), client)
     elapsed = []
     cache = []
     ok = 0

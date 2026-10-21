@@ -138,6 +138,28 @@ try:
           all(("client" in row and "gateway" in row) for row in (r.get("rows") or [])),
           (r.get("rows") or [])[:1])
 
+    # 3b. 本地视图的客户端筛选：agent 参数解释成本机客户端（opencode / claude / codex）。
+    status, r = http("GET", base + "/usage/recent?provider=local&limit=50&agent=opencode",
+                     headers=panel)
+    check("GET /usage/recent?provider=local&agent=opencode", status == 200, (status, r))
+    check("客户端筛选只返回该客户端的行",
+          all(row.get("client") == "opencode" for row in (r.get("rows") or [])),
+          (r.get("rows") or [])[:3])
+    status, r = http("GET", base + "/usage/analytics?provider=local&range=all&agent=opencode",
+                     headers=panel)
+    check("GET /usage/analytics?provider=local&agent=opencode", status == 200, (status, r))
+    check("本地载荷回显筛选的客户端", (r.get("local") or {}).get("agent") == "opencode",
+          (r.get("local") or {}).get("agent"))
+    check("筛掉一个客户端后仍列出全部客户端（下拉能切回去）",
+          len((r.get("local") or {}).get("clients") or []) >= 1,
+          (r.get("local") or {}).get("clients"))
+    check("筛选后的明细只剩该客户端",
+          all(a.get("uid") == "opencode" for a in (r.get("accounts") or [])),
+          [a.get("uid") for a in (r.get("accounts") or [])])
+    status, r = http("GET", base + "/usage/timeseries?provider=local&range=all&agent=opencode",
+                     headers=panel)
+    check("GET /usage/timeseries?provider=local&agent=opencode", status == 200, (status, r))
+
     # 4. perf
     status, r = http("GET", base + "/usage/perf?provider=local", headers=panel)
     check("GET /usage/perf?provider=local", status == 200, (status, r))

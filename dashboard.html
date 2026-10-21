@@ -2670,6 +2670,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '按提供商筛选本页数据': 'Filter this page by provider',
     '全部客户端': 'All clients',
     '按客户端筛选本页数据': 'Filter this page by client',
+    '按客户端筛选本页数据（历史请求无客户端归属，只在「全部客户端」里出现）': 'Filter this page by client (historical requests have no client attribution and appear only under All clients)',
+    '按客户端筛选本页数据（网关口径看请求归属，本地口径看本机会话记录；历史请求无归属，只在「全部客户端」里出现）': 'Filter this page by client (gateway view: request attribution; local view: local session records; historical requests have no client attribution and appear only under All clients)',
     '该模型在上游目录里没有倍率字段；Qoder 按账号额度（credits）计费，实际扣减见「最近请求」的「积分」列。': 'This model has no rate field in the upstream catalog; Qoder bills in account credits, and the actual charge is in the Credits column of Recent requests.',
     '官网文档参考值；实际倍率以账号模型清单（price_factor）为准': 'Reference value from the official docs; the actual rate comes from the account model list (price_factor).',
     '来自账号模型清单的 price_factor；活动折扣可能让实际倍率不同': 'Taken from the account model list price_factor; promotions may change the effective rate.',
@@ -5253,9 +5255,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
   <div class="pagehead">
     <h1 class="pagetitle">数据看板 <span class="pagesub" id="pageSub">—</span></h1>
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <!-- 客户端筛选：只列已经一键配置过本网关的客户端。选项由 /usage/agents
-           填，历史行没有归属字段，所以筛某个客户端时只统计新带归属的请求。 -->
-      <select id="analyticsAgent" class="slot-select" title="按客户端筛选本页数据"
+      <!-- 客户端筛选：网关口径只列已经一键配置过本网关的客户端，本地口径列本机
+           实际有会话记录的客户端（OpenCode / Claude Code / Codex）。
+           历史行没有归属字段，所以网关口径筛某个客户端时只统计新带归属的请求。 -->
+      <select id="analyticsAgent" class="slot-select"
+              title="按客户端筛选本页数据（网关口径看请求归属，本地口径看本机会话记录；历史请求无归属，只在「全部客户端」里出现）"
               onchange="setAnalyticsAgent(this.value)">
         <option value="all">全部客户端</option>
       </select>
@@ -18240,10 +18244,9 @@ function withAnalyticsProvider(path){
   if ((analyticsProvider || 'all') === 'local'){
     q += '&local_scope=nongw';
   }
-  // 客户端归属只存在于网关记账的行里：本地视图是本机会话记录，没有这个维度，
-  // 所以「本地」下即使下拉还留着某个客户端也不带 agent（下拉本身会置灰）。
-  if ((analyticsProvider || 'all') !== 'local'
-      && (analyticsAgent || 'all') !== 'all'){
+  // 客户端筛选两个口径都支持：网关视图按记账行的归属，本地视图按会话记录
+  // 里的客户端（opencode / claude / codex），服务端各自解释同一个 agent 参数。
+  if ((analyticsAgent || 'all') !== 'all'){
     q += '&agent=' + encodeURIComponent(analyticsAgent);
   }
   return u + (u.indexOf('?') === -1 ? '?' : '&') + q;
@@ -18695,6 +18698,11 @@ function renderLocalScopeBar(){
   }
   const info = (state.analytics || {}).local || {};
   const clients = (info.clients || []).map(c => c.label || c.id);
+  // 本地载荷到了再填下拉：本机能筛哪些客户端取决于会话记录里实际有哪些
+  // （OpenCode / Claude Code / Codex），不是网关那套「已配置」名单。
+  renderAnalyticsAgentOptions();
+  const picked = ((info.clients || []).find(c => c.id === info.agent) || {});
+  const pickedLabel = info.agent ? (picked.label || info.agent) : '';
   const gw = info.gateway_requests || 0;
   const ng = info.non_gateway_requests || 0;
   const srcText = clients.length ? clients.join('、') : '本机没有找到客户端会话记录';
@@ -18704,6 +18712,9 @@ function renderLocalScopeBar(){
     + `<b style="font-weight:650">本地口径</b>`
     + `<span style="color:var(--dim)">本机各客户端自己的会话记录（${esc(srcText)}），`
       + `<b style="color:var(--fg)">已排除经本网关的请求</b>（那部分在网关视图里另算）</span>`
+    + (pickedLabel
+        ? `<span style="color:var(--dim)">只看 <b style="color:var(--fg)">${esc(pickedLabel)}</b></span>`
+        : '')
     + `<span style="color:var(--dim)">计入 <b style="color:var(--fg)">${fmtCompact(ng)}</b> 次`
       + ` · 已排除经本网关 <b style="color:var(--fg)">${fmtCompact(gw)}</b> 次</span>`
     + `<span style="color:var(--dim);font-size:11px">`
@@ -19955,41 +19966,65 @@ function syncOldRange(){
    客户端筛选（看板自己的维度）
    ============================================================ */
 let analyticsAgentsReady = false;
-let analyticsAgentIds = new Set();
+let analyticsAgentCatalog = [];   /* 网关口径：已经一键配置过的客户端 */
+let analyticsAgentSig = '';       /* 上一次画进下拉的选项串，避免每轮重建 */
+
+/* 当前口径下可选的客户端：网关口径来自 /usage/agents（只列已配置的），本地
+   口径来自刚才那份载荷里的 local.clients（本机实际有会话记录的客户端）。 */
+function currentAgentOptions(){
+  if ((analyticsProvider || 'all') === 'local'){
+    const info = (state.analytics || {}).local || {};
+    return (info.clients || []).map(function(c){
+      return {id: c.id, label: c.label || c.id};
+    });
+  }
+  return analyticsAgentCatalog;
+}
+
+function renderAnalyticsAgentOptions(){
+  const sel = document.getElementById('analyticsAgent');
+  if (!sel) return;
+  const list = currentAgentOptions();
+  const local = (analyticsProvider || 'all') === 'local';
+  const sig = (local ? 'L:' : 'G:') + list.map(function(a){ return a.id; }).join(',');
+  if (sig === analyticsAgentSig){
+    sel.disabled = !list.length;
+    return;
+  }
+  analyticsAgentSig = sig;
+  sel.textContent = '';
+  const all = document.createElement('option');
+  all.value = 'all';
+  all.textContent = '全部客户端';
+  sel.appendChild(all);
+  list.forEach(function(a){
+    const opt = document.createElement('option');
+    opt.value = a.id;
+    opt.textContent = a.label || a.id;
+    sel.appendChild(opt);
+  });
+  const ids = list.map(function(a){ return a.id; });
+  if ((analyticsAgent || 'all') !== 'all' && ids.indexOf(analyticsAgent) < 0){
+    // 选中的客户端在当前口径里不存在（例如从网关的 claude-code 切到本地的
+    // claude）：回到「全部客户端」，下一轮取数不带 agent。
+    analyticsAgent = 'all';
+  }
+  sel.value = analyticsAgent || 'all';
+  sel.disabled = !list.length;
+}
+
 function loadAnalyticsAgents(){
   if (analyticsAgentsReady) return;
   analyticsAgentsReady = true;
   getJSON('/usage/agents', POLL_READ).then(function(res){
-    const sel = document.getElementById('analyticsAgent');
-    if (!sel) return;
     const list = (res && res.agents) || [];
     analyticsAgentLabels = {};
     list.forEach(function(a){
       if (a && a.id) analyticsAgentLabels[a.id] = a.label || a.id;
     });
-    const applied = list.filter(function(a){ return a && a.applied; });
-    analyticsAgentIds = new Set(applied.map(function(a){ return a.id; }));
-    sel.textContent = '';
-    const all = document.createElement('option');
-    all.value = 'all';
-    all.textContent = '全部客户端';
-    sel.appendChild(all);
-    applied.forEach(function(a){
-      const opt = document.createElement('option');
-      opt.value = a.id;
-      opt.textContent = a.label || a.id;
-      sel.appendChild(opt);
-    });
-    const had = analyticsAgent || 'all';
-    if (had !== 'all' && !analyticsAgentIds.has(had)){
-      // 选中的客户端已经被还原/删掉了：回到全部，并按新口径重取一次。
-      analyticsAgent = 'all';
-      sel.value = 'all';
-      if (wbaStarted){ wbaStarted = false; wbaTick(); }
-    } else {
-      sel.value = had;
-    }
-    sel.disabled = (analyticsProvider || 'all') === 'local';
+    analyticsAgentCatalog = list.filter(function(a){ return a && a.applied; })
+      .map(function(a){ return {id: a.id, label: a.label || a.id}; });
+    renderAnalyticsAgentOptions();
   }).catch(function(e){
     // 取不到列表不影响看板本身：只留「全部客户端」一项。
     console.error('loadAnalyticsAgents', e);
@@ -19998,7 +20033,8 @@ function loadAnalyticsAgents(){
 }
 /* 客户端筛选：与提供商筛选同样的复位/重取流程。返回 true 表示口径真的变了。 */
 function setAnalyticsAgent(v){
-  const next = analyticsAgentIds.has(v) ? v : 'all';
+  const ids = currentAgentOptions().map(function(a){ return a.id; });
+  const next = (v === 'all' || ids.indexOf(v) >= 0) ? v : 'all';
   const sel = document.getElementById('analyticsAgent');
   if (sel) sel.value = next;
   if (next === analyticsAgent) return false;
@@ -20045,11 +20081,18 @@ function setAnalyticsProvider(v){
   if (sel) sel.value = next;
   analyticsProviderReady = true;
   applyAnalyticsProviderChrome(next);
-  // 本地视图没有客户端归属：置灰下拉，免得看起来像在筛本地会话。
-  const agentSel = document.getElementById('analyticsAgent');
-  if (agentSel) agentSel.disabled = next === 'local';
-  if (next === analyticsProvider) return false;
+  if (next === analyticsProvider){
+    renderAnalyticsAgentOptions();
+    return false;
+  }
+  const wasLocal = (analyticsProvider || 'all') === 'local';
+  if (wasLocal !== (next === 'local') && (analyticsAgent || 'all') !== 'all'){
+    // 网关与本地的客户端 id 不是同一套（网关的 claude-code 在本地叫 claude），
+    // 跨口径保留选择只会指向一个不存在的项，回到「全部客户端」最不容易误会。
+    analyticsAgent = 'all';
+  }
   analyticsProvider = next;
+  renderAnalyticsAgentOptions();
   prevSummary = null;
   state.analytics = null;
   state.series = null;
@@ -20083,6 +20126,7 @@ window.wbaDebug = {
   state: function(){ return state; },
   setAnalytics: function(payload){ state.analytics = payload; },
   renderKpis: function(){ renderKpis(); },
+  agents: function(){ return currentAgentOptions(); },
 };
 window.loadAnalytics = wbaTick;            /* 面板 5s 轮询 / 切页 / 回前台统一入口 */
 window.loadAnalyticsMatrix = function(){}; /* 旧性能矩阵已并入本页（性能分位折叠区） */

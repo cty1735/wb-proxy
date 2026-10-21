@@ -794,7 +794,7 @@ def row_matches_agent(row, agent):
     # None means every client, same contract as row_matches_provider. Rows
     # written before the dimension existed have no field and therefore only
     # show up under "all" - there is no reliable way to backfill them.
-    if not agent or agent == "all":
+    if not agent or str(agent).strip().lower() == "all":
         return True
     return row_agent(row) == normalize_agent(agent)
 
@@ -9257,8 +9257,17 @@ def _build_key_rows(key_map, realm=None):
     return out
 
 
-def _enrich_accounts_from_pool(acct_map, realm=None, provider=None):
-    """Attach nickname/realm/credits for accounts that saw no traffic."""
+def _enrich_accounts_from_pool(acct_map, realm=None, provider=None,
+                               add_missing=True):
+    """Attach nickname/realm/credits for accounts that saw no traffic.
+
+    The account table normally lists the whole pool, so an account with no
+    traffic still gets a zero row. An agent-filtered view must not do that:
+    those accounts may be busy under another client, and listing them under
+    this client's filter reads as "this client used them". add_missing=False
+    keeps the metadata lookup for accounts that did see traffic while leaving
+    the rest out.
+    """
     if POOL:
         for a in POOL.accounts:
             if realm and a.realm != realm:
@@ -9270,18 +9279,18 @@ def _enrich_accounts_from_pool(acct_map, realm=None, provider=None):
                 acct_map[a.uid]["realm"] = a.realm
                 acct_map[a.uid]["domain"] = a.domain
                 acct_map[a.uid]["credits"] = getattr(a, "credits", None) or {}
-            else:
-                    acct_map[a.uid] = {
-                        "uid": a.uid,
-                        "nickname": a.nickname,
-                        "realm": a.realm,
-                        "domain": a.domain,
-                        "credits": getattr(a, "credits", None) or {},
-                        "window": _new_analytics_stat(),
-                        "all_time": _new_analytics_stat(),
-                        "window_models": {},
-                        "all_models": {},
-                    }
+            elif add_missing:
+                acct_map[a.uid] = {
+                    "uid": a.uid,
+                    "nickname": a.nickname,
+                    "realm": a.realm,
+                    "domain": a.domain,
+                    "credits": getattr(a, "credits", None) or {},
+                    "window": _new_analytics_stat(),
+                    "all_time": _new_analytics_stat(),
+                    "window_models": {},
+                    "all_models": {},
+                }
 
 
 def _finalize_analytics_stat(stat_obj):
@@ -9322,7 +9331,13 @@ def _local_scope(query):
     return wb_local.normalize_scope(values[0] if values else None)
 
 
-def _local_etag(kind, since, until, scope):
+def _local_agent(query):
+    """Client filter inside the local view (None = every local client)."""
+    values = (query or {}).get("agent") or []
+    return wb_local.normalize_client(values[0] if values else None)
+
+
+def _local_etag(kind, since, until, scope, agent=None):
     """A validator for the current local payload.
 
     Derived from the data itself (how many requests, how many tokens, when the
@@ -9330,9 +9345,11 @@ def _local_etag(kind, since, until, scope):
     keep its tag, or the panel's five-second poll would re-download the whole
     thing on every round.
     """
-    token = wb_local.fingerprint(since=since, until=until, scope=scope)
+    token = wb_local.fingerprint(since=since, until=until, scope=scope,
+                                 client=agent)
     digest = hashlib.sha1(
-        ("local-%s\x1f%s\x1f%s\x1f%s" % (kind, since, until, scope, token)).encode("utf-8")
+        ("local-%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s" %
+         (kind, since, until, scope, agent, token)).encode("utf-8")
     ).hexdigest()[:16]
     return '"%s"' % digest
 
@@ -9398,7 +9415,8 @@ def _compute_usage_analytics_uncached(realm=None, since=None, until=None,
     acct_map = parts["accts"]
     model_map = parts["models"]
     key_map = parts["keys"]
-    _enrich_accounts_from_pool(acct_map, realm=realm, provider=provider)
+    _enrich_accounts_from_pool(acct_map, realm=realm, provider=provider,
+                               add_missing=not agent)
     all_summary = parts["summary"]
     window_summary = parts["window_summary"]
     _finalize_analytics_stat(all_summary)
@@ -19875,8 +19893,10 @@ class Handler(BaseHTTPRequestHandler):
         if hi is None:
             hi = time.time()
         scope = _local_scope(query)
+        agent = _local_agent(query)
         if kind == "analytics":
-            build = lambda: wb_local.analytics(since=lo, until=hi, scope=scope)
+            build = lambda: wb_local.analytics(since=lo, until=hi, scope=scope,
+                                               client=agent)
         elif kind == "timeseries":
             bucket = (query.get("bucket") or [None])[0]
             try:
@@ -19885,7 +19905,7 @@ class Handler(BaseHTTPRequestHandler):
                 bucket_seconds = None
             build = lambda: wb_local.timeseries(since=lo, until=hi,
                                                 bucket_seconds=bucket_seconds,
-                                                scope=scope)
+                                                scope=scope, client=agent)
         elif kind == "recent":
             try:
                 limit = max(1, min(1000, int((query.get("limit") or ["100"])[0])))
@@ -19895,12 +19915,13 @@ class Handler(BaseHTTPRequestHandler):
                 page = max(1, int((query.get("page") or ["1"])[0]))
             except (TypeError, ValueError):
                 page = 1
-            build = lambda: wb_local.recent(limit=limit, page=page, scope=scope)
+            build = lambda: wb_local.recent(limit=limit, page=page, scope=scope,
+                                            client=agent)
         else:
-            build = lambda: wb_local.perf(scope=scope)
+            build = lambda: wb_local.perf(scope=scope, client=agent)
         return self._json_cached(
             200, build,
-            lambda: _local_etag(kind, lo, hi, scope))
+            lambda: _local_etag(kind, lo, hi, scope, agent))
 
     def _get_usage_by_account(self, query=None):
         if not self._authorized():

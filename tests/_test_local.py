@@ -185,6 +185,40 @@ class LocalScopeTest(unittest.TestCase):
         self.assertEqual(row["outcome"], "completed")
         self.assertFalse(row["gateway"])
 
+    def test_client_filter_keeps_the_option_list_complete(self):
+        rows = [
+            {"at": 1700000001.0, "rid": "a", "client": "opencode", "model": "m1",
+             "gateway": False, "ok": True, "prompt_tokens": 10,
+             "completion_tokens": 1, "reasoning_tokens": 0, "cached_tokens": 0,
+             "total_tokens": 11, "cost_usd": 0.0, "elapsed_ms": 100,
+             "session": "s", "project": "p"},
+            {"at": 1700000002.0, "rid": "b", "client": "claude", "model": "m2",
+             "gateway": False, "ok": True, "prompt_tokens": 20,
+             "completion_tokens": 2, "reasoning_tokens": 0, "cached_tokens": 0,
+             "total_tokens": 22, "cost_usd": 0.0, "elapsed_ms": 200,
+             "session": "s", "project": "p"},
+            {"at": 1700000003.0, "rid": "c", "client": "opencode", "model": "m1",
+             "gateway": True, "ok": True, "prompt_tokens": 30,
+             "completion_tokens": 3, "reasoning_tokens": 0, "cached_tokens": 0,
+             "total_tokens": 33, "cost_usd": 0.0, "elapsed_ms": 300,
+             "session": "s", "project": "p"},
+        ]
+        original = wb_local._collect
+        wb_local._collect = lambda since=None: (rows, ["opencode", "claude"], 1)
+        try:
+            payload = wb_local.analytics(client="claude")
+        finally:
+            wb_local._collect = original
+        # KPI 只算被选中的客户端（且仍然排除经网关的那条）。
+        self.assertEqual(payload["local"]["agent"], "claude")
+        self.assertEqual(payload["summary"]["window"]["requests"], 1)
+        self.assertEqual([a["uid"] for a in payload["accounts"]], ["claude"])
+        # 下拉的选项来自未过滤的行：筛掉一个客户端也还能切回另一个。
+        ids = sorted(c["id"] for c in payload["local"]["clients"])
+        self.assertEqual(ids, ["claude", "opencode"])
+        self.assertEqual(wb_local.normalize_client("claude-code"), "claude")
+        self.assertIsNone(wb_local.normalize_client("all"))
+
     def test_perf_payload_matches_the_gateway_shape(self):
         rows = [
             {"at": 1700000001.0, "rid": "a", "client": "opencode", "model": "m1",
