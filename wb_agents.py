@@ -36,6 +36,9 @@ import urllib.request
 PROVIDER_ID = "wb-proxy"
 PROVIDER_NAME = "WB Proxy"
 CREDENTIAL_REF = "WB_PROXY_API_KEY"
+#: 写进客户端配置的归属头。网关按它把用量记到具体客户端；老配置没有这个
+#: 头时网关退回 User-Agent 识别（见 wb_proxy.detect_agent）。
+AGENT_HEADER = "X-WB-Agent"
 
 #: 模型名后面挂的短标签（写进 OpenCode 的模型表，客户端选择器里显示成
 #: 「模型名 标签」）。标签按**当前提供商**给：WorkBuddy 挂 wb、Qoder 挂
@@ -874,6 +877,9 @@ def _apply_opencode(paths, ctx):
     wanted = str(ctx.get("provider") or "").strip()
     if wanted and wanted != "workbuddy":
         options.setdefault("headers", {})["X-Provider"] = wanted
+    # OpenCode 把 options.headers 原样交给 AI SDK；写入归属头后，看板即使
+    # 面对没有特征 User-Agent 的版本也能把用量算到 OpenCode 头上。
+    options.setdefault("headers", {})[AGENT_HEADER] = "opencode"
     if models:
         node["models"] = models
     else:
@@ -981,6 +987,9 @@ def _apply_dsh(paths, ctx):
         "apiKeyEnv": CREDENTIAL_REF,
         "api": "openai-completions",
         "baseURL": ctx["base_url_v1"],
+        # 看板按客户端筛选用量：DSH 的 provider 支持静态 headers，直接把归属
+        # 头写进去，比从 User-Agent 猜更准。
+        "headers": {AGENT_HEADER: "dsh"},
         # wb-proxy 不在 DSH 的内置目录里，推理字段的线上形状必须自己说明：
         # 走标准 reasoning_effort，不发 thinking 块——DeepSeek 系需要的那份
         # thinking / reasoning_content 由网关补（wb_proxy.build_upstream_body）。
@@ -1169,6 +1178,9 @@ def _apply_hermes(paths, ctx):
         "api": ctx["base_url_v1"],
         "key_env": CREDENTIAL_REF,
         "transport": "chat_completions",
+        # Hermes 的 providers.<id> 支持 extra_headers（会并进 OpenAI 客户端的
+        # default_headers），看板的客户端归属靠它，不依赖 User-Agent。
+        "extra_headers": {AGENT_HEADER: "hermes"},
     }
     models = {}
     for entry in ctx.get("models") or []:
@@ -1447,6 +1459,29 @@ def overview(accounts_dir, home=None):
             "config_paths": list(paths.values()),
             "applied": applied,
         }
+    return out
+
+
+def agent_inventory(accounts_dir):
+    """Every known client with its label and whether it has been applied.
+
+    The analytics page needs this to build its agent filter: only applied
+    clients become options, but labels for rows tagged with a client that was
+    later restored still come from the same list. Reads the integration state
+    only - unlike overview() it never probes the home directory.
+    """
+    state = _load_state(accounts_dir)
+    out = []
+    for client_id in sorted(CLIENTS):
+        client = CLIENTS[client_id]
+        record = state.get(client_id)
+        applied = isinstance(record, dict)
+        out.append({
+            "id": client_id,
+            "label": client["label"],
+            "applied": applied,
+            "applied_at": record.get("applied_at") if applied else None,
+        })
     return out
 
 

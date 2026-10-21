@@ -308,6 +308,27 @@ class QoderChatError(RuntimeError):
     """Qoder 聊天通道的协议/流错误（调用方按普通字符串展示）。"""
 
 
+class QoderQueuedError(QoderChatError):
+    """上游说这个模型排上队了（10605 RESOURCE_LIMIT / isQueued=true）。
+
+    这不是「请求有问题」，而是「这个模型当前没有可用容量」：上游会给出
+    retryAfterSeconds（实测 30），官方 qodercli 收到这个码是**等一会儿
+    再重试**（docs.qoder.com/cli/sdk/errors：10605 = Model request is
+    queued，qodercli normally waits and retries）。
+
+    网关照着做：把它单列一类并带上上游建议的等待秒数，调用方就能等够
+    时间重发一次，而不是把「排队」当成失败直接甩给客户端。
+    """
+
+    def __init__(self, message, retry_after=0, queue_type="", queue_count=0,
+                 model_key=""):
+        super(QoderQueuedError, self).__init__(message)
+        self.retry_after = int(retry_after or 0)
+        self.queue_type = str(queue_type or "")
+        self.queue_count = queue_count
+        self.model_key = str(model_key or "")
+
+
 # ---------------------------------------------------------------------------
 # protocol/stream.ts：stableHash / stableChatRecordID（会话与记录 ID 的稳定派生）
 
@@ -924,6 +945,41 @@ def _load_json_object(text, what):
     return value
 
 
+def _envelope_queue_hint(envelope):
+    """从 403 信封里读出「排队中」的信号；不是排队错误就返回 None。
+
+    Qoder 把排队信息裹了三层：envelope.body 是 JSON 字符串，里面的 message
+    又是 JSON 字符串，最里层才是 {isQueued, queueType, queueCount,
+    retryAfterSeconds, serviceAvailable, waitTime, ...}。逐层剥开取这一层，
+    拿不到就返回 None（那是别的错误，不是排队）。
+    """
+    node = envelope.get("body")
+    for _ in range(4):
+        if isinstance(node, str):
+            try:
+                node = json.loads(node)
+            except Exception:
+                return None
+        if not isinstance(node, dict):
+            return None
+        if "isQueued" in node or "serviceAvailable" in node:
+            if not node.get("isQueued") and node.get("serviceAvailable") is not False:
+                return None
+            wait = node.get("retryAfterSeconds")
+            if not isinstance(wait, (int, float)) or isinstance(wait, bool):
+                wait = node.get("waitTime")
+            if not isinstance(wait, (int, float)) or isinstance(wait, bool):
+                wait = 0
+            return {
+                "wait": max(0, int(wait)),
+                "queue_type": str(node.get("queueType") or ""),
+                "queue_count": node.get("queueCount"),
+                "model_key": str(node.get("modelKey") or ""),
+            }
+        node = node.get("message")
+    return None
+
+
 def _qoder_status_message(envelope, model):
     """把 Qoder 的错误 envelope 折成一句可读的中文报错。
 
@@ -958,6 +1014,29 @@ def _qoder_status_message(envelope, model):
                 "模型" % (status, sub or "RESOURCE_LIMIT", model))
     return "Qoder 上游返回状态 %s: %s" % (
         status, text or _short_json(envelope.get("body")))
+
+
+def _qoder_status_error(envelope, model):
+    """把 403 信包折成要抛的异常；排队中的那一类单独挑出来。
+
+    「排队」与「请求有问题」对客户端是两件事：前者等一会儿重发就好，
+    后者改了请求也白搭。分开抛，调用方才好按官方的口径等 + 重试。
+    """
+    hint = _envelope_queue_hint(envelope)
+    if hint is None:
+        return QoderChatError(_qoder_status_message(envelope, model))
+    wait = hint.get("wait") or 0
+    return QoderQueuedError(
+        ("Qoder 上游拒绝该请求（状态 %s / RESOURCE_LIMIT）：模型「%s」当前"
+         "资源受限或正在排队（%s），该模型在所选区域暂无可用容量；上游建议"
+         "等 %d 秒后重试" % (
+             envelope.get("statusCodeValue") or envelope.get("statusCode") or 403,
+             model, hint.get("queue_type") or "serviceAvailable=false",
+             wait or 30)),
+        retry_after=wait,
+        queue_type=hint.get("queue_type") or "",
+        queue_count=hint.get("queue_count") or 0,
+        model_key=hint.get("model_key") or "")
 
 
 def _usage_to_openai(raw):
@@ -1077,7 +1156,7 @@ def iter_openai_chunks(resp, model):
                     continue
                 status = envelope.get("statusCodeValue")
                 if status and status != 200:
-                    raise QoderChatError(_qoder_status_message(envelope, model))
+                    raise _qoder_status_error(envelope, model)
                 inner = envelope.get("body")
                 if isinstance(inner, dict) and inner.get("error"):
                     raise QoderChatError("Qoder 上游返回错误: %s"
@@ -1119,7 +1198,7 @@ def iter_openai_chunks(resp, model):
             envelope = _load_json_object(data_str, "Qoder 流数据")
             status = envelope.get("statusCodeValue")
             if status and status != 200:
-                raise QoderChatError(_qoder_status_message(envelope, model))
+                raise _qoder_status_error(envelope, model)
             inner_raw = envelope.get("body")
             # 哨兵也会以 envelope.body == "[DONE]" 的形态出现，同样结束。
             if inner_raw == "[DONE]":

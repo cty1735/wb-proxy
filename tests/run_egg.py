@@ -1,10 +1,10 @@
-"""跑「鸡蛋」这部分的全部自检，外加 Qoder 流式读取那组。
+"""跑「鸡蛋」这部分的全部自检，外加 Qoder 流式读取与排队重试那两组。
 
     python tests/run_egg.py
 
-包含五组 Python 套件（池子存取 / 与 wb_zen 的联动 / OpenAI 协议端到端 /
-Anthropic 协议端到端 / Qoder 流式读取）与一组 Node 套件（面板的池子渲染
-与筛选）。
+包含六组 Python 套件（池子存取 / 与 wb_zen 的联动 / OpenAI 协议端到端 /
+Anthropic 协议端到端 / Qoder 流式读取 / Qoder 排队重试）与一组 Node 套件
+（面板的池子渲染与筛选）。
 
 端到端那两套会真的起一个网关进程与一个假上游，所以比纯单元测试慢一点
 （每个约十几秒）。
@@ -25,6 +25,7 @@ PY_SUITES = [
     "_test_egg_smoke.py",
     "_test_agent_source_tags.py",
     "_test_qoder_stream.py",
+    "_test_qoder_queue.py",
 ]
 JS_SUITES = [
     "_check_dashboard_egg.js",

@@ -495,6 +495,10 @@ body.provider-egg #btnNavAccounts{display:none !important}
    集中在这一条规则里管，免得给每个按钮已有的按视图显隐逻辑（updateUI 里的 inline
    display）再各补一份 provider 条件。 */
 body:not(.provider-workbuddy) .wb-only{display:none !important}
+/* 数据看板切到「本地」口径：账号池专属的区块（剩余用量 / 积分扣减 / 积分获取）
+   收起——本地统计的是本机客户端的会话，没有账号和积分这两个概念，留着只会把
+   当前网关提供商的数字摆在「本地」标题下面。 */
+body.local-analytics [data-gateway-only]{display:none !important}
 /* Qoder 视图专属区块：其它视图下收起（与 .wb-only 对称）。 */
 body:not(.provider-qoder) .qoder-only{display:none !important}
 /* Trae 视图专属区块。 */
@@ -1156,6 +1160,8 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 #pageAnalytics .recent-item .r{text-align:right;color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap}
 #pageAnalytics .recent-item .r b{color:var(--fg2);font-weight:600}
 #pageAnalytics .recent-item .err{color:var(--red)}
+#pageAnalytics .recent-item .agent{margin-left:6px;padding:0 5px;border-radius:4px;
+  background:var(--panel2);border:1px solid var(--line);color:var(--dim2);font-size:10px}
 
 
 #pageAnalytics .hm-row{display:flex;gap:30px;align-items:flex-start;flex-wrap:wrap}
@@ -2662,6 +2668,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '按供应商计费': 'Billed by provider',
     '全部提供商': 'All providers',
     '按提供商筛选本页数据': 'Filter this page by provider',
+    '全部客户端': 'All clients',
+    '按客户端筛选本页数据': 'Filter this page by client',
     '该模型在上游目录里没有倍率字段；Qoder 按账号额度（credits）计费，实际扣减见「最近请求」的「积分」列。': 'This model has no rate field in the upstream catalog; Qoder bills in account credits, and the actual charge is in the Credits column of Recent requests.',
     '官网文档参考值；实际倍率以账号模型清单（price_factor）为准': 'Reference value from the official docs; the actual rate comes from the account model list (price_factor).',
     '来自账号模型清单的 price_factor；活动折扣可能让实际倍率不同': 'Taken from the account model list price_factor; promotions may change the effective rate.',
@@ -5245,6 +5253,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
   <div class="pagehead">
     <h1 class="pagetitle">数据看板 <span class="pagesub" id="pageSub">—</span></h1>
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <!-- 客户端筛选：只列已经一键配置过本网关的客户端。选项由 /usage/agents
+           填，历史行没有归属字段，所以筛某个客户端时只统计新带归属的请求。 -->
+      <select id="analyticsAgent" class="slot-select" title="按客户端筛选本页数据"
+              onchange="setAnalyticsAgent(this.value)">
+        <option value="all">全部客户端</option>
+      </select>
       <!-- 提供商筛选：与头部网关切换解耦，只决定本页统计口径（默认全部）。 -->
       <select id="analyticsProvider" class="slot-select" title="按提供商筛选本页数据"
               onchange="setAnalyticsProvider(this.value)">
@@ -5253,6 +5267,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
         <option value="qoder">Qoder</option>
         <option value="trae">Trae</option>
         <option value="egg">鸡蛋</option>
+        <option value="local">本地</option>
       </select>
       <div class="seg" id="rangeSeg">
         <button data-range="today" class="on">今日</button>
@@ -5264,6 +5279,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       </div>
     </div>
   </div>
+
+  <!-- 本地口径说明条：只在「本地」视图下出现。
+       本地 = 本机各客户端自己的会话记录，统计时排除经本项目网关的请求——那部分
+       已经在网关口径里记过一次，混进来会重复计算。说明条把排除掉多少条讲清楚。 -->
+  <div id="localScopeBar" style="display:none;margin:-2px 0 12px;background:var(--panel2);
+       border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:12px;
+       line-height:1.7;color:var(--fg)"></div>
 
   <!-- ====================== ① KPI（B 版：大卡 + 大面积 sparkline + 环形卡） ======================
        每张卡都是「明细」入口：点击（或聚焦后回车/空格）打开该指标按账号 / 按模型的拆解，
@@ -5400,7 +5422,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
 
   <!-- ====================== ⑤ 折叠区 ====================== -->
   <div class="folds">
-    <details class="fold" id="foldRemainBox">
+    <details class="fold" id="foldRemainBox" data-gateway-only>
       <summary><h2>剩余用量估算</h2><span class="chev">▶</span></summary>
       <div class="fbody">
       <!-- 原版「剩余用量估算」区块（issue #263/#264 的守卫套件按这里的 id 找它）：
@@ -5465,7 +5487,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       </div>
       </div>
     </details>
-    <details class="fold" id="foldCreditsBox">
+    <details class="fold" id="foldCreditsBox" data-gateway-only>
       <summary><h2>积分扣减历史</h2><span class="chev">▶</span></summary>
       <div class="fbody">
       <!-- 原版「积分扣减历史」区块：5 列表头与 id 与旧版逐字一致（credit history
@@ -5488,7 +5510,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       <summary><h2>模型性能分位</h2><span class="fbadge" id="foldPerfBadge">—</span><span class="chev">▶</span></summary>
       <div class="fbody" id="foldPerf"><div class="empty">加载中…</div></div>
     </details>
-    <details class="fold wb-only" id="foldGrantsBox">
+    <details class="fold wb-only" id="foldGrantsBox" data-gateway-only>
       <summary><h2>积分获取历史</h2><span class="chev">▶</span></summary>
       <div class="fbody">
       <!-- 原版「积分获取历史」区块：id、整行表头与说明与旧版逐字一致
@@ -13095,6 +13117,10 @@ let analyticsRange = 'today';
 // 数据看板自己的提供商筛选（全部 / WorkBuddy / Qoder），与头部网关切换解耦：
 // 头部决定账号、模型清单等页签看谁；这里只决定统计口径，默认看全部。
 let analyticsProvider = 'all';
+// 客户端筛选：只列已一键配置过本网关的客户端（/usage/agents）。和 provider
+// 一样只影响本页统计口径，不影响网关头部的路由。
+let analyticsAgent = 'all';
+let analyticsAgentLabels = {};
 // 首次进入看板时把筛选对齐到头部当前的提供商（之后用户手动选的算数）；
 // 切换头部提供商时 switchProvider 会重新对齐。
 let analyticsProviderReady = false;
@@ -18208,8 +18234,19 @@ const api = (path, opts) => getJSON(withAnalyticsProvider(path), opts || POLL_RE
 // 与 KPI / 曲线 / 回溯保持同一口径。
 function withAnalyticsProvider(path){
   const u = String(path || '');
-  return u + (u.indexOf('?') === -1 ? '?' : '&')
-         + 'provider=' + encodeURIComponent(analyticsProvider || 'all');
+  let q = 'provider=' + encodeURIComponent(analyticsProvider || 'all');
+  // 「本地」口径固定排除经本项目网关的请求：那部分已经在网关视图里记过一次，
+  // 再算进来就是同一笔请求两边都统计。local_scope 仍显式带上，服务端默认也是它。
+  if ((analyticsProvider || 'all') === 'local'){
+    q += '&local_scope=nongw';
+  }
+  // 客户端归属只存在于网关记账的行里：本地视图是本机会话记录，没有这个维度，
+  // 所以「本地」下即使下拉还留着某个客户端也不带 agent（下拉本身会置灰）。
+  if ((analyticsProvider || 'all') !== 'local'
+      && (analyticsAgent || 'all') !== 'all'){
+    q += '&agent=' + encodeURIComponent(analyticsAgent);
+  }
+  return u + (u.indexOf('?') === -1 ? '?' : '&') + q;
 }
 
 /* ============================================================
@@ -18456,9 +18493,12 @@ async function loadRecent(){
     $('recentList').innerHTML = rows.map(x => {
       const ok = x.outcome === 'completed';
       const nm = nicknameOf(x.account);
+      // 历史行没有 agent 字段：不显示标签，但「全部」口径里照常列出。
+      const agent = x.agent
+        ? `<span class="agent">${analyticsAgentLabels[x.agent] || x.agent}</span>` : '';
       return `<div class="recent-item">
         <span class="t">${(x.iso || '').slice(11, 19)}</span>
-        <span class="m"><b>${x.model || ''}</b> → ${nm.length > 16 ? nm.slice(0, 16) + '…' : nm}${ok ? '' : ' <span class="err">[' + (x.outcome || '失败') + ']</span>'}</span>
+        <span class="m"><b>${x.model || ''}</b> → ${nm.length > 16 ? nm.slice(0, 16) + '…' : nm}${agent}${ok ? '' : ' <span class="err">[' + (x.outcome || '失败') + ']</span>'}</span>
         <span class="r"><b>${fmtCompact(x.total_tokens || 0)}</b> tok · ${((x.elapsed_ms || 0) / 1000).toFixed(1)}s</span>
       </div>`;
     }).join('') || '<div class="empty">暂无请求记录</div>';
@@ -18542,10 +18582,13 @@ async function loadStatic(){
   buildHeatGrid(state.heat);
   renderPerfFold();
   // 剩余用量 / 积分扣减 / 积分获取历史：原版区块的数据管道原来挂在旧 loadAnalytics 上，
-  // 页面换成新版后这里补回调用（展开对应折叠区时还会再刷一次）。
-  try{ loadRemainingUsage(); }catch(e){}
-  try{ loadCreditHistory(); }catch(e){}
-  try{ loadCreditGrants(); }catch(e){}
+  // 页面换成新版后这里补回调用（展开对应折叠区时还会再刷一次）。这三块是账号池
+  // 概念，「本地」视图里整块收起（见 applyAnalyticsProviderChrome），不再取数。
+  if ((analyticsProvider || 'all') !== 'local'){
+    try{ loadRemainingUsage(); }catch(e){}
+    try{ loadCreditHistory(); }catch(e){}
+    try{ loadCreditGrants(); }catch(e){}
+  }
 }
 
 /* ---------------- KPI ---------------- */
@@ -18608,11 +18651,22 @@ function renderKpis(){
   // 副行把「免费模型已排除」说清楚：口径改了之后，卡面数字与明细里的积分
   // 消耗都不含限时免费模型（见 KPI_SPECS.cost.note 与 kpiFreeNote）。
   const freeNote = kpiFreeNote();
+  // 本地视图没有「积分」这套口径（那是网关的账号体系），副行改说客户端自己
+  // 报出来的花费；客户端没报就直说没有，而不是画一个 0.00。
+  const localInfo = (a.local || {});
+  const costTail = (analyticsProvider || 'all') === 'local'
+    ? (localInfo.cost_usd > 0
+        ? ` · 客户端自报 $${Number(localInfo.cost_usd).toFixed(2)}`
+        : ' · 本地口径无积分')
+    : ` · 积分消耗 ${numSpan(w.credit, 1)}`;
   $('kCostSub').innerHTML = (usd != null
-    ? `<span style="color:var(--green)">${usd.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})}</span> · 积分消耗 ${numSpan(w.credit, 1)}`
+    ? `<span style="color:var(--green)">${usd.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>${costTail}`
     : '—') + (freeNote ? `<br>${freeNote}` : '');
 
   $('pageSub').textContent = `区间 ${fmtCompact(w.total_tokens)} tokens · ${fmtCompact(w.requests)} 次请求 · 更新于 ${new Date().toLocaleTimeString('zh-CN', {hour12:false})}`;
+
+  // 「本地」口径说明条（别的口径下自动隐藏）。
+  renderLocalScopeBar();
 
   // B 版：环比徽章
   const selfCache = w.prompt_tokens ? (w.cached_tokens || 0) / w.prompt_tokens * 100 : null;
@@ -18624,6 +18678,38 @@ function renderKpis(){
 
   // 明细弹窗开着时跟着轮询一起重画（内容与卡面同源，不能停在上一轮的数字上）。
   refreshKpiDetail();
+}
+
+/* 本地口径说明条。
+   「本地」统计的是本机各客户端自己的会话记录，并排除经本项目网关的请求——
+   那部分网关自己已经记过一次，两边的数字不能相加。这条说明把三件事讲清楚：
+     1. 口径是什么（本机客户端会话，已排除经本网关的请求）；
+     2. 排除了多少条（数字与网关视图对得上才行）；
+     3. 数据来自哪些客户端、这次扫描花了多久。 */
+function renderLocalScopeBar(){
+  const bar = document.getElementById('localScopeBar');
+  if (!bar) return;
+  if ((analyticsProvider || 'all') !== 'local'){
+    bar.style.display = 'none';
+    return;
+  }
+  const info = (state.analytics || {}).local || {};
+  const clients = (info.clients || []).map(c => c.label || c.id);
+  const gw = info.gateway_requests || 0;
+  const ng = info.non_gateway_requests || 0;
+  const srcText = clients.length ? clients.join('、') : '本机没有找到客户端会话记录';
+  bar.style.display = 'block';
+  bar.innerHTML =
+    `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">`
+    + `<b style="font-weight:650">本地口径</b>`
+    + `<span style="color:var(--dim)">本机各客户端自己的会话记录（${esc(srcText)}），`
+      + `<b style="color:var(--fg)">已排除经本网关的请求</b>（那部分在网关视图里另算）</span>`
+    + `<span style="color:var(--dim)">计入 <b style="color:var(--fg)">${fmtCompact(ng)}</b> 次`
+      + ` · 已排除经本网关 <b style="color:var(--fg)">${fmtCompact(gw)}</b> 次</span>`
+    + `<span style="color:var(--dim);font-size:11px">`
+      + (info.scan_ms != null ? `扫描 ${info.scan_ms} ms` : '')
+    + `</span>`
+    + `</div>`;
 }
 function peakThroughput(){
   const s = state.series;
@@ -18643,7 +18729,16 @@ function peakThroughput(){
 const KPI_RANGE_LABEL = {today:'今日', d3:'近 3 日', week:'本周', month:'本月', d30:'近 30 天', all:'全部'};
 function kpiProviderLabel(){
   const p = analyticsProvider || 'all';
-  return p === 'workbuddy' ? 'WorkBuddy' : p === 'qoder' ? 'Qoder' : p === 'trae' ? 'Trae' : '全部提供商';
+  return p === 'workbuddy' ? 'WorkBuddy' : p === 'qoder' ? 'Qoder' : p === 'trae' ? 'Trae'
+       : p === 'local' ? '本地' : '全部提供商';
+}
+/* 本地视图里「账号」那一列装的是本机的客户端（OpenCode / Claude Code / Codex），
+   叫「账号」会让人去找账号池；换个名字，说的是同一件事。 */
+function kpiAcctNoun(){
+  return (analyticsProvider || 'all') === 'local' ? '客户端' : '账号';
+}
+function kpiAcctNounPlural(){
+  return (analyticsProvider || 'all') === 'local' ? '主要客户端' : '主要账号';
 }
 /* 成功率：成功 /（成功 + 失败）。没有样本时返回 null，调用方给「—」而不是 0%。 */
 function kpiRate(s){
@@ -18817,7 +18912,7 @@ function kpiRowsHTML(rows, spec, total, max){
     const cols = (spec.cols ? spec.cols(s) : [])
       .filter(c => c && c[1] != null && c[1] !== '' && c[1] !== '—')
       .map(c => `${c[0]} <b>${c[1]}</b>`).join(' · ');
-    const parts = spec.part ? kpiPartsLine(r.parts, spec.part, r.isAcct ? '主要模型' : '主要账号') : '';
+    const parts = spec.part ? kpiPartsLine(r.parts, spec.part, r.isAcct ? '主要模型' : kpiAcctNounPlural()) : '';
     return `<div class="kpi-bd-row clickable${picked ? ' on' : ''}" role="button" tabindex="0"
       data-filter-key="${filterKey}" data-filter-value="${esc(r.name)}"
       aria-pressed="${picked ? 'true' : 'false'}">
@@ -19011,7 +19106,7 @@ function kpiDetailHTML(kind){
   }
   return kpiFilterHTML()
     + kpiTilesHTML(spec, w)
-    + `<div class="kpi-bd-grid">${kpiSideHTML('按账号', aRows, spec)}${kpiSideHTML('按模型', mRows, spec)}</div>`
+    + `<div class="kpi-bd-grid">${kpiSideHTML('按' + kpiAcctNoun(), aRows, spec)}${kpiSideHTML('按模型', mRows, spec)}</div>`
     + `<div class="kpi-bd-foot">${spec.note}${kpiFreeNote()}</div>`;
 }
 
@@ -19025,8 +19120,8 @@ function kpiFilterHTML(){
   const opts = (list, cur) => ['all', ...list].map(v =>
     `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${v === 'all' ? '全部' : esc(v)}</option>`).join('');
   const active = (f.acct && f.acct !== 'all') || (f.model && f.model !== 'all');
-  return `<div class="kpi-bd-filter" role="group" aria-label="按账号或模型筛选明细">
-    <label class="kpi-bd-fld"><span>账号</span>
+  return `<div class="kpi-bd-filter" role="group" aria-label="按客户端或模型筛选明细">
+    <label class="kpi-bd-fld"><span>${kpiAcctNoun()}</span>
       <select id="kpiFilterAcct" onchange="setKpiFilter('acct', this.value)">${opts(acctNames, f.acct)}</select></label>
     <label class="kpi-bd-fld"><span>模型</span>
       <select id="kpiFilterModel" onchange="setKpiFilter('model', this.value)">${opts(modelNames, f.model)}</select></label>
@@ -19857,6 +19952,69 @@ function syncOldRange(){
 }
 
 /* ============================================================
+   客户端筛选（看板自己的维度）
+   ============================================================ */
+let analyticsAgentsReady = false;
+let analyticsAgentIds = new Set();
+function loadAnalyticsAgents(){
+  if (analyticsAgentsReady) return;
+  analyticsAgentsReady = true;
+  getJSON('/usage/agents', POLL_READ).then(function(res){
+    const sel = document.getElementById('analyticsAgent');
+    if (!sel) return;
+    const list = (res && res.agents) || [];
+    analyticsAgentLabels = {};
+    list.forEach(function(a){
+      if (a && a.id) analyticsAgentLabels[a.id] = a.label || a.id;
+    });
+    const applied = list.filter(function(a){ return a && a.applied; });
+    analyticsAgentIds = new Set(applied.map(function(a){ return a.id; }));
+    sel.textContent = '';
+    const all = document.createElement('option');
+    all.value = 'all';
+    all.textContent = '全部客户端';
+    sel.appendChild(all);
+    applied.forEach(function(a){
+      const opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = a.label || a.id;
+      sel.appendChild(opt);
+    });
+    const had = analyticsAgent || 'all';
+    if (had !== 'all' && !analyticsAgentIds.has(had)){
+      // 选中的客户端已经被还原/删掉了：回到全部，并按新口径重取一次。
+      analyticsAgent = 'all';
+      sel.value = 'all';
+      if (wbaStarted){ wbaStarted = false; wbaTick(); }
+    } else {
+      sel.value = had;
+    }
+    sel.disabled = (analyticsProvider || 'all') === 'local';
+  }).catch(function(e){
+    // 取不到列表不影响看板本身：只留「全部客户端」一项。
+    console.error('loadAnalyticsAgents', e);
+    analyticsAgentsReady = false;
+  });
+}
+/* 客户端筛选：与提供商筛选同样的复位/重取流程。返回 true 表示口径真的变了。 */
+function setAnalyticsAgent(v){
+  const next = analyticsAgentIds.has(v) ? v : 'all';
+  const sel = document.getElementById('analyticsAgent');
+  if (sel) sel.value = next;
+  if (next === analyticsAgent) return false;
+  analyticsAgent = next;
+  prevSummary = null;
+  state.analytics = null;
+  state.series = null;
+  state.perf = null;
+  state.heat = null;
+  state.kpiFilter = {acct: 'all', model: 'all'};
+  wbaStarted = false;
+  wbaTick();
+  return true;
+}
+
+/* ============================================================
    启动与对外接线
    ============================================================ */
 let wbaStarted = false;
@@ -19867,7 +20025,9 @@ function wbaTick(){
     analyticsProvider = currentProvider();
     const sel = document.getElementById('analyticsProvider');
     if (sel) sel.value = analyticsProvider;
+    applyAnalyticsProviderChrome(analyticsProvider);
   }
+  loadAnalyticsAgents();
   if (!wbaStarted){ wbaStarted = true; loadStatic(); }
   loadRange(true);   // 轮询：窗口上界按 15 秒桶量化，连续两轮同桶才有可能吃 304
 }
@@ -19877,10 +20037,17 @@ function wbaTick(){
 function setAnalyticsProvider(v){
   // 鸡蛋（egg）也是一等口径：它免账号、免密钥，请求照样记账（provider=egg），
   // 看板要能单独看它的调用量——否则免费流量混在「全部提供商」里看不出来。
-  const next = (v === 'qoder' || v === 'trae' || v === 'workbuddy' || v === 'egg') ? v : 'all';
+  // 本地（local）不是网关的提供商，而是「本机各客户端自己的会话」：统计时
+  // 排除经本网关的请求（那部分网关视图已经记过），见 wb_local。
+  const next = (v === 'qoder' || v === 'trae' || v === 'workbuddy' || v === 'egg'
+                || v === 'local') ? v : 'all';
   const sel = document.getElementById('analyticsProvider');
   if (sel) sel.value = next;
   analyticsProviderReady = true;
+  applyAnalyticsProviderChrome(next);
+  // 本地视图没有客户端归属：置灰下拉，免得看起来像在筛本地会话。
+  const agentSel = document.getElementById('analyticsAgent');
+  if (agentSel) agentSel.disabled = next === 'local';
   if (next === analyticsProvider) return false;
   analyticsProvider = next;
   prevSummary = null;
@@ -19895,7 +20062,28 @@ function setAnalyticsProvider(v){
   wbaTick();
   return true;
 }
+/* 「本地」视图没有账号池：把 body 打个标记，让 CSS 收起剩余用量 / 积分扣减 /
+   积分获取这些账号专属区块（它们的数据来自网关账号，本地会话里没有对应物）。 */
+function applyAnalyticsProviderChrome(value){
+  const local = (value || analyticsProvider || 'all') === 'local';
+  const body = document.body;
+  if (body && body.classList){
+    if (local) body.classList.add('local-analytics');
+    else body.classList.remove('local-analytics');
+  }
+}
 window.setAnalyticsProvider = setAnalyticsProvider;
+window.setAnalyticsAgent = setAnalyticsAgent;
+window.applyAnalyticsProviderChrome = applyAnalyticsProviderChrome;
+window.withAnalyticsProvider = withAnalyticsProvider;
+window.renderLocalScopeBar = renderLocalScopeBar;
+/* 调试 / 自检入口：本页脚本里的状态不直接暴露给外头，只能通过这几个函数看
+   和改（自检脚本要验「本地」口径的说明条，就靠 setAnalytics 喂一份载荷）。 */
+window.wbaDebug = {
+  state: function(){ return state; },
+  setAnalytics: function(payload){ state.analytics = payload; },
+  renderKpis: function(){ renderKpis(); },
+};
 window.loadAnalytics = wbaTick;            /* 面板 5s 轮询 / 切页 / 回前台统一入口 */
 window.loadAnalyticsMatrix = function(){}; /* 旧性能矩阵已并入本页（性能分位折叠区） */
 window.wbaLoad = wbaTick;                  /* 调试入口 */

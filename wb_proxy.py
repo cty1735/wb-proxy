@@ -68,6 +68,7 @@ import wb_atrest
 import wb_catalog
 import wb_egress
 import wb_ipintel
+import wb_local
 import wb_logstore
 import wb_pricing
 import wb_settings
@@ -192,6 +193,13 @@ EGG_ACCOUNT_UID = "egg"
 #: 都跟着它走。聊天链路永远拿不到 qoder 账号（池的选择方法按 provider 过滤）。
 CURRENT_PROVIDER = wb_accounts.normalize_provider(
     os.environ.get("WB_PROXY_DEFAULT_PROVIDER", wb_accounts.DEFAULT_PROVIDER))
+#: Qoder 上游说「这个模型排上队了」时，网关最多替客户端等多久（秒）。
+#: 官方 qodercli 收到 10605 是等一会儿重试（docs.qoder.com/cli/sdk/errors），
+#: 等的是上游给的 retryAfterSeconds（实测 30）。这里的预算是「最多等多久」：
+#: 超过就把排队这件事原样报给客户端，让它自己决定要不要再试。
+QODER_QUEUE_WAIT_BUDGET = 120
+#: 上游没给建议等待秒数时按这个来（实测上游给的就是 30）。
+QODER_QUEUE_DEFAULT_WAIT = 30
 #: 每个提供者各自记住的默认出口：从 Qoder 切回 WorkBuddy 时不该把 Qoder 选过的
 #: 出口带回来（两边账号的可用区域本来就不同）。
 PROVIDER_REALMS = {provider: CURRENT_REALM for provider in wb_accounts.PROVIDERS}
@@ -695,6 +703,102 @@ def row_matches_provider(row, provider):
     return row_provider(row) == wb_accounts.normalize_provider(provider)
 
 
+# 一键配置写进客户端配置的归属头。自己带不了这个头的旧配置靠 User-Agent
+# 兜底（见 detect_agent）：两边认出来的都是 wb_agents.CLIENTS 里的同一批 id。
+AGENT_HEADER = "X-WB-Agent"
+AGENT_IDS = ("claude-code", "codex", "opencode", "dsh", "crush", "zcode",
+             "hermes")
+# User-Agent 兜底规则。只收能明确归到某个客户端的特征串：认不出来就返回
+# None（看板里只出现在「全部」口径下），绝不猜——把浏览器的面板请求算到某个
+# Agent 头上比丢一行更难解释。
+_AGENT_UA_PATTERNS = (
+    ("dsh", ("deepseek-harness/",)),
+    ("opencode", ("opencode/",)),
+    ("hermes", ("hermesagent/", "hermes-cli/", "hermes-agent/")),
+    ("claude-code", ("claude-cli/", "claude-code/")),
+    ("codex", ("codex_cli_rs/", "codex-cli/")),
+    ("crush", ("crush/",)),
+    ("zcode", ("zcode/",)),
+)
+_REQUEST_AGENT = threading.local()
+
+
+def normalize_agent(value):
+    """Map a query/header value to a known client id; None means no filter."""
+    text = str(value or "").strip().lower()
+    if not text or text == "all":
+        return None
+    return text if text in AGENT_IDS else None
+
+
+def _header_value(headers, name):
+    """Case-insensitive single header read that also accepts plain dicts."""
+    if headers is None:
+        return ""
+    try:
+        value = headers.get(name)
+    except Exception:
+        value = None
+    if value:
+        return str(value)
+    needle = name.lower()
+    try:
+        items = headers.items()
+    except Exception:
+        return ""
+    for key, item in items:
+        if str(key).lower() == needle and item:
+            return str(item)
+    return ""
+
+
+def detect_agent(headers):
+    """The client id behind one request, or None when it cannot be told.
+
+    The one-click configs now stamp `X-WB-Agent`, which is exact. Configs
+    written before that change have no header, so the User-Agent is the
+    fallback; it is only trusted for the distinctive product strings below.
+    """
+    explicit = normalize_agent(_header_value(headers, AGENT_HEADER))
+    if explicit:
+        return explicit
+    ua = _header_value(headers, "User-Agent").lower()
+    if not ua:
+        return None
+    for agent, needles in _AGENT_UA_PATTERNS:
+        if any(needle in ua for needle in needles):
+            return agent
+    return None
+
+
+def set_request_agent(headers):
+    """Remember this request's client for record_usage/record_error.
+
+    handle_one_request() calls this after parsing every request, so a
+    keep-alive connection that later serves a browser request resets to None
+    instead of inheriting the previous chat's agent.
+    """
+    _REQUEST_AGENT.id = detect_agent(headers)
+
+
+def request_agent():
+    return getattr(_REQUEST_AGENT, "id", None)
+
+
+def row_agent(row):
+    """The client id a usage row was tagged with, or '' for older rows."""
+    return str(row.get("agent") or "").strip().lower()
+
+
+def row_matches_agent(row, agent):
+    # None means every client, same contract as row_matches_provider. Rows
+    # written before the dimension existed have no field and therefore only
+    # show up under "all" - there is no reliable way to backfill them.
+    if not agent or agent == "all":
+        return True
+    return row_agent(row) == normalize_agent(agent)
+
+
 def row_free_model(row):
     """True when the row's model is free on the exit that served it.
 
@@ -913,6 +1017,12 @@ def record_usage(model, usage, stream=None, elapsed_ms=None, ttft_ms=None, gen_m
     row.update(fields)
     if fp:
         row.update(fp)
+    # Which AI client sent this request. The one-click configs stamp a header;
+    # old configs fall back to the User-Agent. Only recognized ids are written
+    # so a row keeps the old shape when the caller cannot be identified.
+    agent = normalize_agent((fp or {}).get("agent") or request_agent())
+    if agent:
+        row["agent"] = agent
     if account:
         row["account"] = account
     acc = POOL.get(account) if (account and POOL) else None
@@ -1040,6 +1150,9 @@ def record_error(model, status, message, elapsed_ms=None, account=None,
     row.update(fields)
     if fp:
         row.update(fp)
+    agent = normalize_agent((fp or {}).get("agent") or request_agent())
+    if agent:
+        row["agent"] = agent
     if account:
         row["account"] = account
         acc = POOL.get(account) if POOL else None
@@ -1107,7 +1220,8 @@ _perf_cache = {}
 _perf_lock = threading.Lock()
 
 
-def _perf_stats_scope(sample, realm, range, since, until, provider=None):
+def _perf_stats_scope(sample, realm, range, since, until, provider=None,
+                      agent=None):
     """(过滤用的 realm, provider, since, until, 缓存键) —— perf_stats() 与它的 ETag 共用。
 
     抽出来只为一件事：取数和派生 ETag 必须走**同一套**键。两边各写一份的话，
@@ -1126,11 +1240,13 @@ def _perf_stats_scope(sample, realm, range, since, until, provider=None):
     except Exception:
         key = (5000, r or "all", p or "all",
                lo if lo is not None else -1, hi if hi is not None else -1)
+    if agent:
+        key += (agent,)
     return r, p, lo, hi, key
 
 
 def perf_stats(sample=5000, realm=None, ttl=None, range=None, since=None, until=None,
-               provider=None):
+               provider=None, agent=None):
     """Cached wrapper: parsing thousands of rows is CPU-heavy, and the
     dashboard polls this endpoint every few seconds.
 
@@ -1144,14 +1260,19 @@ def perf_stats(sample=5000, realm=None, ttl=None, range=None, since=None, until=
     缓存照旧兜住轮询。
     """
     ttl = _STATS_TTL if ttl is None else ttl
-    r, p, lo, hi, key = _perf_stats_scope(sample, realm, range, since, until, provider)
+    agent = normalize_agent(agent)
+    r, p, lo, hi, key = _perf_stats_scope(sample, realm, range, since, until,
+                                          provider, agent)
     now = time.time()
     with _perf_lock:
         hit = _perf_cache.get(key)
         if hit is not None and (now - hit[0]) < ttl:
             return hit[1]
-        if p:
-            data = _perf_stats_uncached(sample, r, lo, hi, provider=p)
+        if p or agent:
+            # The incremental ring has no per-row provider/agent attribution,
+            # so a filtered view reads the bounded tail directly.
+            data = _perf_stats_uncached(sample, r, lo, hi, provider=p,
+                                        agent=agent)
         else:
             data = _perf_stats_incremental(key, key[0], r, lo, hi)
         _perf_cache[key] = (time.time(), data)
@@ -1159,15 +1280,16 @@ def perf_stats(sample=5000, realm=None, ttl=None, range=None, since=None, until=
 
 
 def perf_stats_etag(sample=5000, realm=None, range=None, since=None, until=None,
-                    provider=None):
+                    provider=None, agent=None):
     """perf_stats() 当前缓存条目的 ETag；条目还不存在时返回 None。
 
     _json_cached() 会在取数前后各调用一次并比对，两次一致才把 tag 发出去
     （见那里的注释）。所以这里只回答"此刻这条缓存条目的戳是什么"，调用方不需要
     自己安排调用顺序。
     """
+    agent = normalize_agent(agent)
     _r, _p, _lo, _hi, key = _perf_stats_scope(sample, realm, range, since, until,
-                                              provider)
+                                              provider, agent)
     with _perf_lock:
         hit = _perf_cache.get(key)
     if hit is None:
@@ -1175,7 +1297,8 @@ def perf_stats_etag(sample=5000, realm=None, range=None, since=None, until=None,
     return _cache_etag("perf", repr(key), hit[0])
 
 
-def _perf_stats_uncached(sample=5000, realm=None, since=None, until=None, provider=None):
+def _perf_stats_uncached(sample=5000, realm=None, since=None, until=None,
+                         provider=None, agent=None):
     """Latency percentiles + derived rates, computed from the JSONL log."""
     ttfts, gens, walls, rates, hits, tok_rates = [], [], [], [], [], []
     total = ok = err = aborted = 0
@@ -1217,6 +1340,8 @@ def _perf_stats_uncached(sample=5000, realm=None, since=None, until=None, provid
         if realm and not row_matches_realm(r, realm):
             continue
         if provider and not row_matches_provider(r, provider):
+            continue
+        if agent and not row_matches_agent(r, agent):
             continue
         # Same window as the usage snapshot, so the latency and speed columns
         # of the matrix describe the same requests as its token columns.
@@ -4890,6 +5015,12 @@ def _tail_lines(path, max_lines, chunk=256 * 1024):
 
 _count_cache = {}
 _count_lock = threading.Lock()
+# Agent-filtered page totals cannot ride the substring fold above (that one
+# never parses "agent"), so they get their own small TTL cache keyed by the
+# full filter. recent_usage polls every few seconds; without this the count
+# would re-read the log on every poll.
+_agent_count_cache = {}
+_agent_count_lock = threading.Lock()
 # The count only feeds the "N records" label. The poll interval is 5s, so a
 # TTL of the same length would miss on nearly every poll; 30s turns a full
 # scan per poll into one scan per six polls while the label stays current
@@ -4913,7 +5044,7 @@ _series_lock = threading.Lock()
 
 
 def _usage_timeseries_scope(realm, range, since, until, bucket_seconds,
-                            provider=None):
+                            provider=None, agent=None):
     """(realm, lo, hi, step, 缓存键) —— usage_timeseries() 与它的 ETag 共用。
 
     lo/hi 是这次真正要扫的窗口（未钉住的边界在这里补成"现在/往前 24 小时"），
@@ -4958,11 +5089,16 @@ def _usage_timeseries_scope(realm, range, since, until, bucket_seconds,
            step)
     if provider:
         key += (provider,)
+    # Agent filter joins the key for the same reason: it folds a different
+    # set of rows, so two agents must never share one cached series.
+    if agent:
+        key += (agent,)
     return r, lo, hi, step, key
 
 
 def usage_timeseries(realm=None, range=None, since=None, until=None,
-                     bucket_seconds=None, ttl=None, provider=None):
+                     bucket_seconds=None, ttl=None, provider=None,
+                     agent=None):
     """Bucketed token/credit series for the analytics chart.
 
     Bucket size auto-scales with the window: minute (<=6h), hour (<=14d),
@@ -4981,21 +5117,23 @@ def usage_timeseries(realm=None, range=None, since=None, until=None,
     burst of pollers cannot each start their own scan.
     """
     provider = wb_accounts.provider_filter(provider)
+    agent = normalize_agent(agent)
     ttl = _STATS_TTL if ttl is None else ttl
     r, lo, hi, step, key = _usage_timeseries_scope(realm, range, since, until,
-                                                   bucket_seconds, provider)
+                                                   bucket_seconds, provider,
+                                                   agent)
     now = time.time()
     with _series_lock:
         hit = _series_cache.get(key)
         if hit is not None and (now - hit[0]) < ttl:
             return hit[1]
-        data = _usage_timeseries_uncached(r, lo, hi, step, provider)
+        data = _usage_timeseries_uncached(r, lo, hi, step, provider, agent)
         _series_cache[key] = (time.time(), data)
     return data
 
 
 def usage_timeseries_etag(realm=None, range=None, since=None, until=None,
-                          bucket_seconds=None, provider=None):
+                          bucket_seconds=None, provider=None, agent=None):
     """usage_timeseries() 当前缓存条目的 ETag；没有条目时返回 None。
 
     配对调用由 _json_cached() 负责。注意键里只有钉住的边界，所以"滚动窗口"这一类
@@ -5003,8 +5141,10 @@ def usage_timeseries_etag(realm=None, range=None, since=None, until=None,
     字节不变，这正是可以放心回 304 的原因。
     """
     provider = wb_accounts.provider_filter(provider)
+    agent = normalize_agent(agent)
     _r, _lo, _hi, _step, key = _usage_timeseries_scope(realm, range, since, until,
-                                                       bucket_seconds, provider)
+                                                       bucket_seconds, provider,
+                                                       agent)
     with _series_lock:
         hit = _series_cache.get(key)
     if hit is None:
@@ -5113,7 +5253,7 @@ def _line_outside_window_bytes(raw, lo, hi):
     return raw.isascii()
 
 
-def _usage_timeseries_scan(realm, lo, hi, step, provider=None):
+def _usage_timeseries_scan(realm, lo, hi, step, provider=None, agent=None):
     """One uncached pass over the log, folding rows into fixed-width buckets.
 
     这是窗口序列的兜底路径：日/小时桶切片不成立（见 _series_slice）时用它，
@@ -5168,6 +5308,8 @@ def _usage_timeseries_scan(realm, lo, hi, step, provider=None):
                     continue
                 if provider and not row_matches_provider(row, provider):
                     continue
+                if agent and not row_matches_agent(row, agent):
+                    continue
                 at = row.get("at") or 0
                 if at < lo or at > hi:
                     continue
@@ -5216,7 +5358,7 @@ def _usage_timeseries_scan(realm, lo, hi, step, provider=None):
     }
 
 
-def _usage_timeseries_uncached(realm, lo, hi, step, provider=None):
+def _usage_timeseries_uncached(realm, lo, hi, step, provider=None, agent=None):
     """窗口序列：优先由日/小时桶/分钟环切片，不成立时整段扫描。
 
     切片只在「桶宽与窗口对齐」时才是同一件事，所以先按桶宽判断要不要惊动
@@ -5227,7 +5369,12 @@ def _usage_timeseries_uncached(realm, lo, hi, step, provider=None):
     provider 过滤走 (realm, provider) 分键的同一份状态：切片给出的序列与
     整段扫描的行级过滤逐条一致（见 _usage_timeseries_scan）。provider 过滤
     状态不落盘（见 _usage_series_state_ready）。
+
+    agent 过滤不能借切片：日/小时/分钟桶里没有客户端维度，折进去就再也拆不
+    开。带 agent 时直接整段扫描（结果仍走 TTL 缓存，键里带 agent）。
     """
+    if agent:
+        return _usage_timeseries_scan(realm, lo, hi, step, provider, agent)
     if step in (3600, 86400):
         day_key = _window_day_key(lo)
     elif step == 60:
@@ -5256,7 +5403,7 @@ def _usage_timeseries_uncached(realm, lo, hi, step, provider=None):
             _usage_cache_maybe_save("series", offset)
         if out is not None:
             return out
-    return _usage_timeseries_scan(realm, lo, hi, step, provider)
+    return _usage_timeseries_scan(realm, lo, hi, step, provider, agent)
 
 
 def count_usage_rows(realm=None, provider=None):
@@ -5293,6 +5440,52 @@ def count_usage_rows(realm=None, provider=None):
     n = _count_usage_rows_uncached(realm, provider)
     with _count_lock:
         _count_cache[(r, p)] = (time.time(), n)
+    return n
+
+
+def count_usage_rows_agent(realm=None, provider=None, agent=None):
+    """Page total for an agent-filtered recent view.
+
+    The fast line-text fold behind count_usage_rows() only knows realm and
+    provider, so this parses the rows instead. Rows without an agent field are
+    old rows and are deliberately not counted (they cannot be attributed), which
+    matches the page contents from _recent_backward_page().
+    """
+    agent = normalize_agent(agent)
+    realm = realm_scope(realm)
+    provider = wb_accounts.provider_filter(provider)
+    if not agent:
+        return count_usage_rows(realm, provider)
+    key = (realm or "", provider or "", agent)
+    now = time.time()
+    with _agent_count_lock:
+        hit = _agent_count_cache.get(key)
+        if hit is not None and (now - hit[0]) < _COUNT_TTL:
+            return hit[1]
+    n = 0
+    try:
+        with open(USAGE_LOG, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                if realm and not row_matches_realm(row, realm):
+                    continue
+                if provider and not row_matches_provider(row, provider):
+                    continue
+                if not row_matches_agent(row, agent):
+                    continue
+                n += 1
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        log("agent usage count failed: %s" % exc)
+    with _agent_count_lock:
+        _agent_count_cache[key] = (time.time(), n)
     return n
 
 
@@ -6104,13 +6297,14 @@ def _recent_index_read(start, realm, skip, take):
     return rows
 
 
-def _recent_backward_page(realm, page, limit, provider=None):
+def _recent_backward_page(realm, page, limit, provider=None, agent=None):
     """老路：从尾部按 256KB 块往回读，凑够 page*limit 条再切片。
 
     页深越大读得越多（realm 过滤命中率低时要读回整个文件），所以索引可用时
     不走这里；索引答不了（半行、坏字节、池没就绪……）时它是唯一的正确答案，
-    逐字保留原实现的行为。provider 过滤只能走这条路（索引不按 provider 记
-    账），两个过滤各自过围栏：row_matches_realm + row_matches_provider。
+    逐字保留原实现的行为。provider/agent 过滤只能走这条路（索引不按这两个
+    维度记账），每个过滤各自过围栏：row_matches_realm + row_matches_provider
+    + row_matches_agent。
     """
     target_count = page * limit
     matching = []
@@ -6139,6 +6333,8 @@ def _recent_backward_page(realm, page, limit, provider=None):
                         continue
                     if provider and not row_matches_provider(item, provider):
                         continue
+                    if agent and not row_matches_agent(item, agent):
+                        continue
                     matching.append(item)
                     if len(matching) >= target_count:
                         break
@@ -6147,7 +6343,9 @@ def _recent_backward_page(realm, page, limit, provider=None):
                     item = json.loads(buf.strip().decode("utf-8", "replace"))
                     if ((not realm or row_matches_realm(item, realm))
                             and (not provider
-                                 or row_matches_provider(item, provider))):
+                                 or row_matches_provider(item, provider))
+                            and (not agent
+                                 or row_matches_agent(item, agent))):
                         matching.append(item)
                 except Exception:
                     pass
@@ -6160,7 +6358,7 @@ def _recent_backward_page(realm, page, limit, provider=None):
     return matching[start_idx:end_idx]
 
 
-def recent_usage(limit=100, realm=None, page=1, provider=None):
+def recent_usage(limit=100, realm=None, page=1, provider=None, agent=None):
     """Paginated rows from the tail of the log (page 1 is latest).
 
     Reading backward in chunks keeps this in the millisecond range while
@@ -6184,7 +6382,8 @@ def recent_usage(limit=100, realm=None, page=1, provider=None):
         page = 1
     realm = realm_scope(realm)
     provider = wb_accounts.provider_filter(provider)
-    index = None if provider else _recent_index_ready(
+    agent = normalize_agent(agent)
+    index = None if (provider or agent) else _recent_index_ready(
         realm_filtered=bool(realm))
     page_rows = None
     if index is not None:
@@ -6195,10 +6394,10 @@ def recent_usage(limit=100, realm=None, page=1, provider=None):
         if page_rows is None:
             index = None
     if index is None:
-        total = count_usage_rows(realm, provider)
+        total = count_usage_rows_agent(realm, provider, agent)
         total_pages = max(1, (total + limit - 1) // limit) if total > 0 else 1
         page = min(page, total_pages)
-        page_rows = _recent_backward_page(realm, page, limit, provider)
+        page_rows = _recent_backward_page(realm, page, limit, provider, agent)
     # Equivalent-token cost per row at OpenRouter list prices, computed here
     # so every consumer of /usage/recent gets the same number. Each row is
     # priced against the version that was in force when it happened, and says
@@ -6917,13 +7116,13 @@ _analytics_cache = {}
 _analytics_lock = threading.Lock()
 
 
-def _analytics_scope(realm, range, since, until, provider=None):
+def _analytics_scope(realm, range, since, until, provider=None, agent=None):
     """(since, until, 缓存键) —— compute_usage_analytics() 与它的 ETag 共用。
 
     注意键里用的是**原始** realm（`realm or "all"`），与这个接口一直以来的键
     一致；折叠时用 realm_scope(realm) 另有其义。两者都不能顺手"统一"，否则就是
-    换了一条缓存键。provider 段只在开了过滤时插进键里：None 时键保持旧形状逐
-    字节不变，旧客户端手上的 ETag 不会因为这次升级全部失效。
+    换了一条缓存键。provider/agent 段只在开了过滤时插进键里：都没有时键保持
+    旧形状逐字节不变，旧客户端手上的 ETag 不会因为这次升级全部失效。
     """
     lo, hi = range_window(range, since, until)
     if provider:
@@ -6933,11 +7132,13 @@ def _analytics_scope(realm, range, since, until, provider=None):
     else:
         cache_key = "%s|%s|%s" % (realm or "all",
                                   lo if lo is not None else "", hi if hi is not None else "")
+    if agent:
+        cache_key += "|agent=%s" % agent
     return lo, hi, cache_key
 
 
 def compute_usage_analytics(ttl=None, realm=None, range=None, since=None, until=None,
-                            provider=None):
+                            provider=None, agent=None):
     """Cached analytics payload.
 
     Unlike perf_stats/usage_snapshot/usage_by_account this used to run
@@ -6952,27 +7153,32 @@ def compute_usage_analytics(ttl=None, realm=None, range=None, since=None, until=
     different set of rows and must never serve the unfiltered payload.
     """
     provider = wb_accounts.provider_filter(provider)
+    agent = normalize_agent(agent)
     ttl = _STATS_TTL if ttl is None else ttl
     now = time.time()
-    lo, hi, cache_key = _analytics_scope(realm, range, since, until, provider)
+    lo, hi, cache_key = _analytics_scope(realm, range, since, until, provider,
+                                         agent)
     with _analytics_lock:
         entry = _analytics_cache.get(cache_key)
         if entry is not None and (now - entry["at"]) < ttl:
             return entry["data"]
         data = _compute_usage_analytics_uncached(realm=realm_scope(realm), since=lo,
-                                                 until=hi, provider=provider)
+                                                 until=hi, provider=provider,
+                                                 agent=agent)
         _analytics_cache[cache_key] = {"at": time.time(), "data": data}
     return data
 
 
 def usage_analytics_etag(realm=None, range=None, since=None, until=None,
-                         provider=None):
+                         provider=None, agent=None):
     """compute_usage_analytics() 当前缓存条目的 ETag；无条目返回 None。
 
     配对调用由 _json_cached() 负责，理由见那里。
     """
     provider = wb_accounts.provider_filter(provider)
-    _lo, _hi, cache_key = _analytics_scope(realm, range, since, until, provider)
+    agent = normalize_agent(agent)
+    _lo, _hi, cache_key = _analytics_scope(realm, range, since, until, provider,
+                                           agent)
     with _analytics_lock:
         entry = _analytics_cache.get(cache_key)
     if entry is None:
@@ -7091,7 +7297,7 @@ def _bump_analytics_models(tgt, m_id, vals, is_err, cost_cny):
 
 
 def _fold_usage_analytics(row, realm, maps, half, pricing_on=None, also=None,
-                          pricing=None, priced=None, provider=None):
+                          pricing=None, priced=None, provider=None, agent=None):
     """Fold one parsed row into one half of the analytics payload.
 
     `maps` holds the four maps that half folds into and `half` names the stat
@@ -7120,6 +7326,8 @@ def _fold_usage_analytics(row, realm, maps, half, pricing_on=None, also=None,
     if realm and not row_matches_realm(row, realm):
         return
     if provider and not row_matches_provider(row, provider):
+        return
+    if agent and not row_matches_agent(row, agent):
         return
     # Only a genuine gateway/upstream failure is an error. A client
     # cancellation is not: its token counts are incomplete, and folding them
@@ -9088,23 +9296,104 @@ def _finalize_analytics_stat(stat_obj):
         stat_obj["elapsed_ms_avg"] = round(stat_obj["elapsed_sum"] / stat_obj["elapsed_n"]) if stat_obj["elapsed_n"] > 0 else 0
         return stat_obj
 
+
+# ---------------------------------------------------------------------------
+# 「本地」口径（看板的本地视图）
+#
+# 走本网关的请求都记在 usage.jsonl 里，按 provider 分账；没走本网关的请求
+# 网关根本看不见 —— 它们的用量只留在各个本地客户端自己的会话记录里。「本地」
+# 视图就是把那份记录读出来（见 wb_local），按同一套载荷结构交给面板，并把
+# 「经本网关」的那部分单列出来，免得和网关口径重复计算。
+# ---------------------------------------------------------------------------
+LOCAL_PROVIDER = "local"
+
+
+def _local_requested(query):
+    """The request asks for the local-session view."""
+    values = (query or {}).get("provider") or []
+    raw = (values[0] if values else "") or ""
+    return str(raw).strip().lower() == LOCAL_PROVIDER
+
+
+def _local_scope(query):
+    """Which requests the local view counts: only the ones that bypassed the
+    gateway (the default), or every local session request."""
+    values = (query or {}).get("local_scope") or []
+    return wb_local.normalize_scope(values[0] if values else None)
+
+
+def _local_etag(kind, since, until, scope):
+    """A validator for the current local payload.
+
+    Derived from the data itself (how many requests, how many tokens, when the
+    last one was), not from the wall clock: a payload that has not changed must
+    keep its tag, or the panel's five-second poll would re-download the whole
+    thing on every round.
+    """
+    token = wb_local.fingerprint(since=since, until=until, scope=scope)
+    digest = hashlib.sha1(
+        ("local-%s\x1f%s\x1f%s\x1f%s" % (kind, since, until, scope, token)).encode("utf-8")
+    ).hexdigest()[:16]
+    return '"%s"' % digest
+
+
+def _scan_usage_analytics_agent(realm, since, until, agent, provider=None):
+    """Cold analytics pass for an agent-filtered view.
+
+    The incremental analytics state (all-time maps plus day/hour buckets) has
+    no client dimension: its buckets were folded without an agent and cannot
+    be split afterwards. A filtered view therefore reads the log once, folding
+    the all-time half for every row and the windowed half only for rows inside
+    the selected window. The result is cached by compute_usage_analytics().
+    """
+    pricing_on = wb_pricing.pricing_enabled()
+    pricing = _pricing_inputs(pricing_on)
+    all_maps = _new_analytics_maps()
+    windowed = since is not None or until is not None
+    win_maps = _new_analytics_maps() if windowed else all_maps
+
+    def fold(row):
+        _fold_usage_analytics(row, realm, all_maps, _ANALYTICS_ALL, pricing_on,
+                              pricing=pricing, provider=provider, agent=agent)
+        if not windowed:
+            return
+        at = row.get("at") or 0
+        if since is not None and at < since:
+            return
+        if until is not None and at > until:
+            return
+        _fold_usage_analytics(row, realm, win_maps, _ANALYTICS_WINDOW,
+                              pricing_on, pricing=pricing, provider=provider,
+                              agent=agent)
+
+    _, error = _scan_usage_from(0, fold)
+    if error is not None:
+        log("compute_usage_analytics (agent=%s) failed: %s" % (agent, error))
+    return all_maps, win_maps
+
+
 def _compute_usage_analytics_uncached(realm=None, since=None, until=None,
-                                      provider=None):
+                                      provider=None, agent=None):
     """Detailed analytics for Token, Cache, and Reasoning metrics page."""
     # 与 /usage 快照同一条规矩：一次扫描里总开关只问一次，值传进折叠与指纹。
-    pricing_on = wb_pricing.pricing_enabled()
-    all_maps, offset = _analytics_all_time(realm, pricing_on, provider)
-    if since is None and until is None:
-        # An open window covers every row, so the windowed half is the
-        # all-time fold over again; the merge copies the two apart.
-        win_maps = all_maps
+    agent = normalize_agent(agent)
+    if agent:
+        all_maps, win_maps = _scan_usage_analytics_agent(
+            realm, since, until, agent, provider)
     else:
-        # The all-time half is not re-folded: the windowed half comes from
-        # the day buckets that fold advanced (or, failing that, from a pass
-        # that stops where that fold stopped), so one page never mixes two
-        # reads.
-        win_maps = _analytics_window(realm, since, until, offset, pricing_on,
-                                     provider)
+        pricing_on = wb_pricing.pricing_enabled()
+        all_maps, offset = _analytics_all_time(realm, pricing_on, provider)
+        if since is None and until is None:
+            # An open window covers every row, so the windowed half is the
+            # all-time fold over again; the merge copies the two apart.
+            win_maps = all_maps
+        else:
+            # The all-time half is not re-folded: the windowed half comes from
+            # the day buckets that fold advanced (or, failing that, from a pass
+            # that stops where that fold stopped), so one page never mixes two
+            # reads.
+            win_maps = _analytics_window(realm, since, until, offset, pricing_on,
+                                         provider)
     parts = _merge_analytics_halves(all_maps, win_maps)
     acct_map = parts["accts"]
     model_map = parts["models"]
@@ -14681,13 +14970,24 @@ class QoderUpstreamAdapter:
 
     生成器里的异常原样从 read1() 冒出来，交给调用方的 except 按「上游断流」
     记账——与 WorkBuddy 的 HTTPResponse 行为一致。
+
+    上游说「这个模型排上队了」（10605 RESOURCE_LIMIT / isQueued=true）时
+    官方 CLI 是等一会儿重试，不是失败。reopen 给出重开一条上游的办法，
+    这里就照着等 + 重试：还没吐出任何内容时重开，成功了就当无事发生；
+    预算用完仍排不上，才把排队这件事原样报给调用方。
     """
 
-    def __init__(self, resp, model):
+    def __init__(self, resp, model, reopen=None, queue_wait_budget=0):
         self._raw = resp
+        self._model = model
+        self._reopen = reopen
+        self._budget = max(0, int(queue_wait_budget or 0))
+        self._waited = 0
+        self._waits = 0
         self._chunks = wb_qoder_chat.iter_openai_chunks(resp, model)
         self._pending = b""
         self._done = False
+        self._yielded = False
 
     def read1(self, size=-1):
         while not self._pending and not self._done:
@@ -14696,6 +14996,23 @@ class QoderUpstreamAdapter:
             except StopIteration:
                 self._done = True
                 break
+            except wb_qoder_chat.QoderQueuedError as exc:
+                # 已经吐过内容就别重开了：重发会把前面的回答再说一遍。
+                if self._yielded or not self._can_wait(exc):
+                    if self._waited:
+                        # 已经按上游的建议等过了才放弃 —— 说清楚等了多久，
+                        # 免得客户端以为上游是秒拒的。
+                        raise wb_qoder_chat.QoderQueuedError(
+                            "%s（已按上游建议等待 %d 秒重试 %d 次仍无容量）"
+                            % (exc, self._waited, self._waits),
+                            retry_after=getattr(exc, "retry_after", 0),
+                            queue_type=getattr(exc, "queue_type", ""),
+                            queue_count=getattr(exc, "queue_count", 0),
+                            model_key=getattr(exc, "model_key", ""))
+                    raise
+                self._wait_then_reopen(exc)
+                continue
+            self._yielded = True
             self._pending = ("data: %s\n\n" % json.dumps(
                 chunk, ensure_ascii=False)).encode("utf-8")
         if not self._pending:
@@ -14705,6 +15022,41 @@ class QoderUpstreamAdapter:
             return data
         data, self._pending = self._pending[:size], self._pending[size:]
         return data
+
+    def _can_wait(self, exc):
+        """这次排队还等不等：重开过、且等待秒数不超预算才等。"""
+        if self._reopen is None or self._budget <= 0:
+            return False
+        return self._waited + self._queue_delay(exc) <= self._budget
+
+    @staticmethod
+    def _queue_delay(exc):
+        """这一次等多久：以上游的建议为准（实测 30 秒），兜底 30。"""
+        try:
+            delay = int(getattr(exc, "retry_after", 0) or 0)
+        except (TypeError, ValueError):
+            delay = 0
+        return delay if delay > 0 else QODER_QUEUE_DEFAULT_WAIT
+
+    def _wait_then_reopen(self, exc):
+        """等上游说的秒数，然后重开一条上游流接着读。"""
+        delay = self._queue_delay(exc)
+        self._waited += delay
+        self._waits += 1
+        log("qoder: 模型 %s 排上队了（%s），等 %d 秒后重试（已等 %d 秒）"
+            % (self._model, getattr(exc, "queue_type", "") or "RESOURCE_LIMIT",
+               delay, self._waited))
+        # 旧连接留着也没用：上游把排队的那条挂着不关（实测挂 3 分钟），
+        # 占着位置还拖慢下一次尝试，先关掉。
+        try:
+            if hasattr(self._raw, "close"):
+                self._raw.close()
+        except Exception:
+            pass
+        time.sleep(delay)
+        resp = self._reopen()
+        self._raw = resp
+        self._chunks = wb_qoder_chat.iter_openai_chunks(resp, self._model)
 
     # iter_sse_lines 优先用 read1()；read() 只是给按文件对象用的调用方兜底。
     def read(self, size=-1):
@@ -14783,10 +15135,28 @@ def open_qoder_upstream(payload, session_key=None, target_realm=None):
             "machineId": account.qoder_auth.get("machineId") or "",
             "realm": realm,
         }
+        # 会话标识固定下来，重试时沿用同一条会话（上游按会话做提示缓存
+        # 亲和；每次都换新会话等于把缓存也丢了）。没有客户端会话号时
+        # 自己编一个，作用域仅限这一次请求。
+        session_id = session_key or ("qoder-%s" % uuid.uuid4().hex)
+        # 排队后重发用的回调：整条请求重新构造（新的 request_id 与
+        # 签名）再打一次。只换签名、沿用旧 body 是不行的 —— 实测那样
+        # 几乎必被拒（0/24），整条重建与原样重发都能正常放行。
+        def reopen():
+            retry_built = wb_qoder_chat.build_chat_request(
+                payload, resolved, identity, session_id=session_id,
+                data_dir=ACCOUNTS_DIR)
+            retry_req = urllib.request.Request(
+                retry_built["url"], data=retry_built["body"], method="POST",
+                headers=retry_built["headers"])
+            retry_resp = wb_accounts.urlopen(retry_req, timeout=header_timeout,
+                                             proxy=account.proxy)
+            _apply_stream_idle_timeout(retry_resp, idle_timeout)
+            return retry_resp
         # 一次账号机会里最多两条请求：401 时刷新凭证，拿新 token 再打一次同号。
         for attempt in (1, 2):
             built = wb_qoder_chat.build_chat_request(
-                payload, resolved, identity, session_id=session_key,
+                payload, resolved, identity, session_id=session_id,
                 data_dir=ACCOUNTS_DIR)
             req = urllib.request.Request(built["url"], data=built["body"],
                                          method="POST",
@@ -14796,8 +15166,9 @@ def open_qoder_upstream(payload, session_key=None, target_realm=None):
                                            proxy=account.proxy)
                 _apply_stream_idle_timeout(resp, idle_timeout)
                 account.note_success(model=model)
-                return (QoderUpstreamAdapter(resp, model), account,
-                        built.get("effort"))
+                return (QoderUpstreamAdapter(resp, model, reopen=reopen,
+                                              queue_wait_budget=QODER_QUEUE_WAIT_BUDGET),
+                        account, built.get("effort"))
             except urllib.error.HTTPError as exc:
                 if exc.code == 401 and attempt == 1:
                     if not account.refresh():
@@ -18383,6 +18754,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not self.parse_request():
             return
+        # Per-request client attribution for the usage log. Reset on every
+        # request (including panel/browser requests) so a keep-alive
+        # connection never carries the previous chat's client id.
+        set_request_agent(self.headers)
         mname = 'do_' + self.command
         if not hasattr(self, mname):
             self.send_error(501, "Unsupported method (%r)" % self.command)
@@ -18858,6 +19233,18 @@ class Handler(BaseHTTPRequestHandler):
             values = []
         return (values[0] or None) if values else None
 
+    def _request_agent(self, query=None):
+        """The agent filter from ?agent=, normalized to a known client id."""
+        values = []
+        if isinstance(query, dict):
+            values = query.get("agent") or []
+        if not values:
+            try:
+                values = parse_qs(urlparse(self.path).query).get("agent") or []
+            except Exception:
+                values = []
+        return normalize_agent(values[0] if values else None)
+
     def _chat_provider(self, payload):
         """这个聊天请求该走哪个提供商。
 
@@ -19026,6 +19413,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._get_v1_models(query)
         if path in ("/usage", "/v1/usage"):
             return self._get_v1_usage(query)
+        if path == "/usage/agents":
+            return self._get_usage_agents(query)
         if path == "/usage/recent":
             return self._get_usage_recent(query)
         if path == "/accounts/credits/detail":
@@ -19262,9 +19651,27 @@ class Handler(BaseHTTPRequestHandler):
                                         since=req_since, until=req_until,
                                         provider=req_provider))
 
+    def _get_usage_agents(self, query=None):
+        """Known clients + which ones have an applied gateway config.
+
+        The analytics page uses `applied` for its dropdown options and the
+        full list for labels on recent rows. Cheap: reads
+        accounts/integration-state.json, never probes the filesystem.
+        """
+        if not self._authorized():
+            return
+        try:
+            agents = agents_module().agent_inventory(ACCOUNTS_DIR)
+        except Exception as exc:
+            log("agent inventory failed: %s" % exc)
+            agents = []
+        return self._json(200, {"agents": agents})
+
     def _get_usage_recent(self, query):
         if not self._authorized():
             return
+        if _local_requested(query):
+            return self._get_local_usage("recent", query)
         try:
             limit = max(1, min(1000, int((query.get("limit") or ["100"])[0])))
         except ValueError:
@@ -19275,8 +19682,10 @@ class Handler(BaseHTTPRequestHandler):
             page = 1
         req_realm = query.get('realm', [None])[0] or self.headers.get('X-Realm') or CURRENT_REALM
         req_provider = wb_accounts.provider_filter(self._request_provider(query))
+        req_agent = self._request_agent(query)
         return self._json(200, recent_usage(limit, realm=req_realm, page=page,
-                                            provider=req_provider))
+                                            provider=req_provider,
+                                            agent=req_agent))
 
     def _get_activity_history(self, query):
         """账号每日活动的结构化历史（issue #34）。只读，供面板的签到记录用。
@@ -19434,19 +19843,64 @@ class Handler(BaseHTTPRequestHandler):
     def _get_usage_analytics(self, query):
         if not self._authorized():
             return
+        # 「本地」不是网关的提供商维度：它统计的是本机各客户端自己的会话
+        # （没走本网关的请求网关根本看不到），走 wb_local 单独取数。
+        if _local_requested(query):
+            return self._get_local_usage("analytics", query)
         # 提供商维度与 /usage、/usage/perf 同一套口径：显式 ?provider= 优先，
         # 不带时保持旧的「全部提供商合计」（与面板切换无关）。
         req_provider = wb_accounts.provider_filter(self._request_provider(query))
+        req_agent = self._request_agent(query)
         req_realm = query.get("realm", [None])[0] or None
         req_range, req_since, req_until = range_query(query)
         return self._json_cached(
             200,
             lambda: compute_usage_analytics(realm=req_realm, range=req_range,
                                             since=req_since, until=req_until,
-                                            provider=req_provider),
+                                            provider=req_provider,
+                                            agent=req_agent),
             lambda: usage_analytics_etag(realm=req_realm, range=req_range,
                                          since=req_since, until=req_until,
-                                         provider=req_provider))
+                                         provider=req_provider,
+                                         agent=req_agent))
+
+    def _get_local_usage(self, kind, query):
+        """本地会话视图的四个接口（看板 / 曲线 / 最近请求 / 性能分位）。
+
+        窗口与网关侧同一套解析（range= / since= / until=），口径也是同一套
+        载荷结构，所以面板的卡片、曲线、表格都不必为「本地」另写一份渲染。
+        """
+        req_range, req_since, req_until = range_query(query)
+        lo, hi = range_window(req_range, req_since, req_until)
+        if hi is None:
+            hi = time.time()
+        scope = _local_scope(query)
+        if kind == "analytics":
+            build = lambda: wb_local.analytics(since=lo, until=hi, scope=scope)
+        elif kind == "timeseries":
+            bucket = (query.get("bucket") or [None])[0]
+            try:
+                bucket_seconds = int(bucket) if bucket else None
+            except (TypeError, ValueError):
+                bucket_seconds = None
+            build = lambda: wb_local.timeseries(since=lo, until=hi,
+                                                bucket_seconds=bucket_seconds,
+                                                scope=scope)
+        elif kind == "recent":
+            try:
+                limit = max(1, min(1000, int((query.get("limit") or ["100"])[0])))
+            except (TypeError, ValueError):
+                limit = 100
+            try:
+                page = max(1, int((query.get("page") or ["1"])[0]))
+            except (TypeError, ValueError):
+                page = 1
+            build = lambda: wb_local.recent(limit=limit, page=page, scope=scope)
+        else:
+            build = lambda: wb_local.perf(scope=scope)
+        return self._json_cached(
+            200, build,
+            lambda: _local_etag(kind, lo, hi, scope))
 
     def _get_usage_by_account(self, query=None):
         if not self._authorized():
@@ -19472,7 +19926,10 @@ class Handler(BaseHTTPRequestHandler):
     def _get_usage_timeseries(self, query):
         if not self._authorized():
             return
+        if _local_requested(query):
+            return self._get_local_usage("timeseries", query)
         req_provider = wb_accounts.provider_filter(self._request_provider(query))
+        req_agent = self._request_agent(query)
         req_realm = (query.get('realm', [None])[0]
                      or self.headers.get('X-Realm') or CURRENT_REALM)
         req_range, req_since, req_until = range_query(query)
@@ -19486,30 +19943,35 @@ class Handler(BaseHTTPRequestHandler):
             lambda: usage_timeseries(realm=req_realm, range=req_range,
                                      since=req_since, until=req_until,
                                      bucket_seconds=bucket_seconds,
-                                     provider=req_provider),
+                                     provider=req_provider,
+                                     agent=req_agent),
             lambda: usage_timeseries_etag(realm=req_realm, range=req_range,
                                           since=req_since, until=req_until,
                                           bucket_seconds=bucket_seconds,
-                                          provider=req_provider))
+                                          provider=req_provider,
+                                          agent=req_agent))
 
     def _get_usage_perf(self, query):
         if not self._authorized():
             return
+        if _local_requested(query):
+            return self._get_local_usage("perf", query)
         try:
             sample = max(10, min(20000, int((query.get("sample") or ["5000"])[0])))
         except ValueError:
             sample = 5000
         req_realm = query.get('realm', [None])[0] or self.headers.get('X-Realm') or CURRENT_REALM
         req_provider = wb_accounts.provider_filter(self._request_provider(query))
+        req_agent = self._request_agent(query)
         req_range, req_since, req_until = range_query(query)
         return self._json_cached(
             200,
             lambda: perf_stats(sample, realm=req_realm, range=req_range,
                                since=req_since, until=req_until,
-                               provider=req_provider),
+                               provider=req_provider, agent=req_agent),
             lambda: perf_stats_etag(sample, realm=req_realm, range=req_range,
                                     since=req_since, until=req_until,
-                                    provider=req_provider))
+                                    provider=req_provider, agent=req_agent))
 
     def _get_tasks(self, query):
         if not self._authorized():
@@ -22101,6 +22563,15 @@ class Handler(BaseHTTPRequestHandler):
             })
         except Exception as exc:
             wall_ms = int((time.time() - t0) * 1000)
+            # 排队不是账号的错：账号凭证是好的，只是这个模型当前没容量。
+            # 记成账号故障会让好账号被无端冷却，反而更长时间答不上来。
+            if isinstance(exc, wb_qoder_chat.QoderQueuedError):
+                log(f"account test: uid={account.uid[:8]} model={test_model} "
+                    f"wall={wall_ms}ms queued", level="WARN", tag="accounts")
+                return self._json(200, {
+                    "ok": False, "uid": account.uid, "model": test_model,
+                    "status": 0, "error": str(exc)[:300],
+                    "elapsed_ms": wall_ms})
             account.note_error(str(exc)[:80], cooldown=60)
             log(f"account test: uid={account.uid[:8]} model={test_model} "
                 f"wall={wall_ms}ms exc={exc}", level="WARN", tag="accounts")
@@ -23732,6 +24203,9 @@ class GatewayServer(ThreadingHTTPServer):
     request_queue_size = 128
 
 def _serve_forever(args):
+    # 本地会话视图要认出「哪些请求走了本网关」：告诉它本进程听在哪个端口，
+    # 客户端把 base url 指到这个端口的请求就算本项目网关的流量。
+    wb_local.set_gateway_port(args.port)
     try:
         server = GatewayServer((args.host, args.port), Handler)
     except OSError as exc:

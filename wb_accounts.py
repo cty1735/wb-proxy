@@ -319,8 +319,16 @@ def normalize_provider(value):
 
 
 def provider_filter(provider):
-    """provider 参数的归一：None / "all" 表示不过滤，其余按具体提供商过滤。"""
-    if provider in (None, "all"):
+    """provider 参数的归一：None / "all" 表示不过滤，其余按具体提供商过滤。
+
+    "local" 不是网关的提供商，而是看板的「本地」口径（见 wb_local）：走本网关
+    的请求照旧按 provider 分账，没走本网关的请求网关根本看不到。这个值在按网关
+    记账的端点上不能落到默认提供商（那会把 WorkBuddy 的数字当成「本地」给出去），
+    所以一律按「不过滤」处理——真正的本地数据由 /usage/analytics?provider=local
+    单独给出。
+    """
+    text = str(provider or "").strip().lower()
+    if text in ("", "all", "local"):
         return None
     return normalize_provider(provider)
 
