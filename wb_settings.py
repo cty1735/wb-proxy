@@ -2220,6 +2220,99 @@ def find_proxy_slot(accounts_dir, slot_id):
 
 
 # ---------------------------------------------------------------------------
+# 模型的启用 / 停用
+# ---------------------------------------------------------------------------
+# 面板「网关模型清单」里每行的开关。停用的模型：
+#   * 不再出现在 /v1/models 的响应里 —— agent / 客户端的选择器里看不到它；
+#   * 直接点名调用也会被网关拒绝（见 wb_proxy.disabled_model_message），
+#     否则「关掉了却还能用」只是个摆设。
+# 作用域是「提供商 + 版本」：同一个 id 在国际版 / 国内版目录里是两条独立记录，
+# 关掉国际版的 deepseek 不该连带关掉国内版。鸡蛋（egg）的目录不分区域，它的
+# realm 恒为空，所以面板在鸡蛋视图里关一次就整条车道生效。
+DISABLED_MODELS_KEY = "disabled_models"
+
+
+def _disabled_models_scope(provider, realm):
+    provider = str(provider or "").strip().lower() or "workbuddy"
+    if provider == "egg":
+        return "egg:"
+    realm = str(realm or "").strip().lower()
+    if realm not in ("intl", "cn"):
+        realm = ""
+    return "%s:%s" % (provider, realm)
+
+
+def _clean_disabled_table(raw):
+    table = {}
+    if not isinstance(raw, dict):
+        return table
+    for scope, ids in raw.items():
+        scope = str(scope or "").strip().lower()
+        if not scope:
+            continue
+        values = ids if isinstance(ids, (list, tuple, set)) else []
+        clean = []
+        for item in values:
+            mid = str(item or "").strip()
+            if mid and mid not in clean:
+                clean.append(mid)
+        if clean:
+            table[scope] = clean
+    return table
+
+
+def disabled_models(accounts_dir, provider=None, realm=None):
+    """停用的模型 id。
+
+    不给 provider 时返回整张表 {scope: [id, ...]}（面板导出 / 调试用），
+    给了就只返回该作用域的列表。
+    """
+    table = _clean_disabled_table(load(accounts_dir).get(DISABLED_MODELS_KEY))
+    if provider is None:
+        return table
+    return list(table.get(_disabled_models_scope(provider, realm)) or [])
+
+
+def is_model_disabled(accounts_dir, model, provider=None, realm=None):
+    """这个模型是否已被面板停用（按提供商 + 版本判断）。"""
+    mid = str(model or "").strip()
+    if not mid:
+        return False
+    return mid in disabled_models(accounts_dir, provider, realm)
+
+
+def set_model_disabled(accounts_dir, model, disabled, provider=None, realm=None):
+    """开 / 关一个模型，返回该作用域停用后的完整 id 列表。
+
+    写的是 settings.json 的 disabled_models 一张表；关掉最后一个模型时把空
+    作用域删掉，免得文件里留一堆 "xx:[]"。
+    """
+    mid = str(model or "").strip()
+    if not mid:
+        raise ValueError("model is required")
+    scope = _disabled_models_scope(provider, realm)
+    with _lock:
+        data = load(accounts_dir)
+        table = _clean_disabled_table(data.get(DISABLED_MODELS_KEY))
+        ids = list(table.get(scope) or [])
+        if disabled:
+            if mid not in ids:
+                ids.append(mid)
+        else:
+            ids = [item for item in ids if item != mid]
+        if ids:
+            table[scope] = ids
+        else:
+            table.pop(scope, None)
+        if table:
+            data[DISABLED_MODELS_KEY] = table
+        else:
+            data.pop(DISABLED_MODELS_KEY, None)
+        save(accounts_dir, data)
+    return ids
+
+
+# ---------------------------------------------------------------------------
 # 鸡蛋车道的出口代理
 # ---------------------------------------------------------------------------
 # 鸡蛋的免费车道（Zen / Kilo）和自建供应商池原先是**直连**的：账号那套代理槽

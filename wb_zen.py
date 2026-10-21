@@ -971,7 +971,13 @@ def model_entry_meta(model):
     # 免费与否：自建池里也有上游明确免费的模型（id 结尾 :free / /free，或
     # 上游报 0 价）。这类模型不消耗额度，别说成「按供应商计费」。
     free = bool(model.get("free"))
-    if kind == "pool":
+    if kind == "platform":
+        if free:
+            credits_note = ("平台账号池「%s」里的免费模型：不消耗额度" % label)
+        else:
+            credits_note = ("平台账号池「%s」的模型：登录态由网关保管，"
+                            "额度按该平台账号结算" % label)
+    elif kind == "pool":
         if free:
             credits_note = ("自建供应商池「%s」里的免费模型（上游标 :free）："
                             "不消耗额度" % label)

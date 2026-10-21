@@ -19,6 +19,7 @@ ROOT = os.path.dirname(HERE)
 
 PY_SUITES = [
     "_test_egg_pools.py",
+    "_test_egg_platforms.py",
     "_test_egg_zen.py",
     "_test_egg_e2e.py",
     "_test_egg_anthropic.py",

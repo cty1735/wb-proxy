@@ -45,6 +45,11 @@ const document = {
     if (sel && sel.indexOf('.egg-pool-pick-list') >= 0) return PICK_LIST;
     if (sel && sel.indexOf('.egg-pool-pick-shown') >= 0) return PICK_HINT;
     if (sel && sel.indexOf('.egg-pool-pick-count') >= 0) return PICK_COUNT;
+    // 平台账号池的模型挑选器（同一套筛选逻辑）。
+    if (sel && sel.indexOf('.egg-platform-models') >= 0) return PLAT_LIST;
+    if (sel && sel.indexOf('.egg-platform-pick-shown') >= 0) return PLAT_HINT;
+    if (sel && sel.indexOf('.egg-platform-pick-count') >= 0) return PLAT_COUNT;
+    if (sel && sel.indexOf('.egg-platform-pick-foot') >= 0) return PLAT_FOOT;
     return null;
   },
   querySelectorAll(sel) {
@@ -68,6 +73,13 @@ const document = {
 let PICK_LIST = null;
 let PICK_HINT = makeEl('eggPoolPickHint');
 let PICK_COUNT = makeEl('eggPoolPickCount');
+// 平台账号池的模型挑选器：同样一套筛选（全选 / 只看免费 / 搜索）。
+let PLAT_LIST = null;
+let PLAT_HINT = makeEl('eggPlatformPickHint');
+let PLAT_COUNT = makeEl('eggPlatformPickCount');
+let PLAT_FOOT = makeEl('eggPlatformPickFoot');
+PLAT_FOOT.setAttribute = function (n, v) { this['_' + n] = v; };
+PLAT_FOOT.getAttribute = function (n) { return this['_' + n] || null; };
 // 造一份「模型条目列表」：每条有 data-mid / data-free 与一个复选框。
 function makePickList(items) {
   const rows = items.map(it => {
@@ -91,6 +103,35 @@ function makePickList(items) {
   return {
     querySelectorAll(sel) {
       if (sel === '.egg-pool-pick-item') return rows.map(r => r.label);
+      if (sel === 'input[type=checkbox]') return rows.map(r => r.input);
+      return [];
+    },
+  };
+}
+// 平台模型挑选器的 DOM 桩：条目带 data-mid / data-free，隐藏靠 style.display。
+function makePlatformList(items) {
+  const rows = items.map(it => {
+    const input = {
+      checked: !!it.checked,
+      getAttribute(n) { return n === 'data-pool' ? it.pool : null; },
+    };
+    const label = {
+      style: {},
+      getAttribute(n) {
+        if (n === 'data-mid') return it.mid;
+        if (n === 'data-free') return it.free ? '1' : null;
+        return null;
+      },
+      classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+      querySelectorAll(sel) { return sel === 'input[type=checkbox]' ? [input] : []; },
+    };
+    input.closest = sel => (sel === '.egg-platform-model' ? label : null);
+    return { label, input };
+  });
+  return {
+    rows,
+    querySelectorAll(sel) {
+      if (sel === '.egg-platform-model') return rows.map(r => r.label);
       if (sel === 'input[type=checkbox]') return rows.map(r => r.input);
       return [];
     },
@@ -133,18 +174,27 @@ const want = [
   'renderEggPoolFormPicker', 'eggPoolPickerHtml', 'toggleEggPoolModel',
   'eggPoolSelectAll', 'onEggPoolFilterChange', 'editEggPool',
   'openEggPoolPicker', 'eggPoolPickerFilter', 'eggModelIsFree',
+  'renderEggPlatforms', 'eggPlatformPool', 'eggPlatformDef',
+  'eggPlatformBalanceText', 'eggPlatformTokenText', 'eggPlatformExpiryText',
+  'eggPlatformCardHtml', 'eggPlatformAccountsHtml', 'eggPlatformModelsHtml',
+  'toggleEggPlatformPanel', 'applyEggPlatformPools',
+  'eggPlatformPickerFilter', 'eggPlatformSelectAll', 'eggPlatformToggleModel',
 ];
 const setters = [
   'MODELS_DATA', 'EGG_POOLS', 'EGG_POOL_PRESETS', 'EGG_POOL_FORM',
   'EGG_POOL_CARD', 'EGG_POOL_FILTER', 'EGG_POOL_PICK_FILTER', 'currentProvider', 'esc',
   'fmtCatalogStamp', 'toast', 'getJSON', 'postJSON', 'loadModels',
+  'EGG_PLATFORMS', 'EGG_PLATFORM_DEFS', 'EGG_PLATFORM_OPEN',
+  'EGG_PLATFORM_PICK', 'EGG_PLATFORM_PICK_FILTER',
 ].map(n => "  try{ if(o." + n + " !== undefined) " + n + " = o." + n + "; }catch(e){}");
 const exportSrc = want.map(n => n + ': ' + n).join(',');
 const ctxSrc = vm.runInContext(
   '(function(){' + main + '\n;return {' + exportSrc + ', __set: function(o){' +
   setters.join('\n') +
   '}, __state: function(){ return {EGG_POOL_FORM: EGG_POOL_FORM,'
-  + ' EGG_POOL_CARD: EGG_POOL_CARD, EGG_POOL_FILTER: EGG_POOL_FILTER}; }'
+  + ' EGG_POOL_CARD: EGG_POOL_CARD, EGG_POOL_FILTER: EGG_POOL_FILTER,'
+  + ' EGG_PLATFORM_PICK: EGG_PLATFORM_PICK,'
+  + ' EGG_PLATFORM_PICK_FILTER: EGG_PLATFORM_PICK_FILTER}; }'
   + '}})()', ctx);
 const api = ctxSrc;
 if (!api) { console.log('could not extract functions'); process.exit(1); }
@@ -340,6 +390,102 @@ check('全选不含藏起来的付费模型',
 api.eggPoolPickerFilter('card', 'nemotron', false);
 check('按 id 搜索',
   PICK_HINT.textContent.indexOf('显示 1 / 4') >= 0, PICK_HINT.textContent);
+
+// 11. 平台账号池卡片
+const platformPool = {
+  id: 'pool-ca', kind: 'platform', platform: 'codearts',
+  name: '华为云 CodeArts', platform_label: '华为云 CodeArts',
+  enabled: true, account_count: 1, count: 2,
+  accounts: [{ id: 'acct-1', label: '主账号', email: 'a@example.com',
+               enabled: true, status: 'ok', expires_in: 7200 }],
+  models: ['model-a', 'model-b'],
+  catalog: [{ id: 'model-a', free: true }, { id: 'model-b' }],
+  balance: { daily_used: 12000, daily_limit: 1000000 },
+  claim: { at: 1750000000, msg: '已领取' },
+  can_balance: true, can_claim: true, login_label: '浏览器登录',
+};
+api.__set({
+  EGG_PLATFORM_DEFS: [{
+    id: 'codearts', name: '华为云 CodeArts', login_label: '浏览器登录',
+    hint: '浏览器登录后自动回调本机', balance: true, claim: true,
+    home: 'https://codearts.huaweicloud.com/portal',
+  }],
+  EGG_PLATFORMS: [platformPool],
+  EGG_PLATFORM_OPEN: {},
+  EGG_PLATFORM_PICK: {},
+  EGG_PLATFORM_PICK_FILTER: {},
+});
+api.applyEggPlatformPools([platformPool]);
+api.renderEggPoolList();
+check('平台池合并不丢自建池',
+  document.getElementById('eggPoolList').innerHTML.indexOf('NVIDIA NIM') >= 0,
+  document.getElementById('eggPoolList').innerHTML.slice(0, 200));
+api.renderEggPlatforms();
+const plist = document.getElementById('eggPlatformList');
+check('平台卡片有平台名', plist.innerHTML.indexOf('华为云 CodeArts') >= 0,
+  plist.innerHTML.slice(0, 300));
+check('平台卡片有登录方式', plist.innerHTML.indexOf('浏览器登录') >= 0);
+check('平台卡片有账号数', plist.innerHTML.indexOf('账号') >= 0
+  && plist.innerHTML.indexOf('>1<') >= 0);
+check('平台卡片有模型数', plist.innerHTML.indexOf('模型') >= 0
+  && plist.innerHTML.indexOf('>2<') >= 0);
+check('平台卡片有余额', plist.innerHTML.indexOf('1.2 万') >= 0, plist.innerHTML);
+['添加账号', '续期', '刷新余额', '一键领取', '刷新模型'].forEach(label => {
+  check('平台卡片有「' + label + '」', plist.innerHTML.indexOf('>' + label + '<') >= 0);
+});
+check('平台卡片有账号展开', plist.innerHTML.indexOf('账号 (1)') >= 0);
+check('平台卡片有模型展开', plist.innerHTML.indexOf('模型 (2)') >= 0);
+
+api.toggleEggPlatformPanel({ dataset: { platform: 'codearts' } }, 'accounts');
+check('展开账号列表', plist.innerHTML.indexOf('主账号') >= 0, plist.innerHTML);
+check('账号列表带到期提示', plist.innerHTML.indexOf('2 小时后到期') >= 0);
+check('账号列表带删除', plist.innerHTML.indexOf('>删除<') >= 0);
+
+api.toggleEggPlatformPanel({ dataset: { platform: 'codearts' } }, 'models');
+check('展开模型列表', plist.innerHTML.indexOf('model-a') >= 0
+  && plist.innerHTML.indexOf('model-b') >= 0, plist.innerHTML);
+check('模型列表标免费', plist.innerHTML.indexOf('免费') >= 0);
+check('模型列表带保存', plist.innerHTML.indexOf('保存选择') >= 0);
+// 挑选器：搜索 / 只看免费 / 全选
+check('模型列表有搜索框', plist.innerHTML.indexOf('搜索模型 ID') >= 0);
+check('模型列表有「只看免费」', plist.innerHTML.indexOf('只看免费') >= 0);
+check('模型列表有全选', plist.innerHTML.indexOf('>全选<') >= 0);
+check('模型列表有全不选', plist.innerHTML.indexOf('>全不选<') >= 0);
+
+// 平台挑选器的筛选（DOM 桩：三条模型，只有一条免费）
+PLAT_LIST = makePlatformList([
+  { mid: 'model-a', free: true, checked: true },
+  { mid: 'model-b', free: false, checked: false },
+  { mid: 'model-c', free: false, checked: false },
+]);
+PLAT_HINT.textContent = '';
+api.eggPlatformPickerFilter('pool-ca', '', true);
+check('平台筛选：只看免费',
+  PLAT_HINT.textContent.indexOf('显示 1 / 3') >= 0, PLAT_HINT.textContent);
+check('平台筛选：免费计数',
+  PLAT_HINT.textContent.indexOf('免费 1') >= 0, PLAT_HINT.textContent);
+api.eggPlatformPickerFilter('pool-ca', 'model-c', false);
+check('平台筛选：按 id 搜索',
+  PLAT_HINT.textContent.indexOf('显示 1 / 3') >= 0, PLAT_HINT.textContent);
+// 全选只作用于看得见的那些：这时只看得见 model-c
+api.eggPlatformSelectAll('pool-ca', true);
+const plistState = api.__state().EGG_PLATFORM_PICK['pool-ca'];
+check('平台全选只选看得见的',
+  plistState.ids.indexOf('model-c') >= 0
+  && plistState.ids.indexOf('model-b') < 0, plistState.ids);
+api.eggPlatformPickerFilter('pool-ca', '', false);
+check('平台筛选：清空筛选后全显示',
+  PLAT_HINT.textContent.indexOf('显示 3 / 3') >= 0, PLAT_HINT.textContent);
+PLAT_LIST = null;
+
+check('余额格式：日额度',
+  api.eggPlatformBalanceText({ balance: { daily_used: 12000, daily_limit: 1000000 } })
+    === '1.2 万 / 100 万 今日 Tokens',
+  api.eggPlatformBalanceText({ balance: { daily_used: 12000, daily_limit: 1000000 } }));
+check('余额格式：无数据',
+  api.eggPlatformBalanceText({ balance: {} }) === '—');
+check('到期格式：分钟',
+  api.eggPlatformExpiryText({ expires_in: 120 }) === '2 分钟后到期');
 
 console.log('');
 if (FAIL) { console.log('FAILED: ' + FAIL); process.exit(1); }

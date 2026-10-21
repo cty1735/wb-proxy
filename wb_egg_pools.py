@@ -35,6 +35,17 @@ PROTOCOL_OPENAI = "openai"
 PROTOCOL_ANTHROPIC = "anthropic"
 PROTOCOLS = (PROTOCOL_OPENAI, PROTOCOL_ANTHROPIC)
 
+#: 池子的两种来源：
+#: * ``api``      —— 操作者自己填 Base URL + API Key（本文件原来的形态）；
+#: * ``platform`` —— 平台账号池：浏览器 / 设备码登录，账号与凭据由
+#:                   ``wb_platforms`` 管，请求也由它构造。
+KIND_API = "api"
+KIND_PLATFORM = "platform"
+KINDS = (KIND_API, KIND_PLATFORM)
+
+#: 一个平台池最多挂多少个账号。
+MAX_PLATFORM_ACCOUNTS = 20
+
 #: 协议下拉里的中文名（面板用）。
 PROTOCOL_LABELS = {
     PROTOCOL_OPENAI: "OpenAI 兼容",
@@ -276,12 +287,77 @@ def _mint_id():
     return "pool-%s" % os.urandom(8).hex()
 
 
+def _clean_kind(value, platform=""):
+    text = str(value or "").strip().lower()
+    if text == KIND_PLATFORM or (not text and platform):
+        return KIND_PLATFORM
+    return KIND_API
+
+
+def _platform_defaults(platform):
+    try:
+        import wb_platforms
+        return wb_platforms.defaults(platform)
+    except Exception:
+        return {}
+
+
+def _clean_accounts(value):
+    """平台账号列表：只留认得出的账号，凭据字段原样保留。"""
+    if not isinstance(value, list):
+        return []
+    out = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        account_id = str(item.get("id") or "").strip()
+        if not account_id or account_id in seen:
+            continue
+        seen.add(account_id)
+        row = dict(item)
+        row["id"] = account_id
+        row["enabled"] = item.get("enabled", True) is not False
+        row["label"] = str(item.get("label") or "").strip()
+        row["status"] = str(item.get("status") or "ok").strip() or "ok"
+        row["last_error"] = str(item.get("last_error") or "").strip()
+        for key in ("created_at", "last_used", "expires_at"):
+            try:
+                row[key] = float(item.get(key) or 0.0)
+            except (TypeError, ValueError):
+                row[key] = 0.0
+        out.append(row)
+        if len(out) >= MAX_PLATFORM_ACCOUNTS:
+            break
+    return out
+
+
+def _clean_meta(value):
+    if not isinstance(value, dict):
+        return {}
+    out = {}
+    for key, item in value.items():
+        if isinstance(key, str) and len(out) < 40:
+            out[key] = item
+    return out
+
+
 def _normalize(entry):
     """把一条落盘的记录收拾成干净形态；没法用的返回 None。"""
     if not isinstance(entry, dict):
         return None
+    platform = str(entry.get("platform") or "").strip().lower()
+    kind = _clean_kind(entry.get("kind"), platform)
     name = str(entry.get("name") or "").strip()
     base_url = _clean_base_url(entry.get("base_url"))
+    if kind == KIND_PLATFORM:
+        if not platform:
+            return None
+        info = _platform_defaults(platform)
+        if not name:
+            name = str(info.get("name") or platform)
+        if not base_url:
+            base_url = _clean_base_url(info.get("base_url"))
     if not name or not base_url:
         return None
     pool_id = str(entry.get("id") or "").strip()
@@ -312,6 +388,8 @@ def _normalize(entry):
         catalog_at = 0.0
     return {
         "id": pool_id,
+        "kind": kind,
+        "platform": platform if kind == KIND_PLATFORM else "",
         "name": name,
         "protocol": _clean_protocol(entry.get("protocol")),
         "base_url": base_url,
@@ -320,6 +398,8 @@ def _normalize(entry):
         "models": models,
         "catalog": catalog,
         "catalog_at": catalog_at,
+        "accounts": _clean_accounts(entry.get("accounts")),
+        "meta": _clean_meta(entry.get("meta")),
     }
 
 
@@ -333,14 +413,26 @@ def _is_free_id(model_id):
     return text.endswith(":free") or text.endswith("/free") or text == "free"
 
 
+def _is_free_namespace(model_id):
+    """免费车道常用**命名空间前缀**：``cline-free/xxx``、``vendor-free/xxx``。
+
+    这类 id 结尾不是 ``:free``，光看后缀认不出来 —— 平台适配器一般会自己
+    标 free，但已落盘的旧目录要在这里补认。
+    """
+    head = str(model_id or "").strip().lower().split("/", 1)[0]
+    return head.endswith("-free") or head.endswith("_free")
+
+
 def _clean_model(model_id, row=None):
     """把上游的模型行收拾成清单条目（字段缺失就留空，不猜）。"""
     row = row if isinstance(row, dict) else {}
     name = str(row.get("name") or row.get("display_name") or "").strip()
     if not name:
         name = model_id
-    context = _int(row.get("context_length") or row.get("context_window") or 0)
-    output = _int(row.get("max_output_tokens") or row.get("max_completion_tokens") or 0)
+    context = _int(row.get("context_length") or row.get("context_window")
+                   or row.get("context") or 0)
+    output = _int(row.get("max_output_tokens") or row.get("max_completion_tokens")
+                  or row.get("output") or 0)
     top = row.get("top_provider")
     if isinstance(top, dict):
         if not context:
@@ -365,7 +457,7 @@ def _clean_model(model_id, row=None):
     # 免费与否：id 结尾的 :free / /free 是一手标记；上游直接报 0 价也算
     # （OpenRouter 的免费模型就是这样标的）。标错了会让面板把免费模型
     # 说成「按供应商计费」，或者反之。
-    free = _is_free_id(model_id)
+    free = _is_free_id(model_id) or _is_free_namespace(model_id) or row.get("free") is True
     pricing = row.get("pricing")
     if isinstance(pricing, dict) and pricing:
         pin = pricing.get("prompt")
@@ -376,7 +468,7 @@ def _clean_model(model_id, row=None):
                     free = True
             except (TypeError, ValueError):
                 pass
-    return {
+    row_out = {
         "id": model_id,
         "name": name,
         "context": context,
@@ -386,6 +478,19 @@ def _clean_model(model_id, row=None):
         "tools": True,
         "free": free,
     }
+    # 平台池的模型要记住「走哪条通道」（CodeArts 的 benefit / credit），
+    # 构造请求时按它决定是否带 maas_type 头。
+    channel = str(row.get("channel") or "").strip()
+    if channel:
+        row_out["channel"] = channel
+    platform = str(row.get("platform") or "").strip()
+    if platform:
+        row_out["platform"] = platform
+    # 平台池的模型对外 id 带平台前缀，upstream_id 是发给上游的原始 id。
+    upstream_id = str(row.get("upstream_id") or "").strip()
+    if upstream_id:
+        row_out["upstream_id"] = upstream_id
+    return row_out
 
 
 def _int(value):
@@ -400,10 +505,18 @@ def _int(value):
 # ---------------------------------------------------------------------------
 
 def pools():
-    """全部池子（含明文 Key 与上游目录，给服务端自己用）。"""
+    """全部池子（含明文 Key / 账号凭据与上游目录，给服务端自己用）。"""
     with _lock:
-        return [dict(p, catalog=[dict(m) for m in p["catalog"]])
-                for p in _state["pools"]]
+        return [_full_copy(p) for p in _state["pools"]]
+
+
+def _full_copy(pool):
+    out = dict(pool)
+    out["catalog"] = [dict(m) for m in pool.get("catalog") or []]
+    out["models"] = list(pool.get("models") or [])
+    out["accounts"] = [dict(a) for a in pool.get("accounts") or []]
+    out["meta"] = dict(pool.get("meta") or {})
+    return out
 
 
 def _record(pool):
@@ -411,9 +524,12 @@ def _record(pool):
 
     请求热路径上要读池子（Base URL / Key / 协议），而上游目录可能有上千行，
     每个请求都拷一遍纯属白烧 CPU —— 目录只有面板的「挑选模型」与刷新要用。
+    平台池要把账号带上（请求要挑账号、续期），账号数量很少，拷贝不心疼。
     """
     return {
         "id": pool["id"],
+        "kind": pool.get("kind") or KIND_API,
+        "platform": pool.get("platform") or "",
         "name": pool["name"],
         "protocol": pool["protocol"],
         "base_url": pool["base_url"],
@@ -422,6 +538,8 @@ def _record(pool):
         "models": list(pool["models"]),
         "catalog": [],
         "catalog_at": pool["catalog_at"],
+        "accounts": [dict(a) for a in pool.get("accounts") or []],
+        "meta": dict(pool.get("meta") or {}),
     }
 
 
@@ -430,7 +548,7 @@ def get(pool_id):
     with _lock:
         for pool in _state["pools"]:
             if pool["id"] == pid:
-                return dict(pool, catalog=[dict(m) for m in pool["catalog"]])
+                return _full_copy(pool)
     return None
 
 
@@ -450,6 +568,28 @@ def find_by_model(model_id):
         for pool in _state["pools"]:
             if pool["id"] == pool_id:
                 return _record(pool)
+    return None
+
+
+def platform_model_info(pool_id, model_id):
+    """平台池里某个对外模型 id 的信息：{upstream_id, channel}。
+
+    请求热路径拿到的池子是「浅副本」（不带上游目录），但平台请求要知道
+    走哪条通道（CodeArts 的 benefit / credit）、发给上游的原始 id 是
+    什么 —— 这里按 id 查一次就行，不用把整份目录拷一遍。
+    """
+    pid = str(pool_id or "").strip()
+    mid = str(model_id or "").strip()
+    if not pid or not mid:
+        return None
+    with _lock:
+        for pool in _state["pools"]:
+            if pool["id"] != pid:
+                continue
+            for row in pool.get("catalog") or []:
+                if isinstance(row, dict) and row.get("id") == mid:
+                    return {"upstream_id": row.get("upstream_id") or mid,
+                            "channel": row.get("channel") or ""}
     return None
 
 
@@ -494,6 +634,8 @@ def pool_summaries():
     with _lock:
         return [{
             "id": p["id"],
+            "kind": p.get("kind") or KIND_API,
+            "platform": p.get("platform") or "",
             "name": p["name"],
             "protocol": p["protocol"],
             "base_url": p["base_url"],
@@ -501,6 +643,7 @@ def pool_summaries():
             "count": len(p["models"]),
             "catalog_count": len(p["catalog"]),
             "catalog_at": p["catalog_at"],
+            "account_count": len(p.get("accounts") or []),
             "shadowed": shadowed_ids(p),
         } for p in _state["pools"]]
 
@@ -516,7 +659,7 @@ def mask_key(key):
 
 
 def public_pools():
-    """给面板的视图：Key 打了码，catalog 原样带上（面板要显示模型清单）。"""
+    """给面板的视图：Key / 账号凭据打码，catalog 原样带上。"""
     out = []
     for pool in pools():
         pool["api_key_masked"] = mask_key(pool.get("api_key"))
@@ -525,8 +668,48 @@ def public_pools():
         pool["catalog_count"] = len(pool.get("catalog") or [])
         # 顶掉了内置免费源的模型 id（面板要提醒：选它就改走本池）
         pool["shadowed"] = shadowed_ids(pool)
+        if pool.get("kind") == KIND_PLATFORM:
+            accounts = [a for a in pool.get("accounts") or []
+                        if isinstance(a, dict)]
+            pool["accounts"] = [_public_account(a) for a in accounts]
+            pool["account_count"] = len(accounts)
+            pool["enabled_account_count"] = sum(
+                1 for a in accounts if a.get("enabled", True) is not False)
+            info = {}
+            try:
+                import wb_platforms
+                info = wb_platforms.platform_def(pool.get("platform")) or {}
+            except Exception:
+                info = {}
+            pool["platform_label"] = info.get("name") or pool.get("platform")
+            pool["platform_short"] = info.get("short") or pool.get("platform")
+            pool["platform_home"] = info.get("home") or ""
+            pool["login_mode"] = info.get("login") or ""
+            pool["login_label"] = info.get("login_label") or "登录"
+            pool["can_balance"] = bool(info.get("balance"))
+            pool["can_claim"] = bool(info.get("claim"))
+            meta = pool.get("meta") or {}
+            pool["balance"] = meta.get("balance") or {}
+            pool["claim"] = meta.get("claim") or {}
         out.append(pool)
     return out
+
+
+def _public_account(account):
+    """账号的面板视图（不带任何凭据）。"""
+    try:
+        import wb_platforms
+        return wb_platforms.account_public(account)
+    except Exception:
+        return {
+            "id": account.get("id") or "",
+            "label": account.get("label") or "",
+            "email": account.get("email") or "",
+            "enabled": account.get("enabled", True) is not False,
+            "status": account.get("status") or "ok",
+            "last_error": account.get("last_error") or "",
+            "expires_at": account.get("expires_at") or 0,
+        }
 
 
 def catalog_entries():
@@ -548,24 +731,33 @@ def catalog_entries():
                 continue
             seen.add(mid)
             meta = by_id.get(mid) or {}
+            platform = pool.get("kind") == KIND_PLATFORM
+            if platform:
+                blurb = ("平台账号池「%s」的模型：登录态由网关保管，"
+                         "额度按该平台账号结算" % pool["name"])
+            else:
+                blurb = ("自建供应商「%s」的模型（%s）：%s"
+                         % (pool["name"],
+                            PROTOCOL_LABELS.get(pool["protocol"],
+                                                pool["protocol"]),
+                            pool["base_url"]))
             entries.append({
                 "id": mid,
                 "name": meta.get("name") or mid,
                 "source": pool["id"],
-                "sourceKind": "pool",
+                "sourceKind": "platform" if platform else "pool",
                 "sourceLabel": pool["name"],
+                "platform": pool.get("platform") or "",
                 "context": meta.get("context") or 0,
                 "output": meta.get("output") or 0,
                 "vision": bool(meta.get("vision")),
                 "reasoning": bool(meta.get("reasoning")),
                 "tools": True,
                 # 免费与否：目录里存的是上次拉的结果（可能没有 free 字段），
-                # 兜底看 id 结尾的 :free / /free。
-                "free": bool(meta.get("free")) or _is_free_id(mid),
-                "blurb": "自建供应商「%s」的模型（%s）：%s"
-                         % (pool["name"], PROTOCOL_LABELS.get(pool["protocol"],
-                                                            pool["protocol"]),
-                            pool["base_url"]),
+                # 兜底看 id 结尾的 :free / /free 与免费命名空间前缀。
+                "free": bool(meta.get("free")) or _is_free_id(mid)
+                or _is_free_namespace(mid),
+                "blurb": blurb,
             })
     return entries
 
@@ -581,26 +773,38 @@ def upsert(payload):
     pool_id = str(payload.get("id") or "").strip()
     name = str(payload.get("name") or "").strip()
     base_url = _clean_base_url(payload.get("base_url"))
-    if not name:
-        raise PoolError(400, "供应商名称不能为空")
-    if not base_url:
-        raise PoolError(400, "Base URL 不能为空")
-    if not base_url.lower().startswith(("http://", "https://")):
-        raise PoolError(400, "Base URL 必须以 http:// 或 https:// 开头")
-    protocol = _clean_protocol(payload.get("protocol"))
+    platform = str(payload.get("platform") or "").strip().lower()
+    kind = _clean_kind(payload.get("kind"), platform)
     with _lock:
         existing = None
         for pool in _state["pools"]:
             if pool["id"] == pool_id:
                 existing = pool
                 break
+        if existing is not None:
+            platform = platform or str(existing.get("platform") or "")
+            if "kind" not in payload and "platform" not in payload:
+                kind = existing.get("kind") or KIND_API
+            name = name or existing["name"]
+            base_url = base_url or existing["base_url"]
+        if kind == KIND_PLATFORM:
+            info = _platform_defaults(platform)
+            if not info:
+                raise PoolError(400, "不支持的平台：%s" % (platform or "（空）"))
+            name = name or str(info.get("name") or platform)
+            base_url = base_url or _clean_base_url(info.get("base_url"))
+        if not name:
+            raise PoolError(400, "供应商名称不能为空")
+        if not base_url:
+            raise PoolError(400, "Base URL 不能为空")
+        if not base_url.lower().startswith(("http://", "https://")):
+            raise PoolError(400, "Base URL 必须以 http:// 或 https:// 开头")
         if existing is None:
             if len(_state["pools"]) >= MAX_POOLS:
                 raise PoolError(400, "供应商数量已达上限（%d 个）" % MAX_POOLS)
             pool_id = _mint_id()
-        else:
-            name = name or existing["name"]
-            base_url = base_url or existing["base_url"]
+        protocol = _clean_protocol(payload.get("protocol")
+                                   or (existing or {}).get("protocol"))
         # Key：留空表示「沿用已存的」—— 编辑时面板不回显明文，空着不改它。
         api_key = str(payload.get("api_key") or "").strip()
         if not api_key and existing is not None:
@@ -636,10 +840,18 @@ def upsert(payload):
                     models.append(mid)
                 if len(models) >= MAX_SELECTED_MODELS:
                     break
+        accounts = existing.get("accounts") if existing else []
+        if isinstance(payload.get("accounts"), list):
+            accounts = _clean_accounts(payload["accounts"])
+        meta = existing.get("meta") if existing else {}
+        if isinstance(payload.get("meta"), dict):
+            meta = _clean_meta(payload["meta"])
         entry = _normalize({
-            "id": pool_id, "name": name, "protocol": protocol,
+            "id": pool_id, "kind": kind, "platform": platform,
+            "name": name, "protocol": protocol,
             "base_url": base_url, "api_key": api_key, "enabled": enabled,
             "models": models, "catalog": catalog, "catalog_at": catalog_at,
+            "accounts": accounts, "meta": meta,
         })
         if entry is None:
             raise PoolError(400, "供应商配置不完整")
@@ -672,7 +884,7 @@ def set_enabled(pool_id, enabled):
             if pool["id"] == pid:
                 pool["enabled"] = bool(enabled)
                 _save()
-                return dict(pool)
+                return _full_copy(pool)
     return None
 
 
@@ -693,7 +905,206 @@ def set_models(pool_id, models):
             if pool["id"] == pid:
                 pool["models"] = cleaned
                 _save()
-                return dict(pool)
+                return _full_copy(pool)
+    raise PoolError(404, "供应商不存在")
+
+
+# ---------------------------------------------------------------------------
+# 平台账号池
+# ---------------------------------------------------------------------------
+
+def platform_pool(platform):
+    """按平台找池子（同一平台只维护一个池子）。"""
+    pid = str(platform or "").strip().lower()
+    if not pid:
+        return None
+    with _lock:
+        for pool in _state["pools"]:
+            if (pool.get("kind") == KIND_PLATFORM
+                    and pool.get("platform") == pid):
+                return _full_copy(pool)
+    return None
+
+
+def ensure_platform_pool(platform):
+    """取这个平台的池子；没有就按默认值建一个。"""
+    pool = platform_pool(platform)
+    if pool is not None:
+        return pool
+    try:
+        import wb_platforms
+        info = wb_platforms.defaults(platform)
+    except Exception as exc:
+        raise PoolError(400, "不支持的平台：%s（%s）" % (platform, exc))
+    entry = upsert({
+        "kind": KIND_PLATFORM,
+        "platform": platform,
+        "name": info["name"],
+        "protocol": info["protocol"],
+        "base_url": info["base_url"],
+        "enabled": True,
+    })
+    _log("egg pools: 新建平台池 %s" % entry["name"])
+    return entry
+
+
+def add_platform_account(pool_id, account):
+    """把一个登录成功的账号放进池子（同 id 覆盖，不重复添加）。"""
+    if not isinstance(account, dict) or not str(account.get("id") or "").strip():
+        raise PoolError(400, "账号数据不完整")
+    pid = str(pool_id or "").strip()
+    with _lock:
+        for pool in _state["pools"]:
+            if pool["id"] != pid:
+                continue
+            accounts = list(pool.get("accounts") or [])
+            row = dict(account)
+            for index, item in enumerate(accounts):
+                if item.get("id") == row.get("id"):
+                    accounts[index] = row
+                    break
+            else:
+                if len(accounts) >= MAX_PLATFORM_ACCOUNTS:
+                    raise PoolError(400, "账号数量已达上限（%d 个）"
+                                    % MAX_PLATFORM_ACCOUNTS)
+                accounts.append(row)
+            pool["accounts"] = _clean_accounts(accounts)
+            _save()
+            return _full_copy(pool)
+    raise PoolError(404, "平台池不存在")
+
+
+def update_platform_account(pool_id, account_id, account):
+    """按 id 更新一个账号（续期 / 状态变化时用）。"""
+    pid = str(pool_id or "").strip()
+    aid = str(account_id or "").strip()
+    if not pid or not aid:
+        return None
+    with _lock:
+        for pool in _state["pools"]:
+            if pool["id"] != pid:
+                continue
+            accounts = list(pool.get("accounts") or [])
+            for index, item in enumerate(accounts):
+                if item.get("id") == aid:
+                    accounts[index] = dict(account or {}, id=aid)
+                    pool["accounts"] = _clean_accounts(accounts)
+                    _save()
+                    return _full_copy(pool)
+    return None
+
+
+def remove_platform_account(pool_id, account_id):
+    pid = str(pool_id or "").strip()
+    aid = str(account_id or "").strip()
+    with _lock:
+        for pool in _state["pools"]:
+            if pool["id"] != pid:
+                continue
+            before = len(pool.get("accounts") or [])
+            pool["accounts"] = [a for a in pool.get("accounts") or []
+                                if a.get("id") != aid]
+            if len(pool["accounts"]) == before:
+                return False
+            _save()
+            return True
+    return False
+
+
+def set_platform_account_enabled(pool_id, account_id, enabled):
+    pid = str(pool_id or "").strip()
+    aid = str(account_id or "").strip()
+    with _lock:
+        for pool in _state["pools"]:
+            if pool["id"] != pid:
+                continue
+            for item in pool.get("accounts") or []:
+                if item.get("id") == aid:
+                    item["enabled"] = bool(enabled)
+                    _save()
+                    return _full_copy(pool)
+    raise PoolError(404, "账号不存在")
+
+
+def set_platform_meta(pool_id, key, value):
+    """写一条平台快照（余额 / 领取记录）。"""
+    pid = str(pool_id or "").strip()
+    key = str(key or "").strip()
+    if not pid or not key:
+        return None
+    with _lock:
+        for pool in _state["pools"]:
+            if pool["id"] == pid:
+                meta = dict(pool.get("meta") or {})
+                meta[key] = value
+                pool["meta"] = _clean_meta(meta)
+                _save()
+                return _full_copy(pool)
+    return None
+
+
+def platform_model_id(platform, upstream_id):
+    """平台池的对外模型 id：带平台前缀。
+
+    平台给的模型 id 很通用（CodeArts 的 ``GLM-5.2``、Cline 的
+    ``anthropic/claude-sonnet-5-5``），和别的池子/别的提供商会撞名 ——
+    撞了就有一个被清单丢掉，请求还可能被发去别家。对外统一加前缀
+    （``codearts/GLM-5.2``），向上游发的时候再把前缀摘掉。
+    """
+    pid = str(platform or "").strip().lower()
+    raw = str(upstream_id or "").strip()
+    if not pid or not raw:
+        return raw
+    if raw.lower().startswith(pid + "/"):
+        return raw
+    return pid + "/" + raw
+
+
+def apply_platform_catalog(pool_id, models, select_all=True):
+    """平台拉回清单后写入池子；新模型默认也选中（操作者再取消）。"""
+    pid = str(pool_id or "").strip()
+    platform = ""
+    with _lock:
+        for pool in _state["pools"]:
+            if pool["id"] == pid:
+                platform = str(pool.get("platform") or "")
+                break
+    cleaned = []
+    for item in models or []:
+        if not isinstance(item, dict):
+            continue
+        upstream = str(item.get("id") or "").strip()
+        if not upstream:
+            continue
+        public = platform_model_id(platform, upstream)
+        row = _clean_model(public, item)
+        # 记住上游原始 id：构造请求时用它，别把前缀发给上游。
+        row["upstream_id"] = upstream
+        cleaned.append(row)
+        if len(cleaned) >= MAX_CATALOG_MODELS:
+            break
+    with _lock:
+        for pool in _state["pools"]:
+            if pool["id"] != pid:
+                continue
+            pool["catalog"] = cleaned
+            pool["catalog_at"] = time.time()
+            # 已选清单跟着新目录走：老 id（没前缀的）映射到新 id，
+            # 没选过的按 select_all 决定要不要加上。
+            previous = set(pool.get("models") or [])
+            selected = []
+            for model in cleaned:
+                public = model["id"]
+                raw = model.get("upstream_id") or public
+                if public in previous or raw in previous:
+                    selected.append(public)
+                elif select_all:
+                    selected.append(public)
+                if len(selected) >= MAX_SELECTED_MODELS:
+                    break
+            pool["models"] = selected
+            _save()
+            return _full_copy(pool)
     raise PoolError(404, "供应商不存在")
 
 
@@ -809,10 +1220,24 @@ def refresh_pool(pool_id, timeout=LIST_TIMEOUT_SECONDS):
     pool = get(pool_id)
     if pool is None:
         raise PoolError(404, "供应商不存在")
-    models, error = fetch_models(pool["base_url"], pool["api_key"],
-                                 pool["protocol"], timeout)
-    if error:
-        raise PoolError(502, error)
+    if pool.get("kind") == KIND_PLATFORM:
+        try:
+            import wb_platforms
+        except Exception as exc:
+            raise PoolError(500, "平台适配模块不可用：%s" % exc)
+        models, error = wb_platforms.fetch_models(pool)
+        if error:
+            raise PoolError(502, error)
+        apply_platform_catalog(pool["id"], models, select_all=True)
+        updated = get(pool["id"])
+        # 顺手刷一次余额：面板的「刷新」按钮就是想要最新状态。
+        try:
+            balance = wb_platforms.fetch_balance(updated)
+            if balance:
+                set_platform_meta(pool["id"], "balance", balance)
+        except Exception as exc:
+            _log("egg pools: 刷新平台余额失败：%s" % exc)
+        return get(pool["id"]) or updated
     with _lock:
         for item in _state["pools"]:
             if item["id"] == pool["id"]:
@@ -1225,6 +1650,19 @@ def build_request(pool, chat):
     行级过滤器：Anthropic 协议要把它的事件流翻成 OpenAI 形状，OpenAI 协议
     没有（None 表示原样透传）。
     """
+    if pool.get("kind") == KIND_PLATFORM:
+        # 平台账号池的请求要带登录态 / 签名，交给 wb_platforms 构造。
+        try:
+            import wb_platforms
+        except Exception as exc:
+            raise PoolError(500, "平台适配模块不可用：%s" % exc)
+        try:
+            return wb_platforms.build_request(pool, chat)
+        except Exception as exc:
+            if isinstance(exc, PoolError):
+                raise
+            raise PoolError(getattr(exc, "status", 502),
+                            getattr(exc, "detail", str(exc)))
     base = _clean_base_url(pool.get("base_url"))
     model = str(chat.get("model") or "").strip()
     protocol = _clean_protocol(pool.get("protocol"))

@@ -2477,6 +2477,19 @@ def alias_for(realm, model_id):
     return name
 
 
+def alias_exact_for(realm, model_id):
+    """别名表里的**精确**命中（不含子串命中）；没命中返回 None。
+
+    「这个模型 Trae 认不认识」只能用精确命中判断。alias_for 是按子串找的
+    （deepseek-v4-flash-free 里含 deepseek-v4-flash），拿它判断归属会把
+    鸡蛋免费车道、别的网关的 id 一并算成 Trae 的——四个网关之间就串了。
+    请求本身仍然按子串映射（alias_for），这里只给归属判定用。
+    """
+    if realm_key(realm) != "cn":
+        return None
+    return _CN_ALIASES.get(str(model_id or "").strip().lower())
+
+
 def static_models(realm):
     """内置兜底清单（形状与 normalise_model_entry 的输出一致）。
 

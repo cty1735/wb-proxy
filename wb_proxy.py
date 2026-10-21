@@ -84,6 +84,7 @@ import wb_trae
 import wb_trae_chat
 import wb_zen
 import wb_egg_pools
+import wb_platforms
 import wb_probes
 import wb_updates
 import wb_update_request
@@ -204,6 +205,26 @@ QODER_QUEUE_DEFAULT_WAIT = 30
 #: 每个提供者各自记住的默认出口：从 Qoder 切回 WorkBuddy 时不该把 Qoder 选过的
 #: 出口带回来（两边账号的可用区域本来就不同）。
 PROVIDER_REALMS = {provider: CURRENT_REALM for provider in wb_accounts.PROVIDERS}
+
+
+def provider_realm(provider, requested=None):
+    """这个请求该走哪个出口（国内 / 国际）。
+
+    显式提示（?realm= / X-Realm / Key 绑定的出口）最高优先；没有提示时按**该
+    提供商自己的出口**（PROVIDER_REALMS）。Qoder / Trae / 鸡蛋各有各的账号，
+    只有 WorkBuddy 才有国内 / 国际两套。
+
+    以前不管走哪家都用全局的当前出口（面板顶部那个「默认出口」）。面板停在
+    WorkBuddy 国内版时，Qoder 的模型会按国内版去找账号 —— Qoder 在国内版根本没
+    有账号，于是每个 Qoder 模型都 503「no usable account for realm 'cn'」；
+    反过来面板停在鸡蛋（出口 intl）时，WorkBuddy 的请求又会跑到国际版去。
+    出口也是网关之间的边界：走哪家就用哪家的出口。
+    """
+    if requested:
+        return requested
+    return PROVIDER_REALMS.get(provider, CURRENT_REALM)
+
+
 def detect_model_realm(model_id):
     if not model_id:
         return CURRENT_REALM
@@ -11997,47 +12018,92 @@ def _model_in_trae_catalog(model):
             if str(item.get("id") or "").strip().lower() == lowered or \
                     str(item.get("key") or "").strip().lower() == lowered:
                 return True
-        if wb_trae.alias_for(r, name).lower() != lowered:
+        if wb_trae.alias_exact_for(r, name):
             return True
     return False
 
 
-def _model_in_workbuddy_catalog(model):
-    """WorkBuddy 目录（内存缓存或内置清单）里有没有这个 id。"""
+def _model_in_workbuddy_catalog(model, exact=False):
+    """WorkBuddy 目录（内存缓存或内置清单）里有没有这个 id。
+
+    exact=True 时按原样比。WorkBuddy 的 id 一律小写，Qoder / Trae 的 id 带大写
+    （"DeepSeek-V4-Flash" / "Doubao-Seed-2.1-Turbo"）：大小写不敏感地比会把
+    Qoder 的 id 算成 WorkBuddy 的，流量就串到 WorkBuddy 去了。
+    """
     name = str(model or "").strip()
     if not name:
         return False
     lowered = name.lower()
+
+    def hit(mid):
+        mid = str(mid or "").strip()
+        if not mid:
+            return False
+        return mid == name if exact else mid.lower() == lowered
+
     for r in ("intl", "cn", "all"):
         with _lock:
             entry = _models_cache.get(r)
         for mid, _meta in (entry or {}).get("data") or ():
-            if str(mid).strip().lower() == lowered:
+            if hit(mid):
                 return True
     for table_name in ("STATIC_INTL_MODELS", "STATIC_CN_MODELS", "STATIC_MODELS"):
         for item in getattr(wb_catalog, table_name, None) or ():
-            if isinstance(item, dict) and \
-                    str(item.get("id") or "").strip().lower() == lowered:
+            if hit((item or {}).get("id")):
                 return True
     return False
 
 
 def qoder_provider_hint_for_model(model):
-    """没有显式 provider 提示时，按模型归属判断要不要走 Qoder / Trae。
+    """Qoder / Trae 各自认不认这个模型（兼容性入口）。
 
-    保守规则：WorkBuddy 目录认识 -> 交给原来的 WorkBuddy 路径（老客户端不改
-    一个字）；否则 Qoder 认识 -> qoder；再否则 Trae 认识 -> trae；都不认识
-    也回 WorkBuddy。两边都只查内存缓存与内置快照，不发上游。
+    真正的归属判定在 resolve_chat_provider：顺序固定，一个 id 只属于一家。
     """
     if not model:
         return None
-    if _model_in_workbuddy_catalog(model):
+    if _model_in_workbuddy_catalog(model, exact=True):
         return None
     if _model_in_qoder_catalog(model):
         return "qoder"
     if _model_in_trae_catalog(model):
         return "trae"
     return None
+
+
+def resolve_chat_provider(model, explicit=None):
+    """这个聊天请求归哪个提供商。
+
+    显式提示（?provider= / X-Provider）最高优先：客户端配了哪家就直走哪家。
+
+    没有提示时按**归属**判定，顺序固定：WorkBuddy -> Qoder -> Trae -> 鸡蛋。
+    一个模型 id 只属于一家，谁也不许抢别人的 id —— 四个网关之间必须互不影响：
+
+    - WorkBuddy 的 id 一律小写，Qoder / Trae 的带大写。所以先按**原样**比，
+      WorkBuddy 自己的 id 不会被别家的同名 id 抢走（华为云 CodeArts 池里就
+      有一个 deepseek-v4.1-flash）。
+    - Qoder / Trae 的目录按原样比（含 key 与精确别名）。Trae 的别名表是子串
+      匹配的，用它判归属会把 deepseek-v4-flash-free 这类免费车道的 id 算成
+      Trae 的，鸡蛋的流量就漏到 Trae。
+    - 鸡蛋只认它自己的 id（*-free、vendor/model:free、池子里的模型）。
+
+    只查内存缓存与内置快照，不发上游。
+    """
+    explicit = wb_accounts.provider_filter(explicit)
+    if explicit:
+        return explicit
+    if not model:
+        return wb_accounts.DEFAULT_PROVIDER
+    if _model_in_workbuddy_catalog(model, exact=True):
+        return wb_accounts.DEFAULT_PROVIDER
+    if _model_in_qoder_catalog(model):
+        return "qoder"
+    if _model_in_trae_catalog(model):
+        return "trae"
+    try:
+        egg = wb_zen.provider_hint(model)
+    except Exception:
+        egg = None
+    return egg or wb_accounts.DEFAULT_PROVIDER
 
 
 def model_entry(mid, meta):
@@ -14266,6 +14332,13 @@ def banned_model_message(model):
             % (model, allowed))
 
 
+def disabled_model_message(model):
+    """面板停用的模型：清单里不再宣告，点名调用也拒绝。"""
+    return ("模型 %s 已在面板「网关模型清单」里停用：它不再出现在 /v1/models "
+            "的清单中（agent / 客户端的选择器里看不到），直接点名调用也会被拒绝。"
+            "要恢复请在网关页的模型清单里点该行的「启用」。" % model)
+
+
 def key_model_message(entry, model):
     """Explain a per-key model restriction the same way the global ban does."""
     name = (entry or {}).get("name") or "未命名"
@@ -14581,6 +14654,15 @@ class ContentRejected(Exception):
     @property
     def code(self):
         return 403
+
+
+class UpstreamStreamError(Exception):
+    """上游在 200 的流里回了一个错误对象（平台池拒单就是这样）。
+
+    HTTP 200 + {"error_code": ..., "error_msg": ...}：没有 choices，也没有
+    finish_reason。把它当正文透传，客户端只会看到「流结束了却没有
+    finish_reason」这种没法定位的错，还会对同一个死上游反复重试。
+    """
 
 
 class RateLimited(Exception):
@@ -16515,6 +16597,37 @@ def iter_sse_lines(source, block_size=SSE_READ_BLOCK, before_read=None):
         # 上游没以换行收尾时，最后一行照旧要交出去（迭代 response 也是这个形状）。
         yield buf
 
+def stream_error_payload(chunk):
+    """上游在 200 的流里塞回来的错误对象——认出来，别当正文透传。
+
+    平台池（华为云 CodeArts 等）拒单时回的是 HTTP 200 + 一个错误对象：
+        {"error_code": "InferHub.4004.200", "error_msg": "benefit not found"}
+    这种块没有 choices。透传下去客户端只会看到「流结束了却没有 finish_reason」
+    这种没法定位的错，还会对同一个死上游反复重试；网关自己也把它记成成功。
+
+    返回 (code, message)；不是错误返回 None。
+    """
+    if not isinstance(chunk, dict):
+        return None
+    if chunk.get("choices"):
+        return None            # 正常块：带 choices，不是错误
+    err = chunk.get("error")
+    code = ""
+    message = ""
+    if isinstance(err, dict):
+        code = str(err.get("code") or err.get("type") or "").strip()
+        message = str(err.get("message") or "").strip()
+    elif isinstance(err, str):
+        message = err.strip()
+    if not code:
+        code = str(chunk.get("error_code") or "").strip()
+    if not message:
+        message = str(chunk.get("error_msg") or chunk.get("message") or "").strip()
+    if not message and not code:
+        return None
+    return (code or "upstream_error", message or code)
+
+
 def aggregate_stream(raw_iter, model, resp_id):
     """Fold an SSE stream into one non-streaming chat.completion object."""
     content, reasoning, finish = [], [], "stop"
@@ -16533,6 +16646,11 @@ def aggregate_stream(raw_iter, model, resp_id):
             chunk = json.loads(data)
         except Exception:
             continue
+        err = stream_error_payload(chunk)
+        if err is not None:
+            # 上游在 200 的流里回了错误（平台池拒单就是这样）：不当正文，
+            # 直接让调用方看到真正的失败原因。
+            raise UpstreamStreamError("upstream error: %s (%s)" % (err[1], err[0]))
         if first_chunk_at is None:
             first_chunk_at = time.time()
         if chunk.get("id"):
@@ -19439,6 +19557,22 @@ class Handler(BaseHTTPRequestHandler):
             return ""
         return banned_model_message(model)
 
+    def _disabled_model_error(self, model, provider=None, realm=None):
+        """面板停用的模型直接报错，不碰上游、不扣任何点数。
+
+        作用域与 /v1/models 的过滤完全一致：提供商 + 版本（鸡蛋不分版本）。
+        provider/realm 可以由调用方传（它们已经算过），没传就按当前请求推断。
+        realm 一定要走 provider_realm：Qoder / Trae / 鸡蛋各有自己的出口
+        （PROVIDER_REALMS），直接拿全局 CURRENT_REALM 会在面板停在别家时把
+        作用域算错，停用的模型就漏过去了。
+        """
+        provider = wb_accounts.provider_filter(provider) or CURRENT_PROVIDER
+        if realm not in ("intl", "cn"):
+            realm = provider_realm(provider, self._request_realm())
+        if not wb_settings.is_model_disabled(ACCOUNTS_DIR, model, provider, realm):
+            return ""
+        return disabled_model_message(model)
+
     def _key_model_error(self, model):
         """Per-key model restriction: reject before the request reaches upstream.
 
@@ -19516,25 +19650,12 @@ class Handler(BaseHTTPRequestHandler):
     def _chat_provider(self, payload):
         """这个聊天请求该走哪个提供商。
 
-        显式提示（?provider= / X-Provider）优先；没有提示时按模型归属兜底：
-        Qoder 目录认识、WorkBuddy 目录不认识 -> qoder，否则保持原来的
-        WorkBuddy 路径。兜底只看目录缓存与内置快照，不发上游（见
-        qoder_provider_hint_for_model）。
+        显式提示（?provider= / X-Provider）优先；没有提示时按模型归属兜底
+        （见 resolve_chat_provider）：一个 id 只属于一家，四个网关之间不许
+        抢对方的模型。
         """
-        explicit = wb_accounts.provider_filter(self._request_provider())
-        if explicit:
-            return explicit
         model = payload.get("model") if isinstance(payload, dict) else None
-        hint = qoder_provider_hint_for_model(model)
-        if hint:
-            return hint
-        # 鸡蛋的模型名（*-free / Kilo 的 vendor/model:free）不在另外两家目录里：
-        # 目录认识就走鸡蛋，老客户端不带 ?provider= 也不会跑错上游。
-        try:
-            egg = wb_zen.provider_hint(model)
-        except Exception:
-            egg = None
-        return egg or wb_accounts.DEFAULT_PROVIDER
+        return resolve_chat_provider(model, self._request_provider())
 
     def _authorized(self):
         if self._key_ok():
@@ -19740,6 +19861,24 @@ class Handler(BaseHTTPRequestHandler):
                     for value in wb_egg_pools.PROTOCOLS
                 ],
             })
+        if path == "/egg/platforms":
+            # 平台账号池：登录态由网关保管，面板只看账号/模型摘要。
+            if not self._panel_ok():
+                return self._error(
+                    401, "panel password required", "invalid_request_error"
+                )
+            return self._json(200, {
+                "platforms": wb_platforms.platform_defs(),
+                "pools": [p for p in wb_egg_pools.public_pools()
+                          if p.get("kind") == wb_egg_pools.KIND_PLATFORM],
+            })
+        if path == "/egg/platforms/login/poll":
+            if not self._panel_ok():
+                return self._error(
+                    401, "panel password required", "invalid_request_error"
+                )
+            state = (query.get("state") or [""])[0]
+            return self._route_egg_platform_login_poll(state)
         if path == "/logs":
             return self._get_logs(query)
         if path == "/logs/export":
@@ -19853,7 +19992,7 @@ class Handler(BaseHTTPRequestHandler):
         # provider="all" 没有可合并的清单，仍按缺省处理。
         req_provider = (wb_accounts.provider_filter(self._request_provider(query))
                         or CURRENT_PROVIDER)
-        req_realm = self._request_realm() or CURRENT_REALM
+        req_realm = provider_realm(req_provider, self._request_realm())
         pinned = pinned_account()
         if pinned is not None:
             # 定址路由以账号为准：即使调用方没带 ?provider=，模型清单也应该
@@ -19877,6 +20016,22 @@ class Handler(BaseHTTPRequestHandler):
             # 定址路由宣告的是「这个账号实际能接的模型」：该账号禁用的模型
             # 不出现在清单里，客户端按账号拆 provider 时才不会选到必失败的项。
             data = [m for m in data if not pinned.model_disabled(m.get("id"))]
+        # 面板停用的模型：默认整行从清单里摘掉（agent / 客户端选择器里看不到）。
+        # 面板自己要看见它们才能再启用，所以允许带 include_disabled=1 取回，
+        # 但那只对面板会话开放 —— 普通 API Key 拿不到「已停用却还能选」的清单。
+        disabled = set(wb_settings.disabled_models(
+            ACCOUNTS_DIR, req_provider, req_realm))
+        if disabled:
+            include_disabled = (
+                self._panel_ok()
+                and str((query or {}).get("include_disabled", [""])[0]).lower()
+                in ("1", "true", "yes"))
+            if include_disabled:
+                for m in data:
+                    if m.get("id") in disabled:
+                        m["disabled"] = True
+            else:
+                data = [m for m in data if m.get("id") not in disabled]
         payload = {"object": "list", "data": data,
                    "realm": req_realm or CURRENT_REALM,
                    "provider": req_provider}
@@ -21288,6 +21443,10 @@ class Handler(BaseHTTPRequestHandler):
         """
         provider = wb_accounts.provider_filter(provider)
         realm = realm if realm in ("intl", "cn") else CURRENT_REALM
+        # 面板停用的模型不进选择器，也不写进客户端的配置文件——否则「停用了
+        # 却还在下拉里」比不提供开关更让人困惑。
+        disabled = set(wb_settings.disabled_models(
+            ACCOUNTS_DIR, provider or wb_accounts.DEFAULT_PROVIDER, realm))
         models = []
         seen = set()
         try:
@@ -21326,7 +21485,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
             for mid, meta in sources:
                 mid = str(mid or "").strip()
-                if not mid or mid in seen:
+                if not mid or mid in seen or mid in disabled:
                     continue
                 seen.add(mid)
                 meta = meta if isinstance(meta, dict) else {}
@@ -21517,6 +21676,21 @@ class Handler(BaseHTTPRequestHandler):
                 cleaned_models.append(item)
             elif isinstance(item, str) and item.strip():
                 cleaned_models.append({"id": item.strip()})
+        # 面板停用的模型不写进客户端配置：面板的模型表已经不带它们了，但手写
+        # / 旧前端送来的列表里可能还留着——写进去等于「停用了却还能在 agent
+        # 的选择器里选到」。
+        apply_realm = payload.get("realm") or None
+        try:
+            off = set(wb_settings.disabled_models(
+                ACCOUNTS_DIR, prov or wb_accounts.DEFAULT_PROVIDER,
+                apply_realm if apply_realm in ("intl", "cn") else CURRENT_REALM))
+        except Exception:
+            off = set()
+        if off:
+            cleaned_models = [item for item in cleaned_models
+                              if str(item.get("id") or "") not in off]
+        if model and str(model) in off:
+            model = None
         # 看板只送模型 id，而 DSH / Crush 这类客户端要求把规格写进自己的配置
         # （上下文窗口、输出上限、思考档位）。这里按 id 把网关自己的目录规格
         # 补上（见 enrich_agent_models），显式带来的字段优先——否则一键配置
@@ -22024,6 +22198,39 @@ class Handler(BaseHTTPRequestHandler):
             self._request_provider((payload or {}).get("provider")))
         return self._json(200, refresh_catalog(realm, provider))
 
+    def _route_models_toggle(self, payload):
+        """面板「网关模型清单」的启用 / 停用。
+
+        写 settings.json 的 disabled_models 一张表，作用域是「提供商 + 版本」，
+        鸡蛋不分版本。停用的模型立刻从 /v1/models 消失（那是 agent / 客户端
+        取模型列表的地方），点名调用也会在 _disabled_model_error 那一道门被
+        拒绝。返回该作用域停用后的完整列表，面板据此刷新。
+        """
+        payload = payload or {}
+        model = str(payload.get("model") or "").strip()
+        if not model:
+            return self._error(400, "model is required", "invalid_request_error")
+        disabled = payload.get("disabled")
+        if not isinstance(disabled, bool):
+            return self._error(400, "disabled must be true or false",
+                               "invalid_request_error")
+        provider = (wb_accounts.provider_filter(
+            self._request_provider(payload)) or CURRENT_PROVIDER)
+        realm = str(payload.get("realm") or "").strip().lower()
+        if realm not in ("intl", "cn"):
+            realm = CURRENT_REALM
+        try:
+            ids = wb_settings.set_model_disabled(
+                ACCOUNTS_DIR, model, disabled, provider, realm)
+        except ValueError as exc:
+            return self._error(400, str(exc), "invalid_request_error")
+        log("model %s: %s for provider=%s realm=%s"
+            % (model, "disabled" if disabled else "enabled", provider, realm),
+            tag="models")
+        return self._json(200, {"ok": True, "model": model,
+                                "disabled": disabled, "provider": provider,
+                                "realm": realm, "disabled_models": ids})
+
     def _route_logs_clear(self, payload):
         clear_logs()
         return self._json(200, {"ok": True})
@@ -22144,6 +22351,231 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(500, "测试失败：%s" % exc)
         return self._json(200, {"ok": bool(ok), "status": int(status),
                                 "msg": msg})
+
+    # ------------------------------------------------------------------
+    # 鸡蛋：平台账号池（浏览器 / 设备码登录）
+    # ------------------------------------------------------------------
+    def _egg_platform_pool(self, payload, create=False):
+        """从 payload 里找出平台池：id 优先，其次 platform。"""
+        payload = payload or {}
+        pool_id = str(payload.get("id") or "").strip()
+        platform = str(payload.get("platform") or "").strip().lower()
+        if pool_id:
+            pool = wb_egg_pools.get(pool_id)
+            if pool is None or pool.get("kind") != wb_egg_pools.KIND_PLATFORM:
+                raise wb_egg_pools.PoolError(404, "平台池不存在")
+            return pool
+        if not platform:
+            raise wb_egg_pools.PoolError(400, "缺少平台标识")
+        if create:
+            return wb_egg_pools.ensure_platform_pool(platform)
+        pool = wb_egg_pools.platform_pool(platform)
+        if pool is None:
+            raise wb_egg_pools.PoolError(404, "这个平台还没有账号：先「添加账号」")
+        return pool
+
+    def _egg_platform_pools_view(self):
+        return [p for p in wb_egg_pools.public_pools()
+                if p.get("kind") == wb_egg_pools.KIND_PLATFORM]
+
+    def _egg_platform_result(self, pool, **extra):
+        view = None
+        for item in self._egg_platform_pools_view():
+            if item.get("id") == (pool or {}).get("id"):
+                view = item
+                break
+        data = {"ok": True, "pool": view,
+                "pools": self._egg_platform_pools_view()}
+        data.update(extra)
+        return self._json(200, data)
+
+    def _egg_platform_commit(self, state):
+        """把登录成功后的账号入池（同一 state 只提交一次）。"""
+        account = wb_platforms.take_account(state)
+        if account is None:
+            return None
+        platform = str(account.get("platform") or "").strip().lower()
+        if not platform:
+            raise wb_platforms.PlatformError(502, "登录结果里没有平台标识")
+        pool = wb_egg_pools.ensure_platform_pool(platform)
+        pool = wb_egg_pools.add_platform_account(pool["id"], account)
+        invalidate_egg_catalog_cache()
+        return pool
+
+    def _route_egg_platform_login_start(self, payload):
+        platform = str((payload or {}).get("platform") or "").strip().lower()
+        if not platform:
+            return self._error(400, "缺少平台标识", "invalid_request_error")
+        try:
+            result = wb_platforms.login_start(platform)
+        except wb_platforms.PlatformError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        except Exception as exc:
+            return self._error(502, "发起登录失败：%s" % exc)
+        return self._json(200, result)
+
+    def _route_egg_platform_login_poll(self, state):
+        result = wb_platforms.poll_login(state)
+        if result.get("status") == "success":
+            try:
+                pool = self._egg_platform_commit(state)
+            except wb_platforms.PlatformError as exc:
+                return self._error(exc.status, exc.detail, "invalid_request_error")
+            except wb_egg_pools.PoolError as exc:
+                return self._error(exc.status, exc.detail, "invalid_request_error")
+            if pool is not None:
+                result["pool"] = next(
+                    (p for p in self._egg_platform_pools_view()
+                     if p.get("id") == pool.get("id")), None)
+                result["pools"] = self._egg_platform_pools_view()
+                result["msg"] = "登录成功：%s 已加入账号池" % (
+                    (result.get("account") or {}).get("label") or "账号")
+        return self._json(200, result)
+
+    def _route_egg_platform_login_cancel(self, payload):
+        state = str((payload or {}).get("state") or "").strip()
+        if not state:
+            return self._error(400, "缺少登录会话 state", "invalid_request_error")
+        return self._json(200, wb_platforms.cancel_login(state))
+
+    def _route_egg_platform_login_callback(self, payload):
+        """手动提交回调 URL：网关跑在远端、浏览器回不到 127.0.0.1 时用。"""
+        payload = payload or {}
+        state = str(payload.get("state") or "").strip()
+        url = str(payload.get("url") or "").strip()
+        if not state or not url:
+            return self._error(400, "缺少 state 或回调 URL", "invalid_request_error")
+        try:
+            result = wb_platforms.submit_callback(state, url)
+        except wb_platforms.PlatformError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        except Exception as exc:
+            return self._error(502, "回调失败：%s" % exc)
+        try:
+            pool = self._egg_platform_commit(state)
+        except (wb_platforms.PlatformError, wb_egg_pools.PoolError) as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        if pool is not None:
+            result["pool"] = next(
+                (p for p in self._egg_platform_pools_view()
+                 if p.get("id") == pool.get("id")), None)
+            result["pools"] = self._egg_platform_pools_view()
+        return self._json(200, result)
+
+    def _route_egg_platform_refresh(self, payload):
+        try:
+            pool = self._egg_platform_pool(payload, create=False)
+            pool = wb_egg_pools.refresh_pool(pool["id"])
+        except wb_egg_pools.PoolError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        except wb_platforms.PlatformError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        except Exception as exc:
+            return self._error(500, "刷新失败：%s" % exc)
+        invalidate_egg_catalog_cache()
+        return self._egg_platform_result(
+            pool, msg="已刷新：%d 个模型" % len(pool.get("models") or []))
+
+    def _route_egg_platform_balance(self, payload):
+        try:
+            pool = self._egg_platform_pool(payload, create=False)
+            balance = wb_platforms.fetch_balance(pool)
+            pool = wb_egg_pools.set_platform_meta(pool["id"], "balance", balance)
+        except wb_egg_pools.PoolError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        except wb_platforms.PlatformError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        except Exception as exc:
+            return self._error(502, "刷新余额失败：%s" % exc)
+        return self._egg_platform_result(pool, balance=balance,
+                                         msg="余额已更新")
+
+    def _route_egg_platform_claim(self, payload):
+        try:
+            pool = self._egg_platform_pool(payload, create=False)
+            claim = wb_platforms.claim(pool)
+            pool = wb_egg_pools.set_platform_meta(pool["id"], "claim", claim)
+            try:
+                balance = wb_platforms.fetch_balance(pool)
+                pool = wb_egg_pools.set_platform_meta(
+                    pool["id"], "balance", balance)
+            except Exception as exc:
+                log("egg platform: 领取后刷新余额失败：%s" % exc, level="WARN",
+                    tag="egg")
+        except wb_egg_pools.PoolError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        except wb_platforms.PlatformError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        except Exception as exc:
+            return self._error(502, "领取失败：%s" % exc)
+        return self._egg_platform_result(
+            pool, claim=claim, msg=claim.get("msg") or "领取请求已提交")
+
+    def _route_egg_platform_account_toggle(self, payload):
+        payload = payload or {}
+        account_id = str(payload.get("account_id") or "").strip()
+        if not account_id:
+            return self._error(400, "缺少账号 id", "invalid_request_error")
+        try:
+            pool = self._egg_platform_pool(payload, create=False)
+            pool = wb_egg_pools.set_platform_account_enabled(
+                pool["id"], account_id, payload.get("enabled", True) is not False)
+        except wb_egg_pools.PoolError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        invalidate_egg_catalog_cache()
+        return self._egg_platform_result(pool, msg="账号状态已更新")
+
+    def _route_egg_platform_account_delete(self, payload):
+        payload = payload or {}
+        account_id = str(payload.get("account_id") or "").strip()
+        if not account_id:
+            return self._error(400, "缺少账号 id", "invalid_request_error")
+        try:
+            pool = self._egg_platform_pool(payload, create=False)
+            if not wb_egg_pools.remove_platform_account(pool["id"], account_id):
+                return self._error(404, "账号不存在", "invalid_request_error")
+            pool = wb_egg_pools.get(pool["id"])
+        except wb_egg_pools.PoolError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        invalidate_egg_catalog_cache()
+        return self._egg_platform_result(pool, msg="账号已删除")
+
+    def _route_egg_platform_account_renew(self, payload):
+        payload = payload or {}
+        account_id = str(payload.get("account_id") or "").strip()
+        try:
+            pool = self._egg_platform_pool(payload, create=False)
+            if not account_id:
+                # 不点名就续期全部：面板的「续期」按钮就是这个语义。
+                accounts = [a for a in pool.get("accounts") or []
+                            if isinstance(a, dict)]
+            else:
+                accounts = [a for a in pool.get("accounts") or []
+                            if isinstance(a, dict) and a.get("id") == account_id]
+            if not accounts:
+                return self._error(404, "账号不存在", "invalid_request_error")
+            errors = []
+            for account in accounts:
+                try:
+                    wb_platforms.refresh_account(pool, account, force=True)
+                except wb_platforms.PlatformError as exc:
+                    errors.append("%s：%s" % (account.get("label") or
+                                              account.get("id"), exc.detail))
+            pool = wb_egg_pools.get(pool["id"])
+        except wb_egg_pools.PoolError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        except Exception as exc:
+            return self._error(502, "续期失败：%s" % exc)
+        if errors:
+            return self._json(200, {
+                "ok": False, "pool": next(
+                    (p for p in self._egg_platform_pools_view()
+                     if p.get("id") == pool.get("id")), None),
+                "pools": self._egg_platform_pools_view(),
+                "msg": "部分账号续期失败：" + "；".join(errors[:3]),
+            })
+        return self._egg_platform_result(
+            pool, msg="已续期 %d 个账号" % len(accounts))
 
     def _route_pricing_mapping(self, payload):
         """面板手填一条「hub 模型 → OpenRouter id」映射。
@@ -23141,7 +23573,7 @@ class Handler(BaseHTTPRequestHandler):
                sorted(custom_names) or "-", key_label(self._key_id()) or "-")
         )
         try:
-            req_realm = self._request_realm() or CURRENT_REALM
+            req_realm = provider_realm(provider, self._request_realm())
             if not non_wb:
                 # WorkBuddy 专属守卫：跨区模型与封禁清单只对 WorkBuddy 目录
                 # 有意义。按 key 的模型白名单是网关自己的访问控制，两边都查。
@@ -23398,7 +23830,12 @@ class Handler(BaseHTTPRequestHandler):
                chat_req.get("reasoning_effort"), len(chat_req.get("tools") or []),
                key_label(self._key_id()) or "-"))
         try:
-            req_realm = self._request_realm() or CURRENT_REALM
+            req_realm = provider_realm(provider, self._request_realm())
+            disabled_msg = self._disabled_model_error(
+                chat_req.get("model"), provider, req_realm)
+            if disabled_msg:
+                return self._anthropic_error(400, disabled_msg,
+                                             "invalid_request_error")
             if not non_wb:
                 # WorkBuddy 专属守卫（见 _handle_responses 的同款说明）。
                 blocked = self._cross_realm_error(chat_req.get("model"), req_realm)
@@ -23630,6 +24067,16 @@ class Handler(BaseHTTPRequestHandler):
             if payload is None:
                 return
             return self._route_catalog_refresh(payload)
+        if path == "/models/toggle":
+            # 面板「网关模型清单」的启用 / 停用：只认面板会话（它改的是网关
+            # 对外宣告的模型清单）。写入后下一次 /v1/models 立刻生效。
+            if not self._panel_ok():
+                return self._error(401, "panel password required",
+                                   "invalid_request_error")
+            payload = self._payload_or_error()
+            if payload is None:
+                return
+            return self._route_models_toggle(payload)
         if path == "/quota-scan/run":
             if not self._panel_ok():
                 return self._error(401, "panel password required", "invalid_request_error")
@@ -23654,6 +24101,32 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/egg/pools/test":
                 return self._route_egg_pool_test(payload)
             return self._route_egg_pools(payload)
+        if path.startswith("/egg/platforms"):
+            # 平台账号池：登录流程 / 账号续期 / 余额与领取，同样只认面板会话。
+            if not self._panel_ok():
+                return self._error(401, "panel password required", "invalid_request_error")
+            payload = self._payload_or_error()
+            if payload is None:
+                return
+            if path == "/egg/platforms/login/start":
+                return self._route_egg_platform_login_start(payload)
+            if path == "/egg/platforms/login/cancel":
+                return self._route_egg_platform_login_cancel(payload)
+            if path == "/egg/platforms/login/callback":
+                return self._route_egg_platform_login_callback(payload)
+            if path == "/egg/platforms/refresh":
+                return self._route_egg_platform_refresh(payload)
+            if path == "/egg/platforms/balance":
+                return self._route_egg_platform_balance(payload)
+            if path == "/egg/platforms/claim":
+                return self._route_egg_platform_claim(payload)
+            if path == "/egg/platforms/account/toggle":
+                return self._route_egg_platform_account_toggle(payload)
+            if path == "/egg/platforms/account/delete":
+                return self._route_egg_platform_account_delete(payload)
+            if path == "/egg/platforms/account/renew":
+                return self._route_egg_platform_account_renew(payload)
+            return self._error(404, "未知的平台接口", "invalid_request_error")
         if path.startswith("/proxy/"):
             if not self._panel_ok():
                 return self._error(
@@ -23777,6 +24250,12 @@ class Handler(BaseHTTPRequestHandler):
                     pass
                 return self._error(400, background_request_message(reason),
                                    "invalid_request_error")
+        # 面板停用的模型：所有聊天入口（chat/completions、completions、
+        # responses，以及下面按提供商分发的 Qoder / Trae / 鸡蛋）共用这一道门。
+        # 放在 provider 分发之前，避免某个分支漏查。
+        disabled_msg = self._disabled_model_error(payload.get("model"), provider)
+        if disabled_msg:
+            return self._error(400, disabled_msg, "invalid_request_error")
         if path in ("/v1/responses", "/responses"):
             return self._handle_responses(payload, provider=provider)
         if provider == "qoder":
@@ -23807,7 +24286,7 @@ class Handler(BaseHTTPRequestHandler):
         model = payload.get("model") or "hy4-preview"
         t_start = time.time()
         try:
-            req_realm = self._request_realm() or CURRENT_REALM
+            req_realm = provider_realm(provider, self._request_realm())
             blocked = self._cross_realm_error(payload.get("model"), req_realm)
             if blocked:
                 return self._error(400, blocked, "invalid_request_error")
@@ -23899,7 +24378,7 @@ class Handler(BaseHTTPRequestHandler):
             key_blocked = self._key_model_error(model)
             if key_blocked:
                 return self._error(400, key_blocked, "invalid_request_error")
-            req_realm = self._request_realm() or CURRENT_REALM
+            req_realm = provider_realm("qoder", self._request_realm())
             upstream, account, effort = open_qoder_upstream(
                 chat_req, session_key=session_key, target_realm=req_realm)
         except RateLimited as exc:
@@ -23956,7 +24435,7 @@ class Handler(BaseHTTPRequestHandler):
             key_blocked = self._key_model_error(model)
             if key_blocked:
                 return self._error(400, key_blocked, "invalid_request_error")
-            req_realm = self._request_realm() or CURRENT_REALM
+            req_realm = provider_realm("trae", self._request_realm())
             upstream, account, effort = open_trae_upstream(
                 chat_req, session_key=session_key, target_realm=req_realm)
         except RateLimited as exc:
@@ -24012,7 +24491,7 @@ class Handler(BaseHTTPRequestHandler):
             key_blocked = self._key_model_error(model)
             if key_blocked:
                 return self._error(400, key_blocked, "invalid_request_error")
-            req_realm = self._request_realm() or CURRENT_REALM
+            req_realm = provider_realm("egg", self._request_realm())
             upstream, account, effort = open_egg_upstream(
                 chat_req, session_key=session_key, target_realm=req_realm)
         except wb_zen.EggError as exc:
@@ -24047,6 +24526,8 @@ class Handler(BaseHTTPRequestHandler):
             leak_filter = LeakedToolCallStreamFilter()
             synthesized_calls = False
             pending_finish = None
+            # 上游在 200 的流里回的错误（平台池拒单）：认出后立刻告诉客户端。
+            inband_error = None
             # 写出缓冲：一个读取块里的事件合成一次 write。
             # wfile 是 wbufsize=0 的**无缓冲**文件（StreamRequestHandler 默认），
             # 每个 chunk 直接落成一次 sendall —— 一次 syscall 加一次 GIL 交还。
@@ -24090,6 +24571,12 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception:
                         maybe = None
                     if isinstance(maybe, dict):
+                        err = stream_error_payload(maybe)
+                        if err is not None:
+                            # 上游在 200 的流里回了错误（平台池拒单就是这样）：
+                            # 别把它当正文透传，也别让客户端对着死上游重试。
+                            inband_error = err
+                            break
                         u = maybe.get("usage")
                         if u:
                             if last_usage is None or (u.get("total_tokens") or 0) >= (last_usage.get("total_tokens") or 0):
@@ -24150,15 +24637,33 @@ class Handler(BaseHTTPRequestHandler):
                     err = json.dumps({"error": {
                         "message": str(exc), "type": "server_error", "code": 502}})
                     self.wfile.write(f"data: {err}\n\n".encode("utf-8"))
+                    # 再补一个收尾块：只认 finish_reason 的客户端（AI SDK 等）
+                    # 否则仍然判定流被截断，转头对已经死掉的上游反复重试。
+                    self.wfile.write(
+                        ("data: %s\n\n" % chat_finish_chunk(model, "error"))
+                        .encode("utf-8"))
                     self.wfile.write(b"data: [DONE]\n\n")
                     self.wfile.flush()
                 except Exception:
                     pass
                 return
-            flush_out()
-            if not emitted:
-                err = json.dumps({"error": {"message": "empty upstream stream", "type": "server_error"}})
-                self.wfile.write(f"data: {err}\n\n".encode("utf-8"))
+            if inband_error is not None:
+                # 上游在 200 的流里回了错误：状态码已经只能是 200，把错误塞进
+                # SSE，别让客户端只看到「流没有 finish_reason」那种没法定位的
+                # 错，也别让它对着已经死掉的上游反复重试。
+                code, message = inband_error
+                err = json.dumps({"error": {
+                    "message": message, "type": "server_error", "code": 502}})
+                write_chunk(err)
+                # 再补一个收尾块：只认 finish_reason 的客户端（AI SDK 等）否则
+                # 仍然判定流被截断。
+                write_chunk(chat_finish_chunk(model, "error"))
+                flush_out()
+            else:
+                flush_out()
+                if not emitted:
+                    err = json.dumps({"error": {"message": "empty upstream stream", "type": "server_error"}})
+                    self.wfile.write(f"data: {err}\n\n".encode("utf-8"))
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
             wall = int((time.time() - t_start) * 1000)
@@ -24174,12 +24679,18 @@ class Handler(BaseHTTPRequestHandler):
                         "prompt_tokens_details": {"cached_tokens": 0},
                     }
             outcome = "failed" if pending_finish == "error" else "completed"
+            if inband_error is not None:
+                code, message = inband_error
+                outcome = "failed"
             if outcome == "failed":
-                record_error(getattr(upstream, "_wb_billed_model", model), 502, "upstream stream finished with error",
+                detail = "upstream stream finished with error"
+                if inband_error is not None:
+                    detail = "upstream stream error: %s (%s)" % (message, code)
+                record_error(getattr(upstream, "_wb_billed_model", model), 502, detail,
                              elapsed_ms=wall, account=account.uid,
                              usage=last_usage, stream=True, ttft_ms=first_ms,
                              gen_ms=(wall - first_ms) if first_ms is not None else None,
-                             fp=fp, outcome="failed", key=self._key_id(),
+                             fp=fp, outcome=outcome, key=self._key_id(),
                              provider=getattr(upstream, "_wb_provider", None))
             else:
                 record_upstream_usage(upstream, model, last_usage, stream=True,
@@ -24370,6 +24881,8 @@ def _bootstrap_runtime(args):
     # 自建供应商池（egg-pools.json）同理：池子、Key 与挑好的模型清单都跟着
     # 账号目录走，换机器时整份拷过去就行。
     wb_egg_pools.configure(ACCOUNTS_DIR, log=log)
+    # 平台账号池（浏览器 / 设备码登录）的适配层：日志接到同一个落盘日志。
+    wb_platforms.configure(log=log)
     # 鸡蛋目录后台预热：Kilo 那个上游拉目录要十几秒，冷启动不等它（第一次
     # /v1/models 先给静态兜底清单），但也别等到用户第一次调用才拉 —— 拉完
     # 之前他看到的清单就是兜底版。先在后台拉起来，等面板打开就已经是新的。

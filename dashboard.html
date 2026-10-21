@@ -146,6 +146,15 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 #modelsTable td[data-label="思考档位"]{white-space:nowrap}
 /* 采样参数：放不下时 chips 折行显示完整，不截断 */
 #modelsTable td[data-label="默认采样参数"]{white-space:normal}
+/* 测试列：按钮 + 结果两行，挤在固定列宽里必须允许换行，否则「✓ 可用 1.2s」
+   会被 cells 的 ellipsis 切掉。 */
+#modelsTable td[data-label="测试"]{white-space:normal;overflow:visible}
+#modelsTable td[data-label="测试"] button{padding:2px 10px;font-size:11px}
+/* 启用列用设置页那套胶囊开关（.switch / .switch-track）。表格行高有限，
+   收掉 .switch 为触屏准备的 40px 点击区；卡片视图里那条给普通复选框的
+   20px 尺寸也要压回去，否则隐藏的 checkbox 会撑出一块看不见的点击区。 */
+#modelsTable .switch{min-height:0;gap:0}
+#modelsTable .switch input{width:1px;height:1px}
 th,td{text-align:right;padding:9px 12px;border-bottom:1px solid var(--line);
   font-variant-numeric:tabular-nums;vertical-align:middle}
 th{color:var(--dim);font-weight:600;font-size:12px;white-space:nowrap;background:var(--panel2)}
@@ -552,6 +561,53 @@ body.provider-trae #btnFetchCredits{display:none !important}
   font-size:12px;color:var(--dim);cursor:pointer;white-space:nowrap}
 .egg-pool-pick-filter label input{accent-color:var(--accent);margin:0}
 .egg-pool-pick-shown{font-size:11px;color:var(--dim)}
+
+/* ===== 鸡蛋的平台账号池：平台卡片 / 账号列表 / 登录弹窗 ===== */
+.egg-platform-card{border:1px solid var(--line);border-radius:11px;background:var(--panel);
+  padding:12px 14px;box-shadow:var(--shadow-sm)}
+.egg-platform-card.off{opacity:.6}
+.egg-platform-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.egg-platform-title{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:13px}
+.egg-platform-sub{font-size:11px;color:var(--dim);margin-top:3px;line-height:1.55}
+.egg-platform-stats{display:flex;gap:18px;flex-wrap:wrap;margin-top:10px}
+.egg-platform-stat{font-size:11px;color:var(--dim);display:flex;flex-direction:column;gap:2px;min-width:70px}
+.egg-platform-stat b{font-size:15px;color:var(--fg);font-weight:600;font-family:var(--mono);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.egg-platform-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:11px;
+  padding-top:9px;border-top:1px solid var(--line)}
+.egg-platform-actions .grow{flex:1 1 auto}
+.egg-platform-toggle{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px}
+.egg-platform-toggle a{color:var(--dim);cursor:pointer;text-decoration:none}
+.egg-platform-toggle a:hover,.egg-platform-toggle a.on{color:var(--accent);text-decoration:underline}
+.egg-platform-panel{margin-top:9px;padding-top:8px;border-top:1px dashed var(--line)}
+.egg-platform-account{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:7px 0;border-bottom:1px solid var(--line);font-size:12px}
+.egg-platform-account:last-child{border-bottom:none}
+.egg-platform-account .who{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 190px}
+.egg-platform-account .who b{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.egg-platform-account .who span{font-size:10.5px;color:var(--dim)}
+.egg-platform-account .acts{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.egg-platform-account .acts a{color:var(--dim);cursor:pointer;text-decoration:none;font-size:11px}
+.egg-platform-account .acts a:hover{color:var(--accent);text-decoration:underline}
+.egg-platform-models{display:flex;flex-wrap:wrap;gap:6px;max-height:210px;overflow:auto;margin-top:7px}
+.egg-platform-model{display:inline-flex;align-items:center;gap:5px;background:var(--panel2);
+  border:1px solid var(--line);border-radius:7px;padding:3px 8px;font-size:11px;cursor:pointer}
+.egg-platform-model.on{border-color:var(--accent);background:var(--accent-selected-bg)}
+.egg-platform-model input{accent-color:var(--accent);margin:0}
+.egg-platform-pick-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.egg-platform-pick-head a{color:var(--dim);cursor:pointer;text-decoration:none}
+.egg-platform-pick-head a:hover{color:var(--accent);text-decoration:underline}
+.egg-platform-login-link{display:block;margin-top:7px;padding:8px 10px;border-radius:8px;
+  background:var(--panel2);border:1px solid var(--line);color:var(--accent);
+  font-size:12px;word-break:break-all;text-decoration:none}
+.egg-platform-login-link:hover{text-decoration:underline}
+.egg-platform-device{margin-top:8px;padding:10px 12px;border-radius:9px;
+  background:var(--accent-selected-bg);border:1px solid var(--accent);
+  font-family:var(--mono);font-size:20px;letter-spacing:2px;text-align:center;color:var(--accent)}
+.egg-platform-callback{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)}
+.egg-platform-callback input{width:100%;background:var(--panel2);border:1px solid var(--line);
+  border-radius:8px;padding:8px 10px;color:var(--fg);font:inherit;font-size:12px}
+.egg-platform-callback input:focus{outline:none;border-color:var(--accent)}
 
 .realm-card{
   background:var(--panel);border:1px solid var(--line);border-radius:12px;
@@ -1871,6 +1927,39 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     ' 拉取模型清单…': ' ...',
     '正在编辑「': 'Editing "',
     '」：Key 留空表示不改': '": leave the key empty to keep it',
+    // ===== 鸡蛋的平台账号池 =====
+    '平台账号池': 'Platform account pools',
+    '登录一次即可把该平台的模型加入鸡蛋清单，额度按平台账号结算': 'Sign in once to add that platform’s models to the Egg list; usage is billed to the platform account',
+    '和下面的自建供应商不同：这里不填 Key，走浏览器 / 设备码登录；账号凭据只保存在网关本机。': 'Unlike the self-hosted providers below, there is no key to fill in: sign in through the browser or a device code; credentials stay on the gateway machine.',
+    '添加账号': 'Add account',
+    '续期': 'Renew',
+    '刷新余额': 'Refresh balance',
+    '一键领取': 'Claim daily',
+    '刷新模型': 'Refresh models',
+    '余额': 'Balance',
+    '每日领取': 'Daily claim',
+    '账号': 'Accounts',
+    '模型': 'Models',
+    '未登录': 'Not signed in',
+    '平台首页': 'Platform home',
+    '添加平台账号': 'Add a platform account',
+    '正在生成登录链接…': 'Generating the sign-in link...',
+    '登录链接已生成': 'Sign-in link ready',
+    '在浏览器里完成登录授权': 'Complete the sign-in in your browser',
+    '等待授权完成（自动检测）': 'Waiting for authorization (detected automatically)',
+    '打开登录页': 'Open sign-in page',
+    '复制登录链接': 'Copy sign-in link',
+    '重新生成链接': 'Regenerate link',
+    '提交回调': 'Submit callback',
+    '还没有登录平台账号': 'No platform account signed in yet',
+    '先登录一个账号，再刷新模型': 'Sign in an account first, then refresh models',
+    '还没有上游目录：点「刷新模型」先拉一次。': 'No upstream list yet: click "Refresh models" to fetch one.',
+    '按平台额度': 'Billed to platform quota',
+    '平台列表加载中…（如果一直这样，重启网关后再试）': 'Loading platforms... (if this persists, restart the gateway)',
+    '还没有账号：点「添加账号」登录一个。': 'No account yet: click "Add account" to sign one in.',
+    '浏览器回不到本机（网关跑在远端）时：登录完成后复制地址栏里的完整回调 URL，粘贴到这里。': 'When the browser cannot reach this machine (remote gateway): after signing in, copy the full callback URL from the address bar and paste it here.',
+    '登录成功：账号已加入平台池': 'Signed in: the account joined the platform pool',
+    '正在用回调 URL 换取登录态…': 'Exchanging the callback URL for a session...',
     'Token 消耗与推理指标透视': 'Token usage and reasoning metrics',
     'WorkBuddy 独立桌面客户端 (WB)': 'WorkBuddy standalone desktop client (WB)',
     'WorkBuddy 用量看板': 'WorkBuddy Usage Dashboard',
@@ -2657,6 +2746,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '测试失败:': 'Test failed:',
     '测试请求失败:': 'Test request failed:',
     '测试通过 (': 'Test passed (',
+    '测试口径：Agent（带工具）': 'Test mode: Agent (with tools)',
+    '测试口径：对话（不带工具）': 'Test mode: Chat (no tools)',
+    '测试口径': 'Test mode',
+    '✓ 可用 ': '✓ usable ',
+    '✗ 不可用': '✗ unavailable',
+    '个已停用': ' disabled',
+    '可用（': 'usable (',
+    '，工具调用正常': ', tool call OK',
     '浏览器拒绝了复制操作': 'The browser refused the copy',
     '消耗 Token': 'Tokens used',
     '消耗总 Token': 'Total tokens used',
@@ -4736,6 +4833,18 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     </div>
     <div id="eggSourceLine" class="hint" style="margin:0"></div>
 
+    <!-- ===== 平台账号池：浏览器 / 设备码登录第三方平台，账号登录态由网关保管 ===== -->
+    <div id="eggPlatformsBlock" style="margin-top:18px">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+        <h3 style="margin:0;font-size:14px">平台账号池</h3>
+        <div style="font-size:11px;color:var(--dim)">登录一次即可把该平台的模型加入鸡蛋清单，额度按平台账号结算</div>
+      </div>
+      <div style="font-size:12px;color:var(--dim);margin-bottom:9px">
+        和下面的自建供应商不同：这里不填 Key，走浏览器 / 设备码登录；账号凭据只保存在网关本机。
+      </div>
+      <div id="eggPlatformList" style="display:flex;flex-direction:column;gap:10px"></div>
+    </div>
+
     <!-- ===== 供应商池：每个供应商是一个池子，模型清单按池子筛选 ===== -->
     <div id="eggPoolsBlock" style="margin-top:18px">
       <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:4px">
@@ -4880,7 +4989,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
         <select id="eggPoolFilter" class="mini-select" onchange="onEggPoolFilterChange(this.value)"
                 style="display:none" title="按池子筛选模型清单"></select>
         <span id="eggPoolFilterHint" style="font-size:12px;color:var(--dim);display:none;max-width:100%;overflow-wrap:anywhere"></span>
-        <div style="font-size:12px;color:var(--dim)" id="modelsTableDesc">展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率</div>
+        <!-- 测试口径：Agent 模式带 tools（和真实 agent 的请求形状一致），
+             对话模式只要求正常回答。选中的口径对每一行的「测试」都生效。 -->
+        <select id="modelTestMode" class="mini-select" onchange="setModelTestMode(this.value)"
+                title="点每行的「测试」时怎么发请求：Agent 模式带工具定义（模拟真实 agent，回答或工具调用都算通过）；对话模式只发一条普通消息（只验证能正常回答）">
+          <option value="agent">测试口径：Agent（带工具）</option>
+          <option value="chat">测试口径：对话（不带工具）</option>
+        </select>
+        <div style="font-size:12px;color:var(--dim)" id="modelsTableDesc">展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率；每行可单独测试与启用/停用</div>
         <!-- 手动刷新：强制走一次上游 /v3/config（只在当前视图的版本上，用该
              版本的账号），成功后本表立即重载。服务端同一版本 30s 冷却。 -->
         <button class="sec mini" id="btnRefreshModels" onclick="refreshModelCatalog(this)"
@@ -4895,15 +5011,17 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       <table id="modelsTable" class="data-cards">
         <thead>
           <tr>
-            <th style="text-align:left;width:15%">模型 ID</th>
-            <th style="text-align:left;width:10%">名称</th>
-            <th style="text-align:center;width:11%">免费池</th>
-            <th style="text-align:center;width:11%">消费倍率 / 优惠</th>
-            <th style="text-align:center;width:13%">模型能力</th>
-            <th style="text-align:center;width:9%">上下文窗口</th>
-            <th style="text-align:center;width:9%">最大输出</th>
-            <th style="text-align:left;width:13%">思考档位</th>
-            <th style="text-align:left;width:9%;white-space:nowrap">默认采样参数</th>
+            <th style="text-align:left;width:13%">模型 ID</th>
+            <th style="text-align:left;width:9%">名称</th>
+            <th style="text-align:center;width:9%">免费池</th>
+            <th style="text-align:center;width:10%">消费倍率 / 优惠</th>
+            <th style="text-align:center;width:11%">模型能力</th>
+            <th style="text-align:center;width:7%">上下文窗口</th>
+            <th style="text-align:center;width:7%">最大输出</th>
+            <th style="text-align:left;width:11%">思考档位</th>
+            <th style="text-align:left;width:8%;white-space:nowrap">默认采样参数</th>
+            <th style="text-align:center;width:6%">启用</th>
+            <th style="text-align:center;width:9%">测试</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -6404,6 +6522,51 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
   </div>
 </div>
 
+<!-- 平台账号池登录：CodeArts 走浏览器 OAuth（本机环回回调，也可手工粘贴回调
+     URL），Cline 走 WorkOS 设备码。两段共用这个弹窗，内容按平台切换。 -->
+<div class="modal-mask" id="eggPlatformLoginModal">
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-hd">
+      <h2 id="eggPlatformLoginTitle">添加平台账号</h2>
+      <button class="modal-x" onclick="closeEggPlatformLogin()" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-bd">
+      <p class="hint" id="eggPlatformLoginHint" style="margin:0 0 12px;font-weight:500"></p>
+      <div class="step active" id="eggPlatformStep1">
+        <div class="n">1</div>
+        <div class="t" id="eggPlatformStep1Text">正在生成登录链接…</div>
+      </div>
+      <div id="eggPlatformLinkBox"></div>
+      <div id="eggPlatformDeviceBox" class="egg-platform-device" style="display:none"></div>
+      <div class="step" id="eggPlatformStep2">
+        <div class="n">2</div>
+        <div class="t">在浏览器里完成登录授权</div>
+      </div>
+      <div class="step" id="eggPlatformStep3">
+        <div class="n">3</div>
+        <div class="t">等待授权完成（自动检测）</div>
+      </div>
+      <p class="hint" id="eggPlatformLoginStatus" style="font-weight:500"></p>
+      <div class="egg-platform-callback" id="eggPlatformCallbackBox" style="display:none">
+        <div style="font-size:12px;color:var(--dim);margin-bottom:7px">
+          浏览器回不到本机（网关跑在远端）时：登录完成后复制地址栏里的完整回调 URL，粘贴到这里。
+        </div>
+        <input id="eggPlatformCallbackInput" type="text" autocomplete="off"
+               placeholder="http://127.0.0.1:xxxxx/oauth/callback?code=..."
+               onkeydown="if(event.key==='Enter') submitEggPlatformCallback()">
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+          <button class="sec mini" id="eggPlatformCallbackBtn" onclick="submitEggPlatformCallback()">提交回调</button>
+          <span class="hint" style="margin:0" id="eggPlatformCallbackStatus"></span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-ft">
+      <button class="sec" onclick="closeEggPlatformLogin()">关闭</button>
+      <button id="eggPlatformRestartBtn" onclick="restartEggPlatformLogin()">重新生成链接</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-mask" id="traeLoginModal">
   <div class="modal" role="dialog" aria-modal="true">
     <div class="modal-hd">
@@ -7435,6 +7598,9 @@ window.ACTIVE_GATEWAY_REALM = "intl";
 window.VIEW_REALM = "intl";
 window.REALM_FILTER = "all";
 window.MODELS_DATA = [];
+// 逐条模型测试的结果：键是「提供商|版本|模型 id」。表会被切换/刷新重画，
+// 结果存在表外才不会一点「刷新」就消失；同时避免同一行并发发起多条测试。
+const MODEL_TEST_STATE = {};
 window.ACCOUNTS = [];
 // 当前提供商（workbuddy|qoder|trae），也是网关真实上游：头部切换器改的是服务端
 // 持久化的 provider（POST /realm），提供商与它记住的出口一起落盘；面板每个按
@@ -7992,7 +8158,7 @@ function renderModelsLoading(){
   const tb = document.querySelector('#modelsTable tbody');
   const countEm = document.getElementById('availModelCount');
   if(countEm) countEm.textContent = '(加载中…)';
-  if(tb) tb.innerHTML = '<tr><td colspan="9" class="empty">正在加载当前提供商 · 版本的模型清单…</td></tr>';
+  if(tb) tb.innerHTML = '<tr><td colspan="11" class="empty">正在加载当前提供商 · 版本的模型清单…</td></tr>';
   const src = document.getElementById('modelsSourceLine');
   if(src){
     src.style.cssText = CATALOG_BANNER_BASE + 'background:transparent;border:1px dashed var(--line);color:var(--dim)';
@@ -8003,7 +8169,11 @@ function renderModelsLoading(){
 async function loadModels(){
   const seq = ++MODELS_REQ_SEQ;
   try{
-    const r = await getJSON(withProvider('/v1/models?realm=' + encodeURIComponent(window.VIEW_REALM)));
+    // include_disabled=1：面板自己要看见已停用的行才能再启用它们。服务端只
+    // 对面板会话认这个参数——普通 API Key 拉到的清单里没有停用的模型，agent
+    // 与客户端的选择器因此看不到它们。
+    const r = await getJSON(withProvider('/v1/models?realm=' + encodeURIComponent(window.VIEW_REALM)
+                                        + '&include_disabled=1'));
     if(seq !== MODELS_REQ_SEQ) return;
     MODELS_DATA = r.data || [];
     renderModelsSourceLine(r.catalog || null);
@@ -8018,7 +8188,7 @@ async function loadModels(){
     // 切换时表已经被清空：失败就明确说失败，别一直停在「加载中…」。
     if(!MODELS_DATA.length){
       const tb = document.querySelector('#modelsTable tbody');
-      if(tb) tb.innerHTML = '<tr><td colspan="9" class="empty">模型清单加载失败，点「刷新模型清单」重试</td></tr>';
+      if(tb) tb.innerHTML = '<tr><td colspan="11" class="empty">模型清单加载失败，点「刷新模型清单」重试</td></tr>';
       const countEm = document.getElementById('availModelCount');
       if(countEm) countEm.textContent = '(加载失败)';
     }
@@ -8039,7 +8209,10 @@ function renderEggOverview(){
   set('eggKiloCount', kiloCount ? String(kiloCount) : '0');
   set('eggCatalogAt', fmtCatalogStamp(st && st.at) || '—');
   // 自建池：池子个数 + 它们提供的模型数（池子数是本地的，清单数是上游的）。
-  const pools = (st && st.pools) || EGG_POOLS || [];
+  // 平台账号池单独算：它没有「自建供应商」的 Key/Base URL 概念。
+  const allPools = (st && st.pools) || EGG_POOLS || [];
+  const pools = allPools.filter(p => p && p.kind !== 'platform');
+  const platformPools = allPools.filter(p => p && p.kind === 'platform');
   const poolModels = pools.reduce((acc, p) => acc + ((p && p.count) || 0), 0);
   set('eggPoolCount', pools.length ? (pools.length + ' 个 / ' + poolModels + ' 模型') : '0');
   const el = document.getElementById('eggSourceLine');
@@ -8061,11 +8234,17 @@ function renderEggOverview(){
     ? '自建池：' + pools.map(p => (p.name || '') + '（' + ((p.count) || 0) + ' 模型'
         + (p.enabled ? '' : ' · 已停用') + '）').join('、')
     : '自建池：还没有添加供应商';
+  const platformLine = platformPools.length
+    ? '平台池：' + platformPools.map(p => (p.name || '') + '（'
+        + ((p.account_count) || 0) + ' 账号 / ' + ((p.count) || 0) + ' 模型'
+        + (p.enabled ? '' : ' · 已停用') + '）').join('、')
+    : '平台池：还没有登录平台账号';
   el.style.cssText = 'flex-direction:column;align-items:flex-start;gap:2px';
   el.innerHTML = '<b>免费源状态</b>'
     + '<span style="color:var(--dim)">' + esc(describe('zen') + ' · ' + describe('kilo'))
     + esc(note) + '</span>'
     + '<span style="color:var(--dim)">' + esc(poolLine) + '</span>'
+    + '<span style="color:var(--dim)">' + esc(platformLine) + '</span>'
     + '<span style="color:var(--dim)">免费名单轮换很快：切到鸡蛋会自动刷新，清单 180 秒过期；失败的源会保留上一次可用结果。</span>';
 }
 
@@ -8096,6 +8275,19 @@ async function refreshEggCatalog(btn){
 // 池子数据来自 GET /egg/pools（含 Key 掩码、协议、已挑模型与上游目录）。
 let EGG_POOLS = [];
 let EGG_POOL_PRESETS = [];
+// 平台账号池（浏览器 / 设备码登录）：平台定义来自 /egg/platforms，池子是
+// EGG_POOLS 里 kind === 'platform' 的那几条。
+let EGG_PLATFORMS = [];
+let EGG_PLATFORM_DEFS = [];
+// 登录弹窗状态：同一时间只允许一个平台在登录。
+let EGG_PLATFORM_LOGIN = {platform: '', state: '', timer: null, url: ''};
+// 卡片上展开的是账号列表还是模型列表：platform -> 'accounts' | 'models'。
+let EGG_PLATFORM_OPEN = {};
+// 勾选状态按池子 id 存：{ids: 勾上的模型, base: 落盘时的模型清单}。
+// base 变了（刷新过模型 / 保存过）就以池子里的为准，免得本地留着旧账。
+let EGG_PLATFORM_PICK = {};
+// 模型挑选器的筛选状态（按池子 id 存）：{q: 搜索词, free: 只看免费}。
+let EGG_PLATFORM_PICK_FILTER = {};
 // 添加/编辑表单的状态：editingId 为空就是新建；picked 是「对外提供哪些模型」；
 // fetched 是最近一次「拉取模型列表」拿回来的上游目录。
 let EGG_POOL_FORM = {editingId: '', picked: [], fetched: []};
@@ -8115,19 +8307,32 @@ function eggPoolErrorText(e){
 
 async function loadEggPools(){
   if(currentProvider() !== 'egg') return;
-  try{
-    const r = await getJSON('/egg/pools');
-    EGG_POOLS = (r && r.pools) || [];
-    EGG_POOL_PRESETS = (r && r.presets) || [];
+  const [poolsRes, platformsRes] = await Promise.allSettled([
+    getJSON('/egg/pools'), getJSON('/egg/platforms')
+  ]);
+  if(poolsRes.status === 'fulfilled'){
+    const r = poolsRes.value || {};
+    EGG_POOLS = r.pools || [];
+    EGG_POOL_PRESETS = r.presets || [];
     window.EGG_POOLS_LOAD_ERROR = '';
-  }catch(e){
-    console.error('loadEggPools error:', e);
+  }else{
+    console.error('loadEggPools error:', poolsRes.reason);
     EGG_POOLS = [];
     EGG_POOL_PRESETS = [];
-    window.EGG_POOLS_LOAD_ERROR = eggPoolErrorText(e);
+    window.EGG_POOLS_LOAD_ERROR = eggPoolErrorText(poolsRes.reason);
+  }
+  if(platformsRes.status === 'fulfilled'){
+    const r = platformsRes.value || {};
+    EGG_PLATFORM_DEFS = r.platforms || [];
+    EGG_PLATFORMS = r.pools || [];
+  }else{
+    // 老网关没有 /egg/platforms：平台卡片整块留空，不影响自建池。
+    EGG_PLATFORM_DEFS = [];
+    EGG_PLATFORMS = [];
   }
   renderEggPresets();
   renderEggPoolList();
+  renderEggPlatforms();
   renderEggOverview();
 }
 
@@ -8243,14 +8448,16 @@ function renderEggPoolFormPicker(models, picked){
 
 // 上游把「免费」标在模型 id 结尾：OpenRouter 用 :free（minimax/…:free），
 // 也有用 /free 的（kilo-auto/free、openrouter/free）。目录里若带 free 标记
-// （上游报 0 价）也一并算数。
+// （上游报 0 价）也一并算数。免费命名空间前缀（cline-free/xxx）同样算。
 function eggModelIsFree(model){
   if(model && typeof model === 'object'){
     if(model.free === true) return true;
     model = model.id;
   }
   const text = String(model == null ? '' : model).trim().toLowerCase();
-  return text.endsWith(':free') || text.endsWith('/free') || text === 'free';
+  if(text.endsWith(':free') || text.endsWith('/free') || text === 'free') return true;
+  const head = text.split('/')[0];
+  return head.endsWith('-free') || head.endsWith('_free');
 }
 
 // 每个选择器一份筛选状态（搜索词 + 只看免费），重画后照旧生效。
@@ -8420,13 +8627,14 @@ async function saveEggPool(btn){
 function renderEggPoolList(){
   const box = document.getElementById('eggPoolList');
   if(!box) return;
-  if(!EGG_POOLS.length){
+  const pools = EGG_POOLS.filter(p => p && p.kind !== 'platform');
+  if(!pools.length){
     box.innerHTML = '<div style="font-size:12px;color:var(--dim);padding:10px 2px">'
       + '还没有自建供应商。上面的预设点一下就能填好地址，填上 Key 拉一次模型清单即可。'
       + '</div>';
     return;
   }
-  box.innerHTML = EGG_POOLS.map(p => {
+  box.innerHTML = pools.map(p => {
     const models = p.models || [];
     const chips = models.length
       ? models.map(m => '<span class="egg-pool-model">' + esc(m) + '</span>').join('')
@@ -8484,6 +8692,675 @@ function renderEggPoolList(){
   // 卡片里摊开的选择器：把上次的筛选（搜索词 / 只看免费）照旧套上。
   if(EGG_POOL_CARD.id) eggPoolPickerFilter('card');
 }
+
+// ===== 鸡蛋：平台账号池（浏览器 / 设备码登录） =====
+// 一张平台卡片 = 一个平台池：账号数、模型数、余额，以及添加账号 / 续期 /
+// 刷新余额 / 一键领取。凭据只留在网关本机，面板只拿公开视图。
+
+function eggPlatformDef(platform){
+  const id = String(platform || '');
+  return (EGG_PLATFORM_DEFS || []).find(p => p.id === id) || null;
+}
+
+function eggPlatformPool(platform){
+  const id = String(platform || '');
+  return (EGG_PLATFORMS || []).find(p => p && p.platform === id) || null;
+}
+
+function eggPlatformTokenText(value){
+  const n = Number(value || 0);
+  if(!n) return '0';
+  if(n >= 1e8) return (n / 1e8).toFixed(2).replace(/\.?0+$/, '') + ' 亿';
+  if(n >= 1e4) return (n / 1e4).toFixed(1).replace(/\.0$/, '') + ' 万';
+  return String(n);
+}
+
+function eggPlatformBalanceText(pool){
+  const b = (pool && pool.balance) || {};
+  if(b.daily_limit || b.daily_used){
+    return eggPlatformTokenText(b.daily_used || 0) + ' / '
+      + eggPlatformTokenText(b.daily_limit || 0) + ' 今日 Tokens';
+  }
+  if(b.total_balance || b.total_quota){
+    return eggPlatformTokenText(b.total_balance || 0) + ' / '
+      + eggPlatformTokenText(b.total_quota || 0) + ' Tokens';
+  }
+  if(b.note) return String(b.note);
+  if(b.error) return '查询失败：' + String(b.error);
+  return '—';
+}
+
+function eggPlatformExpiryText(account){
+  const sec = Number((account && account.expires_in) || 0);
+  if(!sec) return '登录态已过期';
+  if(sec < 3600) return Math.max(1, Math.round(sec / 60)) + ' 分钟后到期';
+  if(sec < 86400) return Math.round(sec / 3600) + ' 小时后到期';
+  return Math.round(sec / 86400) + ' 天后到期';
+}
+
+function applyEggPlatformPools(pools, removeIds){
+  if(!Array.isArray(pools)) return;
+  const byId = new Map((EGG_POOLS || []).map(p => [p.id, p]));
+  pools.forEach(p => { if(p && p.id) byId.set(p.id, p); });
+  (removeIds || []).forEach(id => byId.delete(id));
+  EGG_POOLS = Array.from(byId.values());
+  EGG_PLATFORMS = EGG_POOLS.filter(p => p && p.kind === 'platform');
+}
+
+function renderEggPlatforms(){
+  const box = document.getElementById('eggPlatformList');
+  if(!box) return;
+  let defs = (EGG_PLATFORM_DEFS || []).slice();
+  if(!defs.length && EGG_PLATFORMS.length){
+    defs = EGG_PLATFORMS.map(p => ({
+      id: p.platform, name: p.platform_label || p.name || p.platform,
+      short: p.platform_short || p.platform, login_label: p.login_label || '登录',
+      hint: '', home: p.platform_home || '',
+      balance: !!p.can_balance, claim: !!p.can_claim,
+    }));
+  }
+  if(!defs.length){
+    box.innerHTML = '<div style="font-size:12px;color:var(--dim);padding:10px 2px">'
+      + '平台列表加载中…（如果一直这样，重启网关后再试）</div>';
+    return;
+  }
+  box.innerHTML = defs.map(def => eggPlatformCardHtml(def, eggPlatformPool(def.id))).join('');
+  // 重画后把每个平台上次留下的筛选（搜索词 / 只看免费）照旧套上。
+  defs.forEach(def => {
+    const p = eggPlatformPool(def.id);
+    if(p && EGG_PLATFORM_PICK_FILTER[p.id]) eggPlatformPickerFilter(p.id);
+  });
+}
+
+function eggPlatformCardHtml(def, p){
+  const platform = def.id;
+  const accounts = (p && p.accounts) || [];
+  const models = (p && p.models) || [];
+  const enabled = p ? p.enabled !== false : false;
+  const open = EGG_PLATFORM_OPEN[platform] || '';
+  const balanceText = p ? eggPlatformBalanceText(p) : '—';
+  const claim = (p && p.claim) || {};
+  const claimText = claim.at
+    ? ((claim.ok === false ? '领取未成功：' : '上次领取 ') + (claim.msg || fmtCatalogStamp(claim.at) || ''))
+    : '尚未领取';
+  const disabled = p ? '' : ' disabled';
+  const switchHtml = p
+    ? '<label class="switch" title="启用/停用这个平台池">'
+      + '<input type="checkbox" ' + (enabled ? 'checked' : '')
+      + ' data-id="' + esc(p.id) + '" onchange="toggleEggPlatformPool(this)">'
+      + '<span class="switch-track"></span></label>'
+    : '';
+  const head = '<div class="egg-platform-head">'
+    + '<div style="min-width:0">'
+      + '<div class="egg-platform-title">'
+        + '<span class="dot" style="background:' + (enabled ? 'var(--accent2)' : 'var(--dim)') + '"></span>'
+        + '<b>' + esc(def.name || platform) + '</b>'
+        + '<span class="badge s mini">' + esc(def.login_label || '登录') + '</span>'
+        + (p ? '' : '<span class="badge off mini">未登录</span>')
+      + '</div>'
+      + '<div class="egg-platform-sub">' + esc(def.hint || '') + '</div>'
+    + '</div>' + switchHtml + '</div>';
+  const stats = '<div class="egg-platform-stats">'
+    + '<div class="egg-platform-stat"><span>账号</span><b>' + accounts.length + '</b></div>'
+    + '<div class="egg-platform-stat"><span>模型</span><b>' + models.length + '</b></div>'
+    + '<div class="egg-platform-stat" style="min-width:150px"><span>余额</span><b title="' + esc(balanceText) + '">'
+      + esc(balanceText) + '</b></div>'
+    + (def.claim ? '<div class="egg-platform-stat" style="min-width:120px"><span>每日领取</span><b style="font-size:12px;font-family:inherit;font-weight:500;color:var(--dim)">' + esc(claimText) + '</b></div>' : '')
+    + '</div>';
+  const actions = '<div class="egg-platform-actions">'
+    + '<button class="primary mini" data-platform="' + esc(platform) + '" onclick="openEggPlatformLogin(this)">添加账号</button>'
+    + '<button class="sec mini" data-platform="' + esc(platform) + '" onclick="renewEggPlatform(this)"' + disabled + '>续期</button>'
+    + '<button class="sec mini" data-platform="' + esc(platform) + '" onclick="refreshEggPlatformBalance(this)"'
+      + ((def.balance && p) ? '' : ' disabled') + '>刷新余额</button>'
+    + '<button class="sec mini" data-platform="' + esc(platform) + '" onclick="claimEggPlatform(this)"'
+      + ((def.claim && p) ? '' : ' disabled') + '>一键领取</button>'
+    + '<button class="sec mini" data-platform="' + esc(platform) + '" onclick="refreshEggPlatformModels(this)"' + disabled + '>刷新模型</button>'
+    + '<span class="grow"></span>'
+    + (def.home ? '<a href="' + esc(def.home) + '" target="_blank" rel="noopener" style="font-size:11px;color:var(--dim)">平台首页</a>' : '')
+    + '</div>';
+  const toggles = '<div class="egg-platform-toggle">'
+    + '<a class="' + (open === 'accounts' ? 'on' : '') + '" data-platform="' + esc(platform) + '" onclick="toggleEggPlatformPanel(this,\'accounts\')">账号 (' + accounts.length + ')</a>'
+    + '<a class="' + (open === 'models' ? 'on' : '') + '" data-platform="' + esc(platform) + '" onclick="toggleEggPlatformPanel(this,\'models\')">模型 (' + models.length + ')</a>'
+    + '</div>';
+  let panel = '';
+  if(open === 'accounts'){
+    panel = '<div class="egg-platform-panel">' + eggPlatformAccountsHtml(platform, accounts) + '</div>';
+  }else if(open === 'models'){
+    panel = '<div class="egg-platform-panel">' + eggPlatformModelsHtml(platform, p) + '</div>';
+  }
+  return '<div class="egg-platform-card' + (enabled ? '' : ' off') + '">'
+    + head + stats + actions + toggles + panel + '</div>';
+}
+
+function eggPlatformAccountsHtml(platform, accounts){
+  if(!accounts.length){
+    return '<div style="font-size:11px;color:var(--dim)">还没有账号：点「添加账号」登录一个。</div>';
+  }
+  return accounts.map(a => {
+    const status = a.status === 'ok' ? '正常' : (a.last_error || a.status || '异常');
+    const email = a.email ? ' · ' + a.email : '';
+    return '<div class="egg-platform-account">'
+      + '<label class="switch" title="启用/停用这个账号">'
+        + '<input type="checkbox" ' + (a.enabled !== false ? 'checked' : '')
+        + ' data-platform="' + esc(platform) + '" data-account="' + esc(a.id) + '"'
+        + ' onchange="toggleEggPlatformAccount(this)">'
+        + '<span class="switch-track"></span></label>'
+      + '<div class="who"><b>' + esc(a.label || a.id) + email + '</b>'
+        + '<span>' + esc(status) + ' · ' + esc(eggPlatformExpiryText(a)) + '</span></div>'
+      + '<div class="acts">'
+        + '<a data-platform="' + esc(platform) + '" data-account="' + esc(a.id) + '" onclick="renewEggPlatformAccount(this)">续期</a>'
+        + '<a data-platform="' + esc(platform) + '" data-account="' + esc(a.id) + '" onclick="deleteEggPlatformAccount(this)">删除</a>'
+      + '</div></div>';
+  }).join('');
+}
+
+function eggPlatformModelsHtml(platform, p){
+  if(!p) return '<div style="font-size:11px;color:var(--dim)">先登录一个账号，再刷新模型。</div>';
+  const catalog = p.catalog || [];
+  if(!catalog.length){
+    return '<div style="font-size:11px;color:var(--dim)">还没有上游目录：点「刷新模型」先拉一次。</div>';
+  }
+  const picked = new Set(eggPlatformPicked(p.id, p));
+  const f = EGG_PLATFORM_PICK_FILTER[p.id] || (EGG_PLATFORM_PICK_FILTER[p.id] = {q: '', free: false});
+  const head = '<div class="egg-platform-pick-head">'
+    + '<span style="font-size:12px"><b>挑选模型</b>（已选 '
+    + '<span class="egg-platform-pick-count" data-pool="' + esc(p.id) + '">' + picked.size + '</span> / '
+    + catalog.length + '）</span>'
+    + '<a onclick="eggPlatformSelectAll(\'' + esc(p.id) + '\', true)">全选</a>'
+    + '<a onclick="eggPlatformSelectAll(\'' + esc(p.id) + '\', false)">全不选</a>'
+    + '<button class="sec mini" data-platform="' + esc(platform) + '" onclick="saveEggPlatformModels(this)">保存选择</button>'
+    + '</div>'
+    // 筛选：按模型 id 搜，或只看免费（平台清单里 free 标记由上游给）
+    + '<div class="egg-pool-pick-filter">'
+    + '<input type="search" class="egg-pool-pick-search" placeholder="搜索模型 ID…"'
+    + ' value="' + esc(f.q || '') + '"'
+    + ' oninput="eggPlatformPickerFilter(\'' + esc(p.id) + '\', this.value)">'
+    + '<label><input type="checkbox" ' + (f.free ? 'checked' : '')
+    + ' onchange="eggPlatformPickerFilter(\'' + esc(p.id) + '\', null, this.checked)"> 只看免费</label>'
+    + '<span class="egg-platform-pick-shown" data-pool="' + esc(p.id) + '"></span>'
+    + '</div>';
+  const list = '<div class="egg-platform-models" data-pool="' + esc(p.id) + '">'
+    + catalog.map(m => {
+      const id = String(m.id || '');
+      const on = picked.has(id);
+      const free = eggModelIsFree(m);
+      return '<label class="egg-platform-model' + (on ? ' on' : '') + '"'
+        + ' data-mid="' + esc(id) + '"'
+        + (free ? ' data-free="1"' : '')
+        + '>'
+        + '<input type="checkbox" ' + (on ? 'checked' : '')
+        + ' data-platform="' + esc(platform) + '" data-pool="' + esc(p.id) + '"'
+        + ' data-model="' + esc(id) + '"'
+        + ' onchange="eggPlatformToggleModel(this)">'
+        + '<span class="mono" style="font-size:11px">' + esc(id) + '</span>'
+        + (free ? '<span class="egg-pool-pick-free">免费</span>' : '')
+        + '</label>';
+    }).join('') + '</div>';
+  return head + list
+    + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">'
+      + '<span class="hint egg-platform-pick-foot" style="margin:0" data-pool="' + esc(p.id) + '"'
+      + ' data-total="' + catalog.length + '">' + picked.size + ' / ' + catalog.length + ' 个模型对外提供</span>'
+    + '</div>';
+}
+
+// 勾选状态按池子 id 存；第一次摊开时用池子里已存的 models 初始化。
+// base（落盘时的模型清单）对不上就重来一次 —— 说明池子被刷新/保存过了。
+function eggPlatformPicked(poolId, p){
+  const saved = ((p && p.models) || []).slice();
+  const base = saved.join(' ');
+  const state = EGG_PLATFORM_PICK[poolId];
+  if(!state || state.base !== base){
+    EGG_PLATFORM_PICK[poolId] = {ids: saved, base: base};
+  }
+  return EGG_PLATFORM_PICK[poolId].ids;
+}
+
+function toggleEggPlatformPanel(el, section){
+  const platform = el && el.dataset ? el.dataset.platform : String(el || '');
+  EGG_PLATFORM_OPEN[platform] = EGG_PLATFORM_OPEN[platform] === section ? '' : section;
+  renderEggPlatforms();
+  // 摊开模型列表时把上次的筛选（搜索词 / 只看免费）照旧套上。
+  const p = eggPlatformPool(platform);
+  if(EGG_PLATFORM_OPEN[platform] === 'models' && p){
+    eggPlatformPickerFilter(p.id);
+  }
+}
+
+// 筛选：命中才显示（隐藏不取消勾选 —— 筛完再全选，别把藏着的也改掉）。
+function eggPlatformPickerFilter(poolId, q, onlyFree){
+  if(!EGG_PLATFORM_PICK_FILTER[poolId]) EGG_PLATFORM_PICK_FILTER[poolId] = {q: '', free: false};
+  const f = EGG_PLATFORM_PICK_FILTER[poolId];
+  if(typeof q === 'string') f.q = q;
+  if(typeof onlyFree === 'boolean') f.free = onlyFree;
+  const list = document.querySelector('.egg-platform-models[data-pool="' + poolId + '"]');
+  if(!list) return;
+  const items = list.querySelectorAll('.egg-platform-model');
+  const needle = String(f.q || '').trim().toLowerCase();
+  let shown = 0;
+  let freeCount = 0;
+  items.forEach(item => {
+    const mid = item.getAttribute('data-mid') || '';
+    const free = item.getAttribute('data-free') === '1';
+    if(free) freeCount++;
+    const hit = (!needle || mid.toLowerCase().indexOf(needle) >= 0)
+      && (!f.free || free);
+    item.style.display = hit ? '' : 'none';
+    if(hit) shown++;
+  });
+  const hint = document.querySelector('.egg-platform-pick-shown[data-pool="' + poolId + '"]');
+  if(hint){
+    hint.textContent = '显示 ' + shown + ' / ' + items.length
+      + ' · 免费 ' + freeCount;
+  }
+}
+
+// 勾选一个模型：就地改状态，不重画整个卡片（重画会丢搜索框焦点）。
+function eggPlatformToggleModel(input){
+  const platform = input.dataset.platform;
+  const poolId = input.dataset.pool;
+  const id = input.dataset.model;
+  const p = eggPlatformPool(platform);
+  if(!p) return;
+  const picked = new Set(eggPlatformPicked(poolId, p));
+  if(input.checked) picked.add(id); else picked.delete(id);
+  const state = EGG_PLATFORM_PICK[poolId];
+  state.ids = Array.from(picked);
+  const item = input.closest('.egg-platform-model');
+  if(item) item.classList.toggle('on', !!input.checked);
+  eggPlatformPickCounters(poolId);
+}
+
+// 全选 / 全不选：只作用于**当前看得见**的那些（筛到「只看免费」再全选，
+// 就只勾免费模型；藏着的那些保持原样）。
+function eggPlatformSelectAll(poolId, on){
+  const list = document.querySelector('.egg-platform-models[data-pool="' + poolId + '"]');
+  if(!list) return;
+  const inputs = Array.from(list.querySelectorAll('input[type=checkbox]'));
+  inputs.forEach(i => {
+    const item = i.closest('.egg-platform-model');
+    if(item && item.style.display === 'none') return;
+    i.checked = !!on;
+    if(item) item.classList.toggle('on', !!on);
+  });
+  // 已选清单按整份列表算（藏着的也算，只是没显示）。
+  const ids = inputs.filter(i => i.checked).map(i => {
+    const wrap = i.closest('.egg-platform-model');
+    return wrap ? (wrap.getAttribute('data-mid') || '') : '';
+  }).filter(Boolean);
+  const state = EGG_PLATFORM_PICK[poolId];
+  if(state) state.ids = ids;
+  eggPlatformPickCounters(poolId);
+}
+
+function eggPlatformPickCounters(poolId){
+  const state = EGG_PLATFORM_PICK[poolId];
+  const n = (state && state.ids) ? state.ids.length : 0;
+  const counter = document.querySelector('.egg-platform-pick-count[data-pool="' + poolId + '"]');
+  if(counter) counter.textContent = String(n);
+  const foot = document.querySelector('.egg-platform-pick-foot[data-pool="' + poolId + '"]');
+  if(foot) foot.textContent = n + ' / ' + foot.getAttribute('data-total') + ' 个模型对外提供';
+}
+
+async function saveEggPlatformModels(el){
+  const platform = el.dataset.platform;
+  const p = eggPlatformPool(platform);
+  if(!p) return;
+  const state = EGG_PLATFORM_PICK[p.id];
+  try{
+    const r = await postJSON('/egg/pools/models', {id: p.id, models: (state && state.ids) || []});
+    if(r && r.ok){
+      applyEggPlatformPools([r.pool], []);
+      renderEggPlatforms();
+      toast('模型选择已保存', 'ok');
+      await loadModels();
+    }else{
+      toast((r && r.msg) || '保存失败', 'warn');
+    }
+  }catch(e){
+    toast('保存失败：' + eggPoolErrorText(e), 'bad');
+  }
+}
+
+async function toggleEggPlatformPool(input){
+  const id = input.dataset.id;
+  try{
+    const r = await postJSON('/egg/pools/toggle', {id: id, enabled: !!input.checked});
+    if(r && r.ok){
+      applyEggPlatformPools(r.pools || []);
+      renderEggPlatforms();
+      renderEggPoolList();
+      renderEggOverview();
+      await loadModels();
+    }
+  }catch(e){
+    toast('切换失败：' + eggPoolErrorText(e), 'bad');
+    await loadEggPools();
+  }
+}
+
+async function toggleEggPlatformAccount(input){
+  const platform = input.dataset.platform;
+  const accountId = input.dataset.account;
+  try{
+    const r = await postJSON('/egg/platforms/account/toggle', {
+      platform: platform, account_id: accountId, enabled: !!input.checked});
+    if(r && r.ok){
+      applyEggPlatformPools(r.pools || []);
+      renderEggPlatforms();
+      renderEggPoolList();
+      await loadModels();
+    }else{
+      toast((r && r.msg) || '切换失败', 'warn');
+      await loadEggPools();
+    }
+  }catch(e){
+    toast('切换失败：' + eggPoolErrorText(e), 'bad');
+    await loadEggPools();
+  }
+}
+
+async function deleteEggPlatformAccount(el){
+  const platform = el.dataset.platform;
+  const accountId = el.dataset.account;
+  if(!confirm('删除这个账号？它提供的模型会从平台池里移除。')) return;
+  try{
+    const r = await postJSON('/egg/platforms/account/delete', {
+      platform: platform, account_id: accountId});
+    if(r && r.ok){
+      applyEggPlatformPools(r.pools || []);
+      renderEggPlatforms();
+      renderEggPoolList();
+      toast(r.msg || '账号已删除', 'ok');
+      await loadModels();
+    }else{
+      toast((r && r.msg) || '删除失败', 'warn');
+    }
+  }catch(e){
+    toast('删除失败：' + eggPoolErrorText(e), 'bad');
+  }
+}
+
+async function renewEggPlatform(el){
+  const platform = el.dataset.platform;
+  await renewEggPlatformCall(platform, '', el);
+}
+
+async function renewEggPlatformAccount(el){
+  const platform = el.dataset.platform;
+  await renewEggPlatformCall(platform, el.dataset.account, el);
+}
+
+async function renewEggPlatformCall(platform, accountId, btn){
+  if(btn) btn.disabled = true;
+  try{
+    const body = {platform: platform};
+    if(accountId) body.account_id = accountId;
+    const r = await postJSON('/egg/platforms/account/renew', body);
+    if(r && r.pools) applyEggPlatformPools(r.pools);
+    renderEggPlatforms();
+    renderEggPoolList();
+    if(r && r.ok) toast(r.msg || '已续期', 'ok');
+    else toast((r && r.msg) || '续期失败', 'warn');
+  }catch(e){
+    toast('续期失败：' + eggPoolErrorText(e), 'bad');
+  }finally{
+    if(btn) btn.disabled = false;
+  }
+}
+
+async function refreshEggPlatformBalance(el){
+  const platform = el.dataset.platform;
+  if(el) el.disabled = true;
+  try{
+    const r = await postJSON('/egg/platforms/balance', {platform: platform});
+    if(r && r.pools) applyEggPlatformPools(r.pools);
+    renderEggPlatforms();
+    if(r && r.ok) toast(r.msg || '余额已更新', 'ok');
+    else toast((r && r.msg) || '刷新余额失败', 'warn');
+  }catch(e){
+    toast('刷新余额失败：' + eggPoolErrorText(e), 'bad');
+  }finally{
+    if(el) el.disabled = false;
+  }
+}
+
+async function claimEggPlatform(el){
+  const platform = el.dataset.platform;
+  if(el) el.disabled = true;
+  try{
+    const r = await postJSON('/egg/platforms/claim', {platform: platform});
+    if(r && r.pools) applyEggPlatformPools(r.pools);
+    renderEggPlatforms();
+    if(r && r.ok) toast(r.msg || '领取请求已提交', 'ok');
+    else toast((r && r.msg) || '领取失败', 'warn');
+  }catch(e){
+    toast('领取失败：' + eggPoolErrorText(e), 'bad');
+  }finally{
+    if(el) el.disabled = false;
+  }
+}
+
+async function refreshEggPlatformModels(el){
+  const platform = el.dataset.platform;
+  const p = eggPlatformPool(platform);
+  if(!p){
+    toast('先登录一个账号，再刷新模型', 'warn');
+    return;
+  }
+  if(el) el.disabled = true;
+  try{
+    const r = await postJSON('/egg/platforms/refresh', {platform: platform});
+    if(r && r.pools) applyEggPlatformPools(r.pools);
+    renderEggPlatforms();
+    renderEggPoolList();
+    if(r && r.ok){
+      toast(r.msg || '已刷新', 'ok');
+      await loadModels();
+    }else{
+      toast((r && r.msg) || '刷新失败', 'warn');
+    }
+  }catch(e){
+    toast('刷新失败：' + eggPoolErrorText(e), 'bad');
+  }finally{
+    if(el) el.disabled = false;
+  }
+}
+
+/* ---- 平台登录弹窗 ---- */
+function eggPlatformLoginEls(){
+  const byId = id => document.getElementById(id);
+  return {
+    modal: byId('eggPlatformLoginModal'),
+    title: byId('eggPlatformLoginTitle'),
+    hint: byId('eggPlatformLoginHint'),
+    step1: byId('eggPlatformStep1'),
+    step1Text: byId('eggPlatformStep1Text'),
+    step2: byId('eggPlatformStep2'),
+    step3: byId('eggPlatformStep3'),
+    linkBox: byId('eggPlatformLinkBox'),
+    deviceBox: byId('eggPlatformDeviceBox'),
+    status: byId('eggPlatformLoginStatus'),
+    callbackBox: byId('eggPlatformCallbackBox'),
+    callbackInput: byId('eggPlatformCallbackInput'),
+    callbackStatus: byId('eggPlatformCallbackStatus'),
+    restart: byId('eggPlatformRestartBtn'),
+  };
+}
+
+function setEggPlatformLoginStatus(text, kind){
+  const el = eggPlatformLoginEls().status;
+  if(!el) return;
+  el.textContent = text || '';
+  el.style.color = kind === 'ok' ? 'var(--accent2)'
+    : (kind === 'bad' ? 'var(--bad)' : (kind === 'warn' ? 'var(--warn)' : 'var(--dim)'));
+}
+
+function openEggPlatformLogin(el){
+  const platform = typeof el === 'string' ? el : (el && el.dataset ? el.dataset.platform : '');
+  const def = eggPlatformDef(platform) || {name: platform, hint: '', login: 'browser'};
+  EGG_PLATFORM_LOGIN.platform = platform;
+  const els = eggPlatformLoginEls();
+  if(els.modal) els.modal.classList.add('show');
+  if(els.title) els.title.textContent = '添加' + (def.name || platform) + '账号';
+  if(els.hint) els.hint.textContent = def.hint || '';
+  if(els.callbackBox) els.callbackBox.style.display = def.login === 'browser' ? 'block' : 'none';
+  if(els.callbackInput) els.callbackInput.value = '';
+  if(els.callbackStatus) els.callbackStatus.textContent = '';
+  restartEggPlatformLogin();
+}
+
+function closeEggPlatformLogin(){
+  const els = eggPlatformLoginEls();
+  if(els.modal) els.modal.classList.remove('show');
+  stopEggPlatformLoginPoll();
+  const state = EGG_PLATFORM_LOGIN.state;
+  EGG_PLATFORM_LOGIN = {platform: '', state: '', timer: null, url: ''};
+  if(state){
+    postJSON('/egg/platforms/login/cancel', {state: state}).catch(()=>{});
+  }
+}
+
+function stopEggPlatformLoginPoll(){
+  if(EGG_PLATFORM_LOGIN.timer){
+    clearInterval(EGG_PLATFORM_LOGIN.timer);
+    EGG_PLATFORM_LOGIN.timer = null;
+  }
+}
+
+async function restartEggPlatformLogin(){
+  const platform = EGG_PLATFORM_LOGIN.platform;
+  const def = eggPlatformDef(platform) || {name: platform, login: 'browser'};
+  const els = eggPlatformLoginEls();
+  stopEggPlatformLoginPoll();
+  const oldState = EGG_PLATFORM_LOGIN.state;
+  EGG_PLATFORM_LOGIN.state = '';
+  if(oldState) postJSON('/egg/platforms/login/cancel', {state: oldState}).catch(()=>{});
+  if(els.linkBox) els.linkBox.innerHTML = '';
+  if(els.deviceBox){ els.deviceBox.style.display = 'none'; els.deviceBox.textContent = ''; }
+  if(els.status) els.status.textContent = '';
+  if(els.step1) els.step1.className = 'step active';
+  if(els.step2) els.step2.className = 'step';
+  if(els.step3) els.step3.className = 'step';
+  if(els.step1Text) els.step1Text.textContent = '正在生成登录链接…';
+  if(els.restart) els.restart.style.display = '';
+  try{
+    const r = await postJSON('/egg/platforms/login/start', {platform: platform});
+    EGG_PLATFORM_LOGIN.state = r.state || '';
+    EGG_PLATFORM_LOGIN.url = r.url || '';
+    if(els.step1) els.step1.className = 'step done';
+    if(els.step2) els.step2.className = 'step active';
+    if(els.step1Text) els.step1Text.textContent = '登录链接已生成';
+    if(r.user_code && els.deviceBox){
+      els.deviceBox.style.display = 'block';
+      els.deviceBox.textContent = r.user_code;
+    }
+    if(els.linkBox){
+      els.linkBox.innerHTML = (r.url
+        ? '<a class="egg-platform-login-link" href="' + esc(r.url) + '" target="_blank" rel="noopener">' + esc(r.url) + '</a>'
+        : '')
+        + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
+        + '<button class="primary mini" onclick="openEggPlatformLoginPage()">打开登录页</button>'
+        + '<button class="sec mini" onclick="copyEggPlatformLoginLink()">复制登录链接</button>'
+        + '</div>'
+        + '<div class="hint" style="margin:8px 0 0">' + esc(r.instructions || def.hint || '') + '</div>';
+    }
+    pollEggPlatformLogin();
+    EGG_PLATFORM_LOGIN.timer = setInterval(pollEggPlatformLogin, 2500);
+  }catch(e){
+    if(els.step1) els.step1.className = 'step';
+    setEggPlatformLoginStatus('发起登录失败：' + eggPoolErrorText(e), 'bad');
+  }
+}
+
+function openEggPlatformLoginPage(){
+  const url = EGG_PLATFORM_LOGIN.url;
+  if(!url){ toast('还没有登录链接：点「重新生成链接」', 'warn'); return; }
+  window.open(url, '_blank', 'noopener');
+}
+
+async function copyEggPlatformLoginLink(){
+  const url = EGG_PLATFORM_LOGIN.url;
+  if(!url){ toast('还没有登录链接', 'warn'); return; }
+  try{
+    await writeClipboard(url);
+    toast('已复制到剪贴板', 'ok');
+  }catch(e){
+    toast('复制失败: ' + e.message, 'bad');
+  }
+}
+
+async function pollEggPlatformLogin(){
+  const state = EGG_PLATFORM_LOGIN.state;
+  if(!state) return;
+  try{
+    const r = await getJSON('/egg/platforms/login/poll?state=' + encodeURIComponent(state));
+    const els = eggPlatformLoginEls();
+    if(r.pools) applyEggPlatformPools(r.pools);
+    if(r.status === 'success'){
+      stopEggPlatformLoginPoll();
+      EGG_PLATFORM_LOGIN.state = '';
+      if(els.step2) els.step2.className = 'step done';
+      if(els.step3) els.step3.className = 'step done';
+      const who = (r.account && r.account.label) || '';
+      setEggPlatformLoginStatus(r.msg || ('登录成功：' + who + ' 已加入账号池'), 'ok');
+      renderEggPlatforms();
+      renderEggPoolList();
+      renderEggOverview();
+      const platform = EGG_PLATFORM_LOGIN.platform;
+      setTimeout(() => { closeEggPlatformLogin(); }, 1200);
+      // 登录成功顺手拉一次模型：操作者回到卡片就能看到模型数。
+      setTimeout(() => { refreshEggPlatformModels({dataset: {platform: platform}}); }, 1400);
+      return;
+    }
+    if(r.status === 'error' || r.status === 'expired' || r.status === 'missing'){
+      stopEggPlatformLoginPoll();
+      if(els.step3) els.step3.className = 'step';
+      setEggPlatformLoginStatus(r.error || ('登录状态：' + r.status), 'bad');
+      return;
+    }
+    if(els.step3) els.step3.className = 'step active';
+    setEggPlatformLoginStatus(r.instructions || '等待浏览器授权…', 'dim');
+  }catch(e){
+    // 单次轮询失败不打断流程：下一轮继续。
+    console.error('pollEggPlatformLogin error:', e);
+  }
+}
+
+async function submitEggPlatformCallback(){
+  const els = eggPlatformLoginEls();
+  const state = EGG_PLATFORM_LOGIN.state;
+  const url = els.callbackInput ? els.callbackInput.value.trim() : '';
+  if(!state){ toast('登录会话已过期：点「重新生成链接」', 'warn'); return; }
+  if(!url){ toast('先粘贴回调 URL', 'warn'); return; }
+  const btn = els.callbackInput && document.getElementById('eggPlatformCallbackBtn');
+  if(btn) btn.disabled = true;
+  if(els.callbackStatus) els.callbackStatus.textContent = '正在用回调 URL 换取登录态…';
+  try{
+    const r = await postJSON('/egg/platforms/login/callback', {state: state, url: url});
+    if(r.pools) applyEggPlatformPools(r.pools);
+    if(r.ok || r.status === 'success'){
+      stopEggPlatformLoginPoll();
+      EGG_PLATFORM_LOGIN.state = '';
+      if(els.callbackStatus) els.callbackStatus.textContent = r.msg || '登录成功';
+      setEggPlatformLoginStatus('登录成功：账号已加入平台池', 'ok');
+      renderEggPlatforms();
+      renderEggPoolList();
+      renderEggOverview();
+      const platform = EGG_PLATFORM_LOGIN.platform;
+      setTimeout(() => { closeEggPlatformLogin(); }, 1200);
+      setTimeout(() => { refreshEggPlatformModels({dataset: {platform: platform}}); }, 1400);
+    }else{
+      if(els.callbackStatus) els.callbackStatus.textContent = r.error || '回调失败';
+      setEggPlatformLoginStatus(r.error || '回调失败', 'bad');
+    }
+  }catch(e){
+    if(els.callbackStatus) els.callbackStatus.textContent = '回调失败：' + eggPoolErrorText(e);
+    setEggPlatformLoginStatus('回调失败：' + eggPoolErrorText(e), 'bad');
+  }finally{
+    if(btn) btn.disabled = false;
+  }
+}
+
 
 function editEggPool(id){
   const p = EGG_POOLS.find(x => x.id === id);
@@ -8819,18 +9696,21 @@ function renderAvailableModels(){
   // 池子筛选的下拉要先建好（选项从清单里长出来），再按它过滤行。
   buildEggPoolFilter();
   const rows = eggFilteredModels();
+  const disabledInRows = rows.filter(m => m && m.disabled === true).length;
   const countEm = document.getElementById('availModelCount');
   if(countEm){
+    const total = rows.length;
+    const offNote = disabledInRows ? (' · ' + disabledInRows + ' 个已停用') : '';
     countEm.textContent = EGG_POOL_FILTER
-      ? '(共 ' + rows.length + ' / ' + MODELS_DATA.length + ' 个)'
-      : '(共 ' + MODELS_DATA.length + ' 个)';
+      ? '(共 ' + rows.length + ' / ' + MODELS_DATA.length + ' 个' + offNote + ')'
+      : '(共 ' + total + ' 个' + offNote + ')';
   }
   if(!MODELS_DATA.length){
-    tb.innerHTML = '<tr><td colspan="9" class="empty">暂无可用模型</td></tr>';
+    tb.innerHTML = '<tr><td colspan="11" class="empty">暂无可用模型</td></tr>';
     return;
   }
   if(!rows.length){
-    tb.innerHTML = '<tr><td colspan="9" class="empty">这个池子当前没有模型</td></tr>';
+    tb.innerHTML = '<tr><td colspan="11" class="empty">这个池子当前没有模型</td></tr>';
     return;
   }
   tb.innerHTML = rows.map(m => {
@@ -8844,13 +9724,17 @@ function renderAvailableModels(){
     const c = credText.toLowerCase().replace('x', '');
     const credNote = String(m.credits_note || '').trim();
     const credTitle = credNote ? ' title="' + esc(credNote) + '"' : '';
-    if(currentProvider() === 'egg' && String(m.egg_source_kind || '') === 'pool'){
-      // 自建供应商池：用的是操作者自己的 Key。但上游明确标成免费的模型
-      // （id 结尾 :free / /free，或上游报 0 价）确实不消耗额度 —— 那种标
-      // 「免费」，别把免费模型说成要付费。
+    const eggKind = String(m.egg_source_kind || '');
+    if(currentProvider() === 'egg' && (eggKind === 'pool' || eggKind === 'platform')){
+      // 自建供应商池 / 平台账号池：前者用操作者自己的 Key，后者用平台登录态。
+      // 上游明确标成免费的模型（id 结尾 :free / /free，或上游报 0 价）确实
+      // 不消耗额度 —— 那种标「免费」，别把免费模型说成要付费。
       if(m.egg_free === true || eggModelIsFree(m.id)){
         credBadge = '<span class="badge ok" style="background:var(--accent2-soft);color:var(--accent2)"'
           + credTitle + '>免费</span>';
+      } else if(eggKind === 'platform'){
+        credBadge = '<span class="badge s" style="background:var(--accent-soft);color:var(--accent);border-color:rgba(124,58,237,.3)"'
+          + credTitle + '>按平台额度</span>';
       } else {
         credBadge = '<span class="badge s" style="background:var(--warn-soft);color:var(--warn);border-color:rgba(183,121,31,.35)"'
           + credTitle + '>按供应商计费</span>';
@@ -8970,7 +9854,14 @@ function renderAvailableModels(){
       ? ' <span class="badge" style="font-size:11px;background:var(--warn-soft);color:var(--warn);border-color:rgba(183,121,31,.35)"'
         + ' title="' + esc(unavailReason) + '">' + esc(unavailReason) + '</span>'
       : '';
-    const rowStyle = unavail ? ' style="opacity:.55"' : '';
+    // 面板里停用的模型：清单照常留着这一行（否则关了就没法再打开），但整行
+    // 置灰并挂一个「已停用」徽章。真正对外宣告的清单（/v1/models）里没有它。
+    const modelOff = (m.disabled === true);
+    const offBadge = modelOff
+      ? ' <span class="badge" style="font-size:11px;background:var(--warn-soft);color:var(--warn);border-color:rgba(183,121,31,.35)"'
+        + ' title="已在面板停用：agent / 客户端的模型清单里不显示这条模型，直接点名调用也会被拒绝。打开「启用」开关立即恢复。">已停用</span>'
+      : '';
+    const rowStyle = (unavail || modelOff) ? ' style="opacity:.55"' : '';
     const nameCell = '<td style="text-align:left" data-label="名称"'
       + (unavail ? ' title="' + esc(unavailReason) + '"' : '') + '>'
       + (m.is_default ? '<span title="默认模型" style="color:var(--accent)">★</span> ' : '')
@@ -8978,6 +9869,7 @@ function renderAvailableModels(){
           ? '<span' + (nmDesc ? ' title="' + esc(nmDesc) + '"' : '') + '>' + esc(nm) + '</span>'
           : '<span style="color:var(--dim)">—</span>')
       + unavailBadge
+      + offBadge
       + '</td>';
 
     // 7. 免费池（鸡蛋才有这个维度）：Zen 免费车道 / Kilo 免费池 / 自建供应商池。
@@ -9012,6 +9904,52 @@ function renderAvailableModels(){
           : '<span style="color:var(--dim)">—</span>')
       + '</td>';
 
+    // 9. 启用 / 停用（本行模型是否对外提供）。开关样式与设置页一致：原生
+    //    checkbox 管状态与键盘可达性，视觉是 .switch-track 胶囊。关掉 = 从
+    //    /v1/models 的清单里消失，agent 与客户端的选择器里就看不到它了；
+    //    面板自己仍保留这一行（灰着），随时能再打开。
+    const enabledCell = '<td style="text-align:center" data-label="启用">'
+      + '<label class="switch"'
+      + ' title="' + esc(modelOff
+          ? '已停用：agent / 客户端的模型清单里不显示这条模型，直接调用会被拒绝。打开后立即恢复。'
+          : '对外提供中。关掉后立即从 agent 的模型清单里消失，且直接点名调用会被拒绝。') + '">'
+      + '<input type="checkbox"' + (modelOff ? '' : ' checked')
+      + ' onchange="toggleModelEnabled(&quot;' + esc(m.id) + '&quot;, this.checked, this)">'
+      + '<span class="switch-track"></span></label>'
+      + '</td>';
+
+    // 10. 测试（真请求，走网关自己的 /v1/chat/completions）。结果按
+    //     「提供商 + 版本 + 模型」记在 MODEL_TEST_STATE 里，表被重新渲染也还在。
+    const tkey = modelTestKey(m.id);
+    const tst = MODEL_TEST_STATE[tkey];
+    let testStateText = '';
+    if(tst && tst.status === 'running'){
+      testStateText = '<div style="font-size:11px;color:var(--accent);margin-top:3px">测试中...</div>';
+    } else if(tst && tst.status === 'ok'){
+      const secs = (tst.ms / 1000).toFixed(tst.ms >= 10000 ? 0 : 1);
+      const detail = '可用 · 总耗时 ' + secs + ' 秒'
+        + (tst.ttft != null ? ' · 首字 ' + tst.ttft + 'ms' : '')
+        + (tst.tool ? ' · 工具调用正常' : (MODEL_TEST_MODE === 'agent' ? ' · 未调用工具（只回答了内容）' : ''))
+        + (tst.reasoning ? ' · 有推理片段' : '')
+        + (tst.text ? '\n回复：' + String(tst.text).slice(0, 400) : '');
+      testStateText = '<div style="font-size:11px;color:var(--accent2);margin-top:3px;font-weight:600"'
+        + ' title="' + esc(detail) + '">✓ 可用 ' + esc(secs) + 's</div>';
+    } else if(tst && tst.status === 'bad'){
+      testStateText = '<div style="font-size:11px;color:var(--bad);margin-top:3px;font-weight:600"'
+        + ' title="' + esc(String(tst.error || '测试失败')) + '">✗ 不可用</div>';
+    }
+    const testCell = '<td style="text-align:center" data-label="测试">'
+      + '<button class="sec mini"' + (modelOff ? ' disabled' : '')
+      + ' onclick="testGatewayModel(&quot;' + esc(m.id) + '&quot;, this)"'
+      + ' title="' + esc((modelOff ? '这条模型已停用，请求会在网关入口被拒绝；先在左边打开「启用」开关再测试。'
+          : '真发一条对话请求，走网关自己的 /v1/chat/completions —— 和 agent / 客户端完全同一条链路（选号、路由、上游请求、流式聚合都在里面）。')
+          + (MODEL_TEST_MODE === 'agent'
+              ? '当前是 Agent 口径：带工具定义，模型回答或调用工具都算可用。'
+              : '当前是对话口径：不带工具，只要求正常回答。'))
+      + '">' + (tst && tst.status === 'running' ? '测试中...' : '测试') + '</button>'
+      + testStateText
+      + '</td>';
+
     return '<tr' + rowStyle + '>'
       + '<td style="text-align:left" class="mono" data-label="?? ID" title="' + esc(m.id) + '"><b>' + esc(m.id) + '</b></td>'
       + nameCell
@@ -9022,12 +9960,234 @@ function renderAvailableModels(){
       + '<td style="text-align:center" data-label="最大输出">' + maxOut + '</td>'
       + '<td style="text-align:left" data-label="思考档位">' + effort + '</td>'
       + sampleCell
+      + enabledCell
+      + testCell
       + '</tr>';
   }).join('');
   applyTableSort('modelsTable');
 }
 
 let CURRENT_GROWTH_UID = 'all';
+
+/* ---------------------------------------------------------------- 模型清单的
+   启用 / 停用 + 逐条测试
+   ---------------------------------------------------------------------------
+   两条都作用在「网关模型清单」这一层，但语义完全不同：
+
+     * 停用（/models/toggle）改的是网关对外宣告的模型集合。停用后 /v1/models
+       不再返回该模型，agent / 客户端的选择器里就看不到它；直接点名调用也会
+       被网关拒绝。面板自己带 include_disabled=1 取回，仍能看到灰着的行。
+     * 测试（testGatewayModel）真发一条对话请求到网关自己的
+       /v1/chat/completions —— 和 agent / 客户端走的是同一条链路（模型归属、
+       选号、上游 body、系统提示注入、流式聚合、扣费记账都在里面）。直接打
+       上游的最小探针（账号行上的「测试」）证明不了这件事：它绕过了网关的
+       路由与归属判断，所以「账号测试绿了但 agent 用不了」是可能的。
+
+   两种口径由表头的下拉决定：Agent（带 tools，和真实 agent 的请求形状一致）
+   或对话（不带工具，只验证能正常回答）。表被重画时结果从 MODEL_TEST_STATE
+   里读回来，所以点完测试再切换版本/刷新清单，结论不会丢。 */
+
+let MODEL_TEST_MODE = 'agent';
+try{
+  const savedMode = localStorage.getItem('wb-model-test-mode');
+  if(savedMode === 'chat' || savedMode === 'agent') MODEL_TEST_MODE = savedMode;
+}catch(e){}
+(function initModelTestMode(){
+  const sel = document.getElementById('modelTestMode');
+  if(sel) sel.value = MODEL_TEST_MODE;
+})();
+
+function setModelTestMode(mode){
+  MODEL_TEST_MODE = (mode === 'chat') ? 'chat' : 'agent';
+  try{ localStorage.setItem('wb-model-test-mode', MODEL_TEST_MODE); }catch(e){}
+}
+
+/* 测试结果的键：同一个模型 id 在不同提供商 / 版本下是两条独立的记录。 */
+function modelTestKey(id){
+  return currentProvider() + '|' + (window.VIEW_REALM === 'cn' ? 'cn' : 'intl')
+         + '|' + String(id || '');
+}
+
+/* 一次测试要发什么。Agent 口径刻意带上工具定义：很多模型能闲聊、但一到
+   tools 就 400 或永远不调用 —— agent 场景要的正是「带工具还能不能正常回答」。
+   不带 max_tokens 之外的特殊字段，尽量贴近客户端的真实请求形状。 */
+function modelTestPayload(id){
+  if(MODEL_TEST_MODE === 'agent'){
+    return {
+      model: id,
+      stream: true,
+      max_tokens: 512,
+      messages: [
+        {role: 'system', content: '你是一个编程 agent。需要读文件时必须调用提供的工具，不要凭空猜测。'},
+        {role: 'user', content: '请调用 read_file 读取 README.md 的第一行，然后只回复读到的内容。'}
+      ],
+      tools: [{
+        type: 'function',
+        function: {
+          name: 'read_file',
+          description: '读取工作区里的文件内容',
+          parameters: {
+            type: 'object',
+            properties: {path: {type: 'string', description: '文件路径'}},
+            required: ['path']
+          }
+        }
+      }],
+      tool_choice: 'auto'
+    };
+  }
+  return {
+    model: id,
+    stream: true,
+    max_tokens: 256,
+    messages: [{role: 'user', content: '只回复两个字：正常'}]
+  };
+}
+
+/* 读网关的 SSE 流，汇总成一句结论。网关（以及各家适配器）发的都是标准
+   data: {...}\n\n；这里不解析具体的 delta 结构，只看「有没有内容 / 工具调用 /
+   推理片段」和「有没有在带内报错」——测试要的是结论，不是复刻客户端渲染。 */
+async function readModelTestStream(res){
+  const out = {text: '', reasoning: false, tool: false, ttft: null, error: ''};
+  const t0 = (typeof performance !== 'undefined' && performance.now)
+    ? performance.now() : Date.now();
+  const now = () => ((typeof performance !== 'undefined' && performance.now)
+    ? performance.now() : Date.now()) - t0;
+  const takeObject = obj => {
+    if(!obj || typeof obj !== 'object') return;
+    if(obj.error){
+      const err = obj.error;
+      out.error = String((err && (err.message || err.type)) || err);
+      return;
+    }
+    const choice = (obj.choices || [])[0] || {};
+    const delta = choice.delta || choice.message || {};
+    if(typeof delta.content === 'string' && delta.content) out.text += delta.content;
+    if(typeof delta.reasoning_content === 'string' && delta.reasoning_content) out.reasoning = true;
+    if(Array.isArray(delta.tool_calls) && delta.tool_calls.length) out.tool = true;
+    if(choice.message && Array.isArray(choice.message.tool_calls) && choice.message.tool_calls.length) out.tool = true;
+    if(out.ttft == null && (out.text || out.reasoning || out.tool)) out.ttft = Math.round(now());
+  };
+  if(!res.body || typeof res.body.getReader !== 'function'){
+    // fetch 被降级/桩掉时没有流：当普通 JSON 读一次，至少别把结论弄丢。
+    try{ takeObject(await res.json()); }catch(e){ out.error = '无法读取响应：' + e.message; }
+    return out;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  const takeBlock = block => {
+    const trimmed = String(block || '').trim();
+    if(!trimmed) return;
+    // 少数网关/代理会忽略 stream:true 直接回一份 JSON。
+    if(trimmed.charAt(0) === '{'){
+      try{ takeObject(JSON.parse(trimmed)); }catch(e){}
+      return;
+    }
+    trimmed.split('\n').forEach(line => {
+      if(line.indexOf('data:') !== 0) return;
+      const raw = line.slice(5).trim();
+      if(!raw || raw === '[DONE]') return;
+      try{ takeObject(JSON.parse(raw)); }catch(e){}
+    });
+  };
+  while(true){
+    const step = await reader.read();
+    if(step.done) break;
+    buf += decoder.decode(step.value, {stream: true});
+    let cut;
+    while((cut = buf.indexOf('\n\n')) >= 0){
+      takeBlock(buf.slice(0, cut));
+      buf = buf.slice(cut + 2);
+    }
+  }
+  if(buf) takeBlock(buf);
+  return out;
+}
+
+/* 点一行的「测试」：真发一条请求，结论写进 MODEL_TEST_STATE 并就地渲染。
+   不弹确认框、不阻塞其它行；同一条模型在测的时候按钮置灰防重复。 */
+async function testGatewayModel(id, btn){
+  const key = modelTestKey(id);
+  const prev = MODEL_TEST_STATE[key];
+  if(prev && prev.status === 'running') return;
+  const started = Date.now();
+  MODEL_TEST_STATE[key] = {status: 'running', at: started};
+  if(btn){ btn.disabled = true; btn.textContent = '测试中...'; }
+  const ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), 120000) : null;
+  try{
+    const provider = currentProvider();
+    const realm = window.VIEW_REALM === 'cn' ? 'cn' : 'intl';
+    const url = '/v1/chat/completions?provider=' + encodeURIComponent(provider)
+              + '&realm=' + encodeURIComponent(realm);
+    const res = await fetch(url, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: authHeaders({'Content-Type': 'application/json'}),
+      body: JSON.stringify(modelTestPayload(id)),
+      signal: ctl ? ctl.signal : undefined
+    });
+    if(!res.ok){
+      let detail = '';
+      try{ detail = await res.text(); }catch(e){}
+      let msg = detail;
+      try{
+        const obj = JSON.parse(detail);
+        msg = (obj.error && (obj.error.message || obj.error.type)) || detail;
+      }catch(e){}
+      throw new Error('HTTP ' + res.status + '：' + String(msg || '上游未返回内容').slice(0, 300));
+    }
+    const agg = await readModelTestStream(res);
+    if(agg.error) throw new Error(agg.error);
+    if(!agg.text && !agg.tool && !agg.reasoning){
+      throw new Error('上游返回 200，但没有任何回答内容（空响应）');
+    }
+    const ms = Date.now() - started;
+    MODEL_TEST_STATE[key] = {status: 'ok', at: Date.now(), ms: ms, ttft: agg.ttft,
+                             tool: agg.tool, text: agg.text, reasoning: agg.reasoning};
+    toast('「' + id + '」可用（' + (ms / 1000).toFixed(1) + 's'
+          + (agg.tool ? '，工具调用正常' : '') + '）', 'ok');
+  }catch(e){
+    const aborted = !!(e && e.name === 'AbortError');
+    const msg = aborted ? '超时：120 秒内没有完成回答'
+                        : ('测试请求失败：' + ((e && e.message) || e));
+    MODEL_TEST_STATE[key] = {status: 'bad', at: Date.now(),
+                             ms: Date.now() - started, error: msg};
+    toast('「' + id + '」不可用：' + msg, 'bad');
+  }finally{
+    if(timer) clearTimeout(timer);
+    // 只重画表格，不整页刷新：其它行的结果与滚动位置都保持原样。
+    renderAvailableModels();
+  }
+}
+
+/* 勾选 / 取消勾选一行：「停用」写进 settings.json，下次 /v1/models 起效。 */
+async function toggleModelEnabled(id, enabled, input){
+  if(input) input.disabled = true;
+  try{
+    const r = await postJSON('/models/toggle', {
+      model: id,
+      disabled: !enabled,
+      provider: currentProvider(),
+      realm: window.VIEW_REALM === 'cn' ? 'cn' : 'intl'
+    });
+    const item = (MODELS_DATA || []).find(m => m && m.id === id);
+    if(item) item.disabled = (r && typeof r.disabled === 'boolean') ? r.disabled : !enabled;
+    // 开关变了，上一次的测试结论不再代表当前状态：清掉，别让人误读。
+    delete MODEL_TEST_STATE[modelTestKey(id)];
+    renderAvailableModels();
+    toast(enabled
+      ? '已启用「' + id + '」：它会重新出现在 agent 的模型清单里。'
+      : '已停用「' + id + '」：agent 的模型清单里不再显示它，直接点名调用会被拒绝。',
+      enabled ? 'ok' : 'warn');
+  }catch(e){
+    if(input) input.checked = !enabled;
+    toast('切换「' + id + '」失败：' + e.message, 'bad');
+  }finally{
+    if(input) input.disabled = false;
+  }
+}
 
 async function switchGrowthAccount(uid){
   CURRENT_GROWTH_UID = uid;
@@ -9907,7 +11067,7 @@ const SORT_DENY_TABLES = new Set(['recent', 'desktopScanBody', 'creditsModalCont
    下标 = 表头列序号。'num' 取单元格里的数字，'text' 按文本比，null = 该列不排
    （下拉框、按钮、拼给人看的标签串）。 */
 const SORT_COL_KINDS = {
-  modelsTable:      ['text', 'text', 'text', 'num', 'text', 'num', 'num', 'text', 'text'],
+  modelsTable:      ['text', 'text', 'text', 'num', 'text', 'num', 'num', 'text', 'text', null, null],
   growthTable:      ['text', 'text', 'num', 'num', 'text'],
   // 时间列是 ISO 串，字典序就是时间序，不必另给排序值。
   creditHistoryTable: ['text', 'text', 'text', 'num', 'num'],

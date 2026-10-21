@@ -10,6 +10,9 @@
 
 相对上游基座（v1.7.16）新增或改进的主要功能（日期为落地当天）：
 
+- **2026-10-21｜平台账号池（登录即用）**：鸡蛋视图新增「平台账号」区 —— **华为云 CodeArts**（浏览器授权登录）与 **Cline**（设备码登录）各是一张卡片：登录一次凭据由网关保管并自动续期，可加账号、查余额、每日领福利、挑模型（挑选器带搜索与「只看免费」）。平台模型对外带平台前缀（`codearts/GLM-5.2`、`cline/cline-free/minimax-m3.1-flash`），不与别的池子撞名。
+- **2026-10-21｜模型清单可逐条测试 / 启停**：「网关模型清单」每行新增两件东西 —— **测试**（真发一条请求走网关自己的 `/v1/chat/completions`，和 agent / 客户端完全同一条链路，可选带工具的 Agent 口径或纯对话口径，结论写「可用 + 耗时 / 不可用 + 原因」）和 **启用开关**（停用后 `/v1/models` 不再返回该模型，agent 与客户端的选择器里看不到它，直接点名调用也会被拒绝；面板里灰着保留，随时能再打开）。
+- **2026-10-21｜四个网关彻底隔离**：WorkBuddy / Qoder / Trae / 鸡蛋之间模型和请求互不影响。显式提示（`?provider=` / `X-Provider`）最高优先；没有提示时按模型归属，顺序固定（WorkBuddy → Qoder → Trae → 鸡蛋），一个 id 只属于一家。修了两种串流量：华为云 CodeArts 池里的 `deepseek-v4.1-flash` 与 WorkBuddy 目录同名，WorkBuddy 的请求被静默送到池子上（用户看到的是池子的报错）；Trae 的别名表按子串匹配，鸡蛋免费车道的 id 被算成 Trae 的。
 - **2026-10-21｜「全部提供商」含本机非网关会话**：这一格现在是「经本网关的请求 + 本机没走网关的会话」两份之和，且不重复计算（本地口径固定排除经网关的部分）。KPI、时序、工作回溯、按账号 / 模型明细、最近请求与性能分位都按合并后的数据出；账号表把本地客户端单列一行，Key 表补「本机会话（未走网关）」，页首说明条写明本机计入了多少次 / 多少 Token。指定某个提供商或出口时仍只算网关那部分（本机会话没有这两个归属）。
 - **2026-10-21｜看板的「本地」口径**：统计本机各客户端（OpenCode / Claude Code / Codex）自己的会话用量，并**排除经本项目网关的请求**（那部分网关视图已经记过，两边相加就会重复）—— 没走网关的请求网关根本记不下来，这部分只能从客户端的会话记录里读。
 - **2026-10-20｜鸡蛋免费网关**：聚合 OpenCode Zen 免费车道与 Kilo 免费池，**免账号 / 免密钥**，`?provider=egg` 直接用；模型清单逐行标出每个模型走哪一路免费源。冷启动先发内置兜底清单（毫秒级），真实目录后台拉；某一路拉挂不影响另一路。
@@ -425,7 +428,16 @@ python wb_agents.py restore --client codex                 # 随时字节级还�
 1. **浏览器设备码（仅国际版）**：点「添加」自动申请设备码并给出链接，浏览器里登录 qoder.com 后窗口内自动检测完成入池（与 WorkBuddy 的 OAuth 流程同一操作习惯）；
 2. **PAT（国际 / 国内通用）**：在 qoder.com（或 qoder.com.cn）账号设置里生成个人访问令牌，粘进弹窗点「用 PAT 登录」，服务端兑换成登录态后入池，长期有效。国内版只有这条通道。
 
-Qoder 账号与 WorkBuddy 账号在同一账号池里按 `provider` 隔离：签到 / 每日活跃 / 成长任务 / 出站身份这些 WorkBuddy 专属能力只作用于 WorkBuddy 账号；Qoder 账号支持启用停用、积分刷新与明细、凭证刷新、昵称同步、代理出口绑定、导出与删除。Qoder 的聊天通道已接入：显式点名 `provider=qoder`（`?provider=` 或 `X-Provider`）的 `/v1/chat/completions`、`/v1/completions`、`/v1/messages`、`/v1/responses` 会走 Qoder 上游（COSY 协议），与 WorkBuddy 共用同一套流式 / 非流式响应；没有显式提示时，只有「Qoder 目录认识、WorkBuddy 目录不认识」的模型名才会兜底到 Qoder，其余保持原来的 WorkBuddy 路径。没有可用 Qoder 账号时返回 503（`no usable account ...`），不会悄悄并入 WorkBuddy 流量。
+Qoder 账号与 WorkBuddy 账号在同一账号池里按 `provider` 隔离：签到 / 每日活跃 / 成长任务 / 出站身份这些 WorkBuddy 专属能力只作用于 WorkBuddy 账号；Qoder 账号支持启用停用、积分刷新与明细、凭证刷新、昵称同步、代理出口绑定、导出与删除。Qoder 的聊天通道已接入：显式点名 `provider=qoder`（`?provider=` 或 `X-Provider`）的 `/v1/chat/completions`、`/v1/completions`、`/v1/messages`、`/v1/responses` 会走 Qoder 上游（COSY 协议），与 WorkBuddy 共用同一套流式 / 非流式响应；没有显式提示时按模型归属兜底（顺序见下面的「四个网关之间怎么分流」）。没有可用 Qoder 账号时返回 503（`no usable account ...`），不会悄悄并入 WorkBuddy 流量。
+
+**四个网关之间怎么分流（模型与请求互不影响）**：
+
+- **显式提示最高优先**：`?provider=workbuddy|qoder|trae|egg` 或 `X-Provider` 头 —— 客户端配了哪家就直走那家，不受归属判定影响。一键配置给非 WorkBuddy 的客户端写的就是这个头。
+- **没有提示时按模型归属**，顺序固定：WorkBuddy → Qoder → Trae → 鸡蛋。一个模型 id 只属于一家，谁也不许抢别人的 id。
+  - WorkBuddy 的 id 一律小写（`deepseek-v4.1-flash`），Qoder / Trae 的带大写（`DeepSeek-V4-Flash`、`Doubao-Seed-2.1-Turbo`），所以归属按**原样**匹配，跨家只差大小写的 id 各归各家。
+  - 鸡蛋只认它自己的 id：免费车道（`*-free`）、Kilo（`vendor/model:free`）、供应商池里的模型。池子与 WorkBuddy 目录撞名时（例如华为云 CodeArts 池里的 `deepseek-v4.1-flash`），默认归 WorkBuddy；要走池子就显式 `?provider=egg`。
+  - Trae 的别名表只按**精确**命中算 Trae 的模型（子串命中会把 `deepseek-v4-flash-free` 这类免费车道的 id 误算成 Trae 的）。
+- **出口（国内 / 国际）也是各家自己的**：走 Qoder 就用 Qoder 记着的出口，走 Trae 就用 Trae 的，走 WorkBuddy 就用 WorkBuddy 的（面板顶部「默认出口」改的是当前提供商那一份）。以前不管走哪家都用全局的当前出口，于是面板停在 WorkBuddy 国内版时，Qoder 的模型会按国内版去找账号 —— Qoder 在国内版没有账号，每个 Qoder 模型都 503「no usable account for realm 'cn'」。显式 `?realm=` / `X-Realm` / Key 绑定的出口仍然最高优先。
 
 **Qoder 某个模型排上队了**：上游会用 10605 `RESOURCE_LIMIT` 拒（`isQueued=true`、`serviceAvailable=false`），意思是该模型在所选区域暂无可用容量 —— 这不是「请求有问题」，官方 qodercli 收到这个码是**等一会儿重试**（docs.qoder.com/cli/sdk/errors：10605 = Model request is queued）。网关照着做：按上游给的 `retryAfterSeconds`（实测 30 秒）等一会儿重发一条，最多等 120 秒；等到了就正常把回答给客户端，等不到才把排队原样报出来（附已等待多久）。期间不占用账号故障额度 —— 账号是好的，只是模型暂时没容量。换个 Qoder 模型也能立刻绕开。
 
@@ -449,6 +461,14 @@ Qoder 账号与 WorkBuddy 账号在同一账号池里按 `provider` 隔离：签
 - **启用 / 停用**：停用的池子不接请求，模型也从清单里消失；
 - **测试**：卡片上点「测试」真发一次最小请求（1 个 token），当场知道这把 Key 能不能推理。**「刷新」证明不了这个** —— 拉模型目录是 `GET /models`，OpenRouter 那边是公开的，垃圾 Key 也拉得到 470 个模型；只有真发一次推理才知道。Key 拿错类型时（OpenRouter 的管理/置备 Key 只能管 Key、不能做推理）上游会回 `User not found`，面板会直接说清该怎么换；
 - 池子存在 `accounts/egg-pools.json`（`os.replace` 原子替换，写坏一次不会留下半个文件），换机器时整份拷过去即可；API Key 明文保存，与 `settings.json` 里的 API Key 同一口径。
+
+**平台账号池（登录一次就能用）**：自建池要自己填 Key，平台账号池不用 —— 登录一次，网关保管登录态并自动续期，模型直接进清单。鸡蛋视图里的「平台账号」区每张卡片是一个平台：
+
+- **华为云 CodeArts**：点「添加账号」打开授权页，浏览器登录华为云后自动回调本机入池（网关不在本机时可手动粘回调 URL）；卡片上能查余额、每日领取福利。CodeArts 的模型分两条通道：免费福利通道（每日 1000 万 Tokens，需账号开通福利）与积分通道，账号没开通福利时面板会直说，不会甩一句看不懂的上游报错；
+- **Cline**：设备码登录，浏览器输入设备码即成；凭据带 `workos:` 前缀才是上游认的写法（少了会一律 401）；
+- 卡片上的「模型 (N)」可展开挑选：按 id 搜索、勾「只看免费」筛出免费模型、全选 / 全不选（只作用于当前看得见的那些），挑完点「保存选择」；
+- 平台模型对外 id 带平台前缀（`codearts/GLM-5.2`、`cline/cline-free/minimax-m3.1-flash`），不与自建池或别的提供商撞名；发给上游时自动摘掉前缀；
+- 账号可以逐个停用（停用后该平台不再接流量）、续期、删除；凭据与自建池的 Key 一样明文存在 `accounts/egg-pools.json`。
 
 **按池子筛选模型清单**：模型清单上方有「池子」下拉，把内置的 Zen 免费车道 / Kilo 免费池与各个自建池子列在一起，每一项都带**池子名、模型数与模型名**（选中后下拉右侧的说明行把该池的模型完整摊开，悬停也能看全量）；选一个就只看那一路的模型；「免费池」那一列用的是同一个口径，自建池用池子名当标签。
 
@@ -494,7 +514,7 @@ export ANTHROPIC_API_KEY="你在看板设置中添加并绑定的API_Key"
 
 访问 `http://127.0.0.1:8788/` 使用集成看板：顶部页签默认是「网关与账号 / 数据看板 / 智能体配置 / 设置 / 运行日志」，每个主页面左侧有一条按页面区块现场生成的导航（点击直达、滚动高亮、地址栏带锚点，可收起成窄轨）。
 
-页面头部还有 **WorkBuddy / Qoder / Trae / 鸡蛋 提供商切换**：切换后看板的账号、积分、统计、默认出口与模型清单一并跟着提供商走（每个提供商各自记着自己的国内 / 国际出口；鸡蛋不需要账号与出口），面板对服务端的每个请求都显式带 `?provider=`。直接用 API 时同样可以显式指定：账号、用量（含 `/usage/analytics`、`/usage/timeseries`、`/usage/remaining`、`/usage/by-account`）与模型清单端点接受 `?provider=workbuddy|qoder|trae|egg`（或 `X-Provider` 头）；**不提示时行为与此前完全一致**（WorkBuddy 口径），所以既有客户端无需改动。聊天端点也认这个提示：显式 `provider=qoder|trae|egg` 走对应上游；不提示时按模型归属兜底——Qoder 目录认识、WorkBuddy 目录不认识的模型名走 Qoder，Trae 目录认识的走 Trae，鸡蛋目录认识的（`*-free` 等）走鸡蛋，其余仍是原来的 WorkBuddy 路径。看板也认 `?provider=egg` 这样的 URL 参数（只钉住本次会话的视图，不改服务端状态）。
+页面头部还有 **WorkBuddy / Qoder / Trae / 鸡蛋 提供商切换**：切换后看板的账号、积分、统计、默认出口与模型清单一并跟着提供商走（每个提供商各自记着自己的国内 / 国际出口；鸡蛋不需要账号与出口），面板对服务端的每个请求都显式带 `?provider=`。直接用 API 时同样可以显式指定：账号、用量（含 `/usage/analytics`、`/usage/timeseries`、`/usage/remaining`、`/usage/by-account`）与模型清单端点接受 `?provider=workbuddy|qoder|trae|egg`（或 `X-Provider` 头）；**不提示时行为与此前完全一致**（WorkBuddy 口径），所以既有客户端无需改动。聊天端点也认这个提示：显式 `provider=qoder|trae|egg` 走对应上游；不提示时按模型归属兜底，顺序固定为 WorkBuddy → Qoder → Trae → 鸡蛋（一个 id 只属于一家，跨家同名归第一家，详见上面的「四个网关之间怎么分流」）。看板也认 `?provider=egg` 这样的 URL 参数（只钉住本次会话的视图，不改服务端状态）。
 
 账号多起来之后（国际版十几个），账号列表与「当前禁用」总览会把网关页挤下去。设置页的「账号独立成一个页签」默认关闭，账号区就留在「网关与账号」页（位置与拆分前一致）；打开后它们和签到记录一起成为独立的「账号」页：添加 / 导入 / 导出、启用停用、凭证与积分刷新、代理出口绑定都在那里，顶部页签变成「网关 / 账号 / 数据看板 / 智能体配置 / 设置 / 运行日志」。页内的「签到与活跃记录」读 `GET /activity/history`，可按**区间 / 任务 / 结果 / 账号**筛选（筛选在服务端做），一行一次真实尝试，列出 时间 · 账号 · 区域 · 任务 · 来源 · 结果 · 说明，最新在前；超过一页时用「加载更多」往下翻，上限 1000 行——「这个账号昨天到底签成了没有」不用再去调度器日志里翻。
 
@@ -515,7 +535,8 @@ export ANTHROPIC_API_KEY="你在看板设置中添加并绑定的API_Key"
 | POST | /v1/responses | Responses API 协议接口 |
 | POST | /v1/messages | 实验性 Anthropic Messages 适配，默认禁用（HTTP 400）；需显式启用并承担缓存风险 |
 | POST | /v1/messages/count_tokens | 实验性 Anthropic 计数估算接口，随 Messages 入口默认禁用 |
-| GET | /v1/models | 官方对齐模型列表（含能力与规格宣告） |
+| GET | /v1/models | 官方对齐模型列表（含能力与规格宣告）。面板会话可带 `include_disabled=1` 取回已停用的模型（条目带 `disabled:true`）；普通 API Key 拿到的清单里不含停用的模型 |
+| POST | /models/toggle | 启用 / 停用某条模型（需面板会话）：`{model, disabled, provider, realm}`。停用后该模型不再出现在 `/v1/models`，直接调用返回 400 |
 | GET | /u/\<ref\>/v1/models | 定址账号的模型清单：\<ref\> 支持完整 uid / uid 前 8 位 / 昵称，过滤该账号禁用模型 |
 | POST | /u/\<ref\>/v1/chat/completions | 定址调用：锁定该账号，不参与会话亲和 / 轮换 / 自动换号；账号不可用直接报错 |
 | POST | /u/\<ref\>/v1/responses | 定址 Responses API，语义同上 |
