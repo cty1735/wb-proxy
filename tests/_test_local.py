@@ -12,6 +12,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import wb_local
+import wb_proxy
 
 
 class LocalScopeTest(unittest.TestCase):
@@ -251,12 +252,200 @@ class LocalScopeTest(unittest.TestCase):
         self.assertEqual(payload["wall_ms"]["p90"], 1000)
         self.assertAlmostEqual(payload["cache_hit_pct"]["avg"], 80.0)
 
+    def test_perf_rows_are_gateway_shaped(self):
+        rows = [
+            {"at": 1700000003.0, "rid": "c", "client": "opencode", "model": "m1",
+             "gateway": False, "ok": True, "prompt_tokens": 200,
+             "completion_tokens": 20, "reasoning_tokens": 0, "cached_tokens": 50,
+             "total_tokens": 220, "cost_usd": 0.0, "elapsed_ms": 1500,
+             "session": "s", "project": "p"},
+            {"at": 1700000001.0, "rid": "a", "client": "opencode", "model": "m1",
+             "gateway": False, "ok": True, "prompt_tokens": 100,
+             "completion_tokens": 10, "reasoning_tokens": 0, "cached_tokens": 80,
+             "total_tokens": 110, "cost_usd": 0.0, "elapsed_ms": 1000,
+             "session": "s", "project": "p"},
+            {"at": 1700000002.0, "rid": "b", "client": "opencode", "model": "m2",
+             "gateway": False, "ok": False, "prompt_tokens": 0,
+             "completion_tokens": 0, "reasoning_tokens": 0, "cached_tokens": 0,
+             "total_tokens": 0, "cost_usd": 0.0, "elapsed_ms": 3000,
+             "session": "s", "project": "p"},
+            {"at": 1700000004.0, "rid": "d", "client": "opencode", "model": "m1",
+             "gateway": True, "ok": True, "prompt_tokens": 100,
+             "completion_tokens": 10, "reasoning_tokens": 0, "cached_tokens": 80,
+             "total_tokens": 110, "cost_usd": 0.0, "elapsed_ms": 900,
+             "session": "s", "project": "p"},
+        ]
+        original = wb_local._collect
+        wb_local._collect = lambda since=None: (rows, ["opencode"], 1)
+        try:
+            got = wb_local.perf_rows(since=1700000000.0, until=1700000005.0)
+        finally:
+            wb_local._collect = original
+        # 网关行被排除，且按时间升序（合并时直接接在日志尾巴后面）。
+        self.assertEqual([r["at"] for r in got], [1700000001.0, 1700000002.0, 1700000003.0])
+        for row in got:
+            self.assertEqual(row["realm"], "local")
+            self.assertEqual(row["account"], "opencode")
+            self.assertIn("outcome", row)
+        # 缓存命中只对成功请求成立：失败行没有可比的 prompt。
+        self.assertAlmostEqual(got[0]["cache_hit_pct"], 80.0)
+        self.assertIsNone(got[1]["cache_hit_pct"])
+        self.assertAlmostEqual(got[2]["cache_hit_pct"], 25.0)
+        self.assertEqual(got[1]["outcome"], "failed")
+
+    def test_perf_rows_limit_keeps_the_newest(self):
+        rows = [
+            {"at": float(i), "rid": str(i), "client": "opencode", "model": "m",
+             "gateway": False, "ok": True, "prompt_tokens": 10,
+             "completion_tokens": 1, "reasoning_tokens": 0, "cached_tokens": 0,
+             "total_tokens": 11, "cost_usd": 0.0, "elapsed_ms": 100,
+             "session": "s", "project": "p"}
+            for i in range(1, 6)
+        ]
+        original = wb_local._collect
+        wb_local._collect = lambda since=None: (rows, ["opencode"], 1)
+        try:
+            got = wb_local.perf_rows(limit=2)
+        finally:
+            wb_local._collect = original
+        self.assertEqual([r["at"] for r in got], [4.0, 5.0])
+
+    def test_account_all_time_is_not_zero(self):
+        rows = [
+            {"at": 1690000000.0, "rid": "old", "client": "opencode",
+             "model": "m1", "gateway": False, "ok": True,
+             "prompt_tokens": 10, "completion_tokens": 1,
+             "reasoning_tokens": 0, "cached_tokens": 0, "total_tokens": 11,
+             "cost_usd": 0.0, "elapsed_ms": 100, "session": "s", "project": "p"},
+            {"at": 1700000000.0, "rid": "new", "client": "opencode",
+             "model": "m1", "gateway": False, "ok": True,
+             "prompt_tokens": 20, "completion_tokens": 2,
+             "reasoning_tokens": 0, "cached_tokens": 0, "total_tokens": 22,
+             "cost_usd": 0.0, "elapsed_ms": 200, "session": "s", "project": "p"},
+        ]
+        original = wb_local._collect
+        wb_local._collect = lambda since=None: (rows, ["opencode"], 1)
+        try:
+            payload = wb_local.analytics(since=1699999000.0, until=1700001000.0)
+        finally:
+            wb_local._collect = original
+        account = payload["accounts"][0]
+        self.assertEqual(account["window"]["requests"], 1)
+        # 「全部时间」要把窗口外的那条也接回来，而不是恒为 0。
+        self.assertEqual(account["all_time"]["requests"], 2)
+        self.assertEqual(account["all_time"]["total_tokens"], 33)
+
     def test_price_model_resolution(self):
         # A local client spells the model the way its provider does; the price
         # table is keyed by the bare model id.
         self.assertEqual(wb_local._price_model("deepseek-v4.1-flash"),
                          "deepseek-v4.1-flash")
         self.assertIsNone(wb_local._price_model("no-such-model-at-all"))
+
+
+class LocalMergeTest(unittest.TestCase):
+    """「全部提供商」= 网关载荷 + 本机非网关载荷。"""
+
+    def _stat(self, requests, tokens, prompt=None):
+        prompt = tokens if prompt is None else prompt
+        stat = wb_proxy._new_analytics_stat()
+        stat["requests"] = requests
+        stat["prompt_tokens"] = prompt
+        stat["cached_tokens"] = prompt // 2
+        stat["completion_tokens"] = tokens - prompt
+        stat["total_tokens"] = tokens
+        stat["ttft_sum"] = 100.0 * requests
+        stat["ttft_n"] = requests
+        stat["speed_sum"] = 10.0 * requests
+        stat["speed_n"] = requests
+        stat["elapsed_sum"] = 200.0 * requests
+        stat["elapsed_n"] = requests
+        wb_proxy._finalize_analytics_stat(stat)
+        return stat
+
+    def test_merge_condition(self):
+        self.assertTrue(wb_proxy._merge_local_requested("all", None))
+        self.assertTrue(wb_proxy._merge_local_requested(None, None))
+        # 指定了提供商或出口时不合并：本机会话没有这两个归属。
+        self.assertFalse(wb_proxy._merge_local_requested("all", "workbuddy"))
+        self.assertFalse(wb_proxy._merge_local_requested("intl", None))
+
+    def test_analytics_merge_sums_and_does_not_mutate(self):
+        gateway = {
+            "summary": {"window": self._stat(2, 200), "all_time": self._stat(3, 300)},
+            "accounts": [{"uid": "a", "nickname": "A", "realm": "intl",
+                          "domain": "", "credits": {},
+                          "window": self._stat(2, 200), "all_time": self._stat(3, 300),
+                          "window_models": {"m": {"requests": 2, "tokens": 200,
+                                                  "reasoning": 0, "cost_cny": 0.0}},
+                          "all_models": {}}],
+            "models": [{"model": "m", "window": self._stat(2, 200),
+                        "all_time": self._stat(3, 300)}],
+            "keys": [],
+        }
+        before = json.dumps(gateway, sort_keys=True)
+        local = {
+            "summary": {"window": self._stat(5, 500), "all_time": self._stat(7, 700)},
+            "accounts": [{"uid": "opencode", "nickname": "OpenCode",
+                          "window": self._stat(5, 500), "all_time": self._stat(7, 700),
+                          "window_models": {"m": {"requests": 5, "tokens": 500,
+                                                  "reasoning": 0, "cost_cny": 0.0}},
+                          "all_models": {}}],
+            "models": [{"model": "m", "window": self._stat(5, 500),
+                        "all_time": self._stat(7, 700)},
+                       {"model": "local-only", "window": self._stat(1, 100),
+                        "all_time": self._stat(1, 100)}],
+            "local": {"clients": [{"id": "opencode", "label": "OpenCode"}],
+                      "scan_ms": 4},
+        }
+        merged = wb_proxy.merge_local_analytics(gateway, local)
+        self.assertEqual(json.dumps(gateway, sort_keys=True), before)  # 缓存没被改
+        self.assertEqual(merged["summary"]["window"]["requests"], 7)
+        self.assertEqual(merged["summary"]["window"]["total_tokens"], 700)
+        self.assertEqual(merged["summary"]["window"]["cache_hit_pct"], 50.0)
+        # 同 id 的模型相加，本地独有的追加
+        by_id = {m["model"]: m for m in merged["models"]}
+        self.assertEqual(by_id["m"]["window"]["requests"], 7)
+        self.assertEqual(by_id["local-only"]["window"]["requests"], 1)
+        # 本地客户端作为一行，uid 带前缀；全历史也接上了
+        local_row = [a for a in merged["accounts"] if a["uid"] == "local:opencode"][0]
+        self.assertEqual(local_row["window"]["requests"], 5)
+        self.assertEqual(local_row["all_time"]["requests"], 7)
+        self.assertIn("本地", local_row["nickname"])
+        # Key 表多一行本机会话，且与 KPI 同源
+        key_row = [k for k in merged["keys"] if k["source"] == "local"][0]
+        self.assertEqual(key_row["window"]["requests"], 5)
+        self.assertEqual(merged["local_merged"]["requests"], 5)
+        self.assertEqual(merged["local_merged"]["tokens"], 500)
+
+    def test_timeseries_merge_aligns_buckets(self):
+        gateway = {"bucket_seconds": 3600,
+                   "series": [{"at": 100, "requests": 1, "errors": 0,
+                               "total_tokens": 10, "prompt_tokens": 10,
+                               "cached_tokens": 0, "credit": 0.5}]}
+        local = {"bucket_seconds": 3600,
+                 "series": [{"at": 100, "requests": 2, "errors": 0,
+                             "total_tokens": 20, "prompt_tokens": 20,
+                             "cached_tokens": 0, "credit": 0.0},
+                            {"at": 200, "requests": 3, "errors": 1,
+                             "total_tokens": 30, "prompt_tokens": 30,
+                             "cached_tokens": 0, "credit": 0.0}]}
+        merged = wb_proxy.merge_local_timeseries(gateway, local)
+        self.assertEqual([b["at"] for b in merged["series"]], [100, 200])
+        self.assertEqual(merged["series"][0]["requests"], 3)
+        self.assertEqual(merged["series"][0]["total_tokens"], 30)
+        self.assertEqual(merged["series"][1]["requests"], 3)
+        self.assertEqual(gateway["series"][0]["requests"], 1)  # 原载荷没变
+
+    def test_recent_merge_sorts_and_paginates(self):
+        gateway = {"total": 2, "rows": [{"at": 30}, {"at": 10}], "usd_cny": 7.1}
+        local = {"total": 2, "rows": [{"at": 25}, {"at": 20}]}
+        page1 = wb_proxy.merge_local_recent(gateway, local, 2, 1)
+        self.assertEqual(page1["total"], 4)
+        self.assertEqual(page1["total_pages"], 2)
+        self.assertEqual([r["at"] for r in page1["rows"]], [30, 25])
+        page2 = wb_proxy.merge_local_recent(gateway, local, 2, 2)
+        self.assertEqual([r["at"] for r in page2["rows"]], [20, 10])
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ start-wb-proxy.command (or ./start-wb-proxy.sh) on macOS/Linux.
 import argparse
 import bisect
 import calendar
+import copy
 import errno
 import hashlib
 import heapq
@@ -1298,8 +1299,14 @@ def perf_stats_etag(sample=5000, realm=None, range=None, since=None, until=None,
 
 
 def _perf_stats_uncached(sample=5000, realm=None, since=None, until=None,
-                         provider=None, agent=None):
-    """Latency percentiles + derived rates, computed from the JSONL log."""
+                         provider=None, agent=None, extra_lines=None):
+    """Latency percentiles + derived rates, computed from the JSONL log.
+
+    `extra_lines` are already-serialized rows that belong to the same sample
+    but do not live in usage.jsonl — the local view's non-gateway sessions.
+    They join the fold after the log tail, so every percentile is still taken
+    from raw samples (D6) instead of being approximated from two payloads.
+    """
     ttfts, gens, walls, rates, hits, tok_rates = [], [], [], [], [], []
     total = ok = err = aborted = 0
     # 按模型聚合性能指标
@@ -1317,6 +1324,10 @@ def _perf_stats_uncached(sample=5000, realm=None, since=None, until=None,
     # matrix can say the latency columns cover a partial slice instead of
     # presenting them as the whole window.
     sample_capped = len(rows) >= sample
+    if extra_lines:
+        # 本地样本按日志行同样的形状交给下面同一个循环；sample_capped 只看
+        # 日志尾巴有没有被截断，额外样本不改变这个含义。
+        rows = rows + list(extra_lines)
     sample_from = None
     for line in rows:
         line = line.strip()
@@ -9352,6 +9363,245 @@ def _local_etag(kind, since, until, scope, agent=None):
          (kind, since, until, scope, agent, token)).encode("utf-8")
     ).hexdigest()[:16]
     return '"%s"' % digest
+
+
+# ---------------------------------------------------------------------------
+# 「全部提供商」= 经本网关的 + 本机非网关的
+#
+# 网关只看得见 usage.jsonl；本机客户端绕过网关的那部分只留在 wb_local 的
+# 会话记录里。看板的「全部」必须两份都算上，但不能重复：wb_local 只取
+# scope=nongw 的行（经本网关的行在它那边已经排除），所以相加就是这台机器
+# 的全部用量。只在「没有指定提供商、也没有指定出口」时合并——本机会话没有
+# provider / realm 这两个归属，筛某一个提供商或出口时它不该出现。
+# ---------------------------------------------------------------------------
+LOCAL_MERGE_KEY = "__local__"
+LOCAL_MERGE_UID = "local:"
+
+_STAT_SUM_FIELDS = (
+    "requests", "errors", "prompt_tokens", "completion_tokens",
+    "reasoning_tokens", "cached_tokens", "total_tokens", "credit",
+    "cost_cny", "ttft_sum", "ttft_n", "speed_sum", "speed_n",
+    "elapsed_sum", "elapsed_n",
+)
+
+
+def _merge_local_requested(realm, provider):
+    """True when this view is 「全部提供商」 across every realm."""
+    return not provider and realm_scope(realm) is None
+
+
+def _merge_stat(dst, src):
+    """Fold one stat object into another, then rederive the averages."""
+    for key in _STAT_SUM_FIELDS:
+        dst[key] = (dst.get(key) or 0) + (src.get(key) or 0)
+    prompt = dst["prompt_tokens"]
+    cached = dst["cached_tokens"]
+    out = dst["completion_tokens"]
+    reasoning = dst["reasoning_tokens"]
+    dst["cache_hit_pct"] = round(cached / prompt * 100, 1) if prompt > 0 else 0.0
+    dst["reasoning_ratio"] = round(reasoning / out * 100, 1) if out > 0 else 0.0
+    dst["ttft_ms_avg"] = (round(dst["ttft_sum"] / dst["ttft_n"])
+                          if dst["ttft_n"] > 0 else None)
+    dst["speed_avg"] = (round(dst["speed_sum"] / dst["speed_n"], 1)
+                        if dst["speed_n"] > 0 else None)
+    dst["elapsed_ms_avg"] = (round(dst["elapsed_sum"] / dst["elapsed_n"])
+                             if dst["elapsed_n"] > 0 else None)
+    return dst
+
+
+def _merge_etag(primary, token):
+    """A validator that changes when either side's data does."""
+    if not primary:
+        return None
+    return '"%s"' % hashlib.sha1(
+        ("merged\x1f%s\x1f%s" % (primary, token)).encode("utf-8")
+    ).hexdigest()[:20]
+
+
+def merge_local_analytics(payload, local):
+    """Fold the local non-gateway payload into a gateway analytics payload.
+
+    `payload` is the cached gateway object, so it is copied first: mutating it
+    in place would poison the cache and add the local numbers again on the next
+    poll.
+    """
+    out = copy.deepcopy(payload)
+    for half in ("window", "all_time"):
+        _merge_stat(out["summary"][half], local["summary"][half])
+    # 账号：本地客户端各占一行，uid 加前缀，避免和真实账号 uid 撞名。
+    for acct in local.get("accounts") or []:
+        uid = LOCAL_MERGE_UID + str(acct.get("uid") or "local")
+        out.setdefault("accounts", []).append({
+            "uid": uid,
+            "nickname": "%s（本地）" % (acct.get("nickname") or acct.get("uid") or "本地"),
+            "realm": "",
+            "domain": "",
+            "credits": {},
+            "window": acct.get("window") or {},
+            "all_time": acct.get("all_time") or {},
+            "window_models": acct.get("window_models") or {},
+            "all_models": acct.get("all_models") or {},
+        })
+    out["accounts"].sort(
+        key=lambda a: (-(a["window"].get("total_tokens") or 0),
+                       -(a["all_time"].get("total_tokens") or 0)))
+    # 模型：同一个 id 相加；本地独有的 id 追加。
+    by_model = {m.get("model"): m for m in out.get("models") or []}
+    for model in local.get("models") or []:
+        mid = model.get("model")
+        tgt = by_model.get(mid)
+        if tgt is None:
+            tgt = {"model": mid,
+                   "window": _new_analytics_stat(),
+                   "all_time": _new_analytics_stat()}
+            by_model[mid] = tgt
+            out.setdefault("models", []).append(tgt)
+        for half in ("window", "all_time"):
+            _merge_stat(tgt[half], model.get(half) or {})
+    out["models"].sort(
+        key=lambda m: (-(m["window"].get("total_tokens") or 0),
+                       -(m["all_time"].get("total_tokens") or 0)))
+    # Key 表：本地会话没有 API Key 归属，单独占一行，这张表才和 KPI 对得上。
+    win_models, all_models = {}, {}
+    for acct in local.get("accounts") or []:
+        for src, dst in ((acct.get("window_models") or {}, win_models),
+                         (acct.get("all_models") or {}, all_models)):
+            for mid, stat in src.items():
+                row = dst.setdefault(mid, {"requests": 0, "tokens": 0,
+                                           "reasoning": 0, "cost_cny": 0.0})
+                row["requests"] += stat.get("requests") or 0
+                row["tokens"] += stat.get("tokens") or 0
+                row["reasoning"] += stat.get("reasoning") or 0
+                row["cost_cny"] += stat.get("cost_cny") or 0.0
+    win_stat = local["summary"]["window"]
+    if win_stat.get("requests") or win_stat.get("errors"):
+        key_row = {
+            "key": LOCAL_MERGE_KEY,
+            "name": "本机会话（未走网关）",
+            "realm": "",
+            "enabled": True,
+            "source": "local",
+            "window": win_stat,
+            "all_time": local["summary"]["all_time"],
+            "window_models": win_models,
+            "all_models": all_models,
+            "realms": {"local": (win_stat.get("requests") or 0)
+                                + (win_stat.get("errors") or 0)},
+            "last_at": 0,
+            "cross_realm": False,
+        }
+        key_row["models"], key_row["models_other"] = _top_models(win_models)
+        out.setdefault("keys", []).append(key_row)
+        out["keys"].sort(
+            key=lambda r: (-(r["window"].get("total_tokens") or 0),
+                           -(r["all_time"].get("total_tokens") or 0),
+                           r.get("name") or ""))
+    out["local_merged"] = {
+        "scope": wb_local.SCOPE_NON_GATEWAY,
+        "requests": win_stat.get("requests") or 0,
+        "errors": win_stat.get("errors") or 0,
+        "tokens": win_stat.get("total_tokens") or 0,
+        "cost_cny": win_stat.get("cost_cny") or 0.0,
+        "clients": (local.get("local") or {}).get("clients") or [],
+        "scan_ms": (local.get("local") or {}).get("scan_ms"),
+    }
+    return out
+
+
+def merge_local_timeseries(payload, local):
+    """Add the local buckets to a gateway series (same bucket grid)."""
+    out = copy.deepcopy(payload)
+    buckets = {}
+    for bucket in out.get("series") or []:
+        buckets[int(bucket.get("at") or 0)] = bucket
+    for bucket in local.get("series") or []:
+        at = int(bucket.get("at") or 0)
+        tgt = buckets.get(at)
+        if tgt is None:
+            buckets[at] = dict(bucket)
+            continue
+        for key in ("requests", "errors", "prompt_tokens", "completion_tokens",
+                    "reasoning_tokens", "cached_tokens", "total_tokens"):
+            tgt[key] = (tgt.get(key) or 0) + (bucket.get(key) or 0)
+        tgt["credit"] = (tgt.get("credit") or 0) + (bucket.get("credit") or 0)
+    out["series"] = [buckets[at] for at in sorted(buckets)]
+    return out
+
+
+def merge_local_recent(gateway, local, limit, page):
+    """Merge two already-fetched recent pages by timestamp, then paginate."""
+    rows = list(gateway.get("rows") or []) + list(local.get("rows") or [])
+    rows.sort(key=lambda row: row.get("at") or 0.0, reverse=True)
+    total = (gateway.get("total") or 0) + (local.get("total") or 0)
+    total_pages = max(1, (total + limit - 1) // limit) if total else 1
+    page = min(page, total_pages)
+    start = (page - 1) * limit
+    return {
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": total_pages,
+        "usd_cny": gateway.get("usd_cny"),
+        "rows": rows[start:start + limit],
+    }
+
+
+_merged_perf_cache = {}
+_merged_perf_lock = threading.Lock()
+
+
+def merged_perf_stats(sample, realm, range, since, until, agent, local_agent):
+    """Perf payload over the gateway sample plus the local non-gateway rows.
+
+    The local rows are folded through the same raw-sample code as the log tail
+    (see _perf_stats_uncached(extra_lines=...)), so the percentiles stay real
+    rather than a weighted guess of two finished payloads. Cached like its
+    siblings; the local fingerprint joins the entry so new local traffic
+    invalidates it immediately.
+    """
+    lo, hi = range_window(range, since, until)
+    token = wb_local.fingerprint(since=lo, until=hi,
+                                 scope=wb_local.SCOPE_NON_GATEWAY,
+                                 client=local_agent)
+    key = (sample, range, since, until, agent, local_agent)
+    now = time.time()
+    with _merged_perf_lock:
+        entry = _merged_perf_cache.get(key)
+        if (entry is not None and (now - entry["at"]) < _STATS_TTL
+                and entry["token"] == token):
+            return entry["data"]
+    local_rows = wb_local.perf_rows(since=lo, until=hi,
+                                    scope=wb_local.SCOPE_NON_GATEWAY,
+                                    client=local_agent, limit=sample)
+    extra = [json.dumps(row, ensure_ascii=False) for row in local_rows]
+    data = _perf_stats_uncached(sample, realm=realm_scope(realm),
+                                since=lo, until=hi, agent=agent,
+                                extra_lines=extra)
+    if local_rows:
+        first = local_rows[0].get("at")
+        if first is not None and (data.get("sample_from") is None
+                                  or first < data["sample_from"]):
+            data["sample_from"] = first
+    with _merged_perf_lock:
+        _merged_perf_cache[key] = {"at": time.time(), "token": token,
+                                   "data": data}
+        # 面板同时最多问两三个键；多出来的按写入时刻淘汰。
+        while len(_merged_perf_cache) > 8:
+            oldest = min(_merged_perf_cache, key=lambda k: _merged_perf_cache[k]["at"])
+            if oldest == key:
+                break
+            _merged_perf_cache.pop(oldest, None)
+    return data
+
+
+def merged_perf_etag(sample, realm, range, since, until, agent, local_agent):
+    """ETag for the merged perf entry (None until it has been built)."""
+    key = (sample, range, since, until, agent, local_agent)
+    with _merged_perf_lock:
+        entry = _merged_perf_cache.get(key)
+    if entry is None:
+        return None
+    return _cache_etag("perf-merged", repr(key), entry["at"])
 
 
 def _scan_usage_analytics_agent(realm, since, until, agent, provider=None):
@@ -19701,6 +19951,17 @@ class Handler(BaseHTTPRequestHandler):
         req_realm = query.get('realm', [None])[0] or self.headers.get('X-Realm') or CURRENT_REALM
         req_provider = wb_accounts.provider_filter(self._request_provider(query))
         req_agent = self._request_agent(query)
+        if _merge_local_requested(req_realm, req_provider):
+            # 合并分页只能按时间重排后再切：两份各自取够「这一页之前」的行，
+            # 合起来排序，取同一段。面板只要第 1 页 12 条，这里仍按页算全。
+            local_agent = _local_agent(query)
+            fetch = min(5000, max(limit, page * limit))
+            gateway = recent_usage(fetch, realm=req_realm, page=1,
+                                   provider=req_provider, agent=req_agent)
+            local = wb_local.recent(limit=fetch, page=1,
+                                    scope=wb_local.SCOPE_NON_GATEWAY,
+                                    client=local_agent)
+            return self._json(200, merge_local_recent(gateway, local, limit, page))
         return self._json(200, recent_usage(limit, realm=req_realm, page=page,
                                             provider=req_provider,
                                             agent=req_agent))
@@ -19871,6 +20132,29 @@ class Handler(BaseHTTPRequestHandler):
         req_agent = self._request_agent(query)
         req_realm = query.get("realm", [None])[0] or None
         req_range, req_since, req_until = range_query(query)
+        # 「全部提供商」也要把本机没走网关的会话算进来（见 merge_local_analytics）。
+        if _merge_local_requested(req_realm, req_provider):
+            local_agent = _local_agent(query)
+            lo, hi = range_window(req_range, req_since, req_until)
+
+            def build():
+                gateway = compute_usage_analytics(
+                    realm=req_realm, range=req_range, since=req_since,
+                    until=req_until, provider=req_provider, agent=req_agent)
+                local = wb_local.analytics(
+                    since=lo, until=hi, scope=wb_local.SCOPE_NON_GATEWAY,
+                    client=local_agent)
+                return merge_local_analytics(gateway, local)
+
+            def merged_tag():
+                base = usage_analytics_etag(
+                    realm=req_realm, range=req_range, since=req_since,
+                    until=req_until, provider=req_provider, agent=req_agent)
+                token = wb_local.fingerprint(
+                    scope=wb_local.SCOPE_NON_GATEWAY, client=local_agent)
+                return _merge_etag(base, token)
+
+            return self._json_cached(200, build, merged_tag)
         return self._json_cached(
             200,
             lambda: compute_usage_analytics(realm=req_realm, range=req_range,
@@ -19959,6 +20243,47 @@ class Handler(BaseHTTPRequestHandler):
             bucket_seconds = int(bucket) if bucket else None
         except (TypeError, ValueError):
             bucket_seconds = None
+        if _merge_local_requested(req_realm, req_provider):
+            local_agent = _local_agent(query)
+            # 本地序列必须和网关落在同一个桶网格上：先按网关的规则把边界
+            # 和桶宽定下来，再显式传给 wb_local（否则 range=all 时本地会
+            # 按自己看到的整年跨度选日桶，和网关的 24 小时窗口对不上）。
+            lo, hi = range_window(req_range, req_since, req_until)
+            if hi is None:
+                hi = time.time()
+            if lo is None:
+                lo = hi - 86400
+            span = max(1.0, hi - lo)
+            if bucket_seconds:
+                step = max(60, int(bucket_seconds))
+            elif span <= 6 * 3600:
+                step = 60
+            elif span <= 14 * 86400:
+                step = 3600
+            else:
+                step = 86400
+
+            def build():
+                gateway = usage_timeseries(
+                    realm=req_realm, range=req_range, since=req_since,
+                    until=req_until, bucket_seconds=bucket_seconds,
+                    provider=req_provider, agent=req_agent)
+                local = wb_local.timeseries(
+                    since=lo, until=hi, bucket_seconds=step,
+                    scope=wb_local.SCOPE_NON_GATEWAY, client=local_agent)
+                return merge_local_timeseries(gateway, local)
+
+            def merged_tag():
+                base = usage_timeseries_etag(
+                    realm=req_realm, range=req_range, since=req_since,
+                    until=req_until, bucket_seconds=bucket_seconds,
+                    provider=req_provider, agent=req_agent)
+                token = wb_local.fingerprint(
+                    since=lo, until=hi, scope=wb_local.SCOPE_NON_GATEWAY,
+                    client=local_agent)
+                return _merge_etag(base, token)
+
+            return self._json_cached(200, build, merged_tag)
         return self._json_cached(
             200,
             lambda: usage_timeseries(realm=req_realm, range=req_range,
@@ -19985,6 +20310,16 @@ class Handler(BaseHTTPRequestHandler):
         req_provider = wb_accounts.provider_filter(self._request_provider(query))
         req_agent = self._request_agent(query)
         req_range, req_since, req_until = range_query(query)
+        if _merge_local_requested(req_realm, req_provider):
+            local_agent = _local_agent(query)
+            return self._json_cached(
+                200,
+                lambda: merged_perf_stats(sample, req_realm, req_range,
+                                          req_since, req_until, req_agent,
+                                          local_agent),
+                lambda: merged_perf_etag(sample, req_realm, req_range,
+                                         req_since, req_until, req_agent,
+                                         local_agent))
         return self._json_cached(
             200,
             lambda: perf_stats(sample, realm=req_realm, range=req_range,

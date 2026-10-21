@@ -904,6 +904,9 @@ def analytics(since=None, until=None, scope=SCOPE_NON_GATEWAY, client=None):
         other = all_accts.get(client)
         if other is not None:
             entry["all_models"] = other["all_models"]
+            # 账号行是从窗口那份里拿的，全历史那一半只在 all_accts 里折过；
+            # 不接过来，「全部时间」就永远是 0（明细弹窗会当成没有历史）。
+            entry["all_time"] = other["all_time"]
     for model_id, entry in win_models.items():
         other = all_models.get(model_id)
         if other is not None:
@@ -1159,3 +1162,39 @@ def perf(scope=SCOPE_NON_GATEWAY, client=None):
         "tokens_per_sec": None,
         "cache_hit_pct": _dist(cache),
     }
+
+
+def perf_rows(since=None, until=None, scope=SCOPE_NON_GATEWAY, client=None,
+              limit=None):
+    """Local requests as gateway-shaped rows for a merged perf sample.
+
+    「全部提供商」要把网关的样本和本机非网关的样本放进同一次分位计算，
+    不能拿两份已经算好的分位去加权（那就不再是原始样本的分位了）。这里把
+    本地行摊成与 usage.jsonl 同名的字段，交给网关那条折叠逻辑一起算。
+
+    `limit` 只留最近 N 条：网关的 perf 样本本来就是「日志末尾 N 行」，
+    本地这一半也守同一个口径，否则一整年的本机会话会把样本带偏。
+    """
+    rows, _sources, _scan_ms = _collect(0)
+    window = _client_rows(_scope_rows(rows, scope, since, until), client)
+    window.sort(key=lambda r: r.get("at") or 0.0)
+    if limit and len(window) > limit:
+        window = window[-int(limit):]
+    out = []
+    for row in window:
+        prompt = row.get("prompt_tokens") or 0
+        hit = None
+        if row.get("ok") and prompt > 0:
+            hit = (row.get("cached_tokens") or 0) / float(prompt) * 100.0
+        out.append({
+            "at": row.get("at") or 0.0,
+            "model": row.get("model") or "unknown",
+            # 本地请求没有出口之分：给它一个自己的 realm，性能表里能看出
+            # 这一行不是从网关走的。
+            "realm": "local",
+            "account": row.get("client") or "local",
+            "outcome": "completed" if row.get("ok") else "failed",
+            "elapsed_ms": row.get("elapsed_ms"),
+            "cache_hit_pct": hit,
+        })
+    return out

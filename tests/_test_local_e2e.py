@@ -1,7 +1,7 @@
 """端到端自检：起一个真网关，打「本地」口径的四个接口。
 
 「本地」看板选项读的是本机各客户端自己的会话记录（没走本网关的请求网关根本
-看不到），所以这几个接口的载荷结构必须和网关侧一致，��板才不用另写一份渲染。
+看不到），所以这几个接口的载荷结构必须和网关侧一致，看板才不用另写一份渲染。
 这里验证：
   1. GET /usage/analytics?provider=local  —— 载荷结构与网关侧同构
   2. GET /usage/timeseries?provider=local —— 桶结构与网关侧同构
@@ -9,6 +9,7 @@
   4. GET /usage/perf?provider=local        —— 没有首字延迟样本就写 null
   5. provider=workbuddy 等原口径不受影响（没被本地视图劫持）
   6. local_scope=all 把经本网关的那部分也算进来
+  7. realm=all 的「全部提供商」= 网关 + 本机非网关（四个接口都合并）
 """
 
 import json
@@ -167,6 +168,75 @@ try:
     check("性能载荷与网关同构（分位块 + 成功率）",
           "sampled" in (r or {}) and "success_rate_pct" in (r or {})
           and isinstance((r or {}).get("wall_ms"), (dict, type(None))), list((r or {}).keys()))
+
+    # 4b. 「全部提供商」= 经本网关的 + 本机没走网关的
+    status, merged_a = http("GET", base + "/usage/analytics?realm=all&range=today",
+                            headers=panel)
+    status_l, local_a = http("GET", base + "/usage/analytics?provider=local&range=today",
+                             headers=panel)
+    check("GET /usage/analytics?realm=all（全部口径）",
+          status == 200 and status_l == 200, (status, status_l))
+    lm = merged_a.get("local_merged") or {}
+    check("全部口径带 local_merged 段", isinstance(merged_a.get("local_merged"), dict), lm)
+    lw = (local_a.get("summary") or {}).get("window") or {}
+    check("全部口径里的本机部分与本地视图一致",
+          lm.get("requests") == lw.get("requests")
+          and lm.get("tokens") == lw.get("total_tokens"),
+          (lm, lw))
+    mw = (merged_a.get("summary") or {}).get("window") or {}
+    check("合并后的请求 / Token 不少于本机部分",
+          (mw.get("requests") or 0) >= (lm.get("requests") or 0)
+          and (mw.get("total_tokens") or 0) >= (lm.get("tokens") or 0),
+          (mw.get("requests"), lm.get("requests")))
+    if lm.get("requests"):
+        check("全部口径的账号表出现本地行",
+              any(str(a.get("uid", "")).startswith("local:")
+                  for a in (merged_a.get("accounts") or [])),
+              [a.get("uid") for a in (merged_a.get("accounts") or [])])
+        check("全部口径的 Key 表出现本机会话行",
+              any(k.get("source") == "local" for k in (merged_a.get("keys") or [])),
+              [(k.get("key"), k.get("source")) for k in (merged_a.get("keys") or [])])
+
+    status, merged_t = http("GET", base + "/usage/timeseries?realm=all&range=today",
+                            headers=panel)
+    status_l, local_t = http("GET", base + "/usage/timeseries?provider=local&range=today",
+                             headers=panel)
+    check("GET /usage/timeseries?realm=all（全部口径）",
+          status == 200 and status_l == 200, (status, status_l))
+    check("合并后的序列仍按时间升序",
+          all(merged_t["series"][i]["at"] <= merged_t["series"][i + 1]["at"]
+              for i in range(len(merged_t.get("series") or []) - 1)),
+          [b.get("at") for b in (merged_t.get("series") or [])][:5])
+    check("合并后的 Token 总量不少于本机部分",
+          sum(b.get("total_tokens") or 0 for b in (merged_t.get("series") or []))
+          >= sum(b.get("total_tokens") or 0 for b in (local_t.get("series") or [])),
+          (len(merged_t.get("series") or []), len(local_t.get("series") or [])))
+
+    status, merged_r = http("GET", base + "/usage/recent?realm=all&limit=50", headers=panel)
+    status_l, local_r = http("GET", base + "/usage/recent?provider=local&limit=50",
+                             headers=panel)
+    check("GET /usage/recent?realm=all（全部口径）",
+          status == 200 and status_l == 200, (status, status_l))
+    check("合并后的最近请求按时间倒序",
+          all(merged_r["rows"][i]["at"] >= merged_r["rows"][i + 1]["at"]
+              for i in range(len(merged_r.get("rows") or []) - 1)),
+          [row.get("at") for row in (merged_r.get("rows") or [])][:5])
+    check("合并后的记录数 = 网关 + 本机",
+          (merged_r.get("total") or 0) >= (local_r.get("total") or 0),
+          (merged_r.get("total"), local_r.get("total")))
+
+    status, merged_p = http("GET", base + "/usage/perf?realm=all", headers=panel)
+    status_l, local_p = http("GET", base + "/usage/perf?provider=local", headers=panel)
+    check("GET /usage/perf?realm=all（全部口径）",
+          status == 200 and status_l == 200, (status, status_l))
+    check("合并后的性能样本数不少于本机部分",
+          (merged_p.get("sampled") or 0) >= (local_p.get("sampled") or 0),
+          (merged_p.get("sampled"), local_p.get("sampled")))
+    if local_p.get("sampled"):
+        check("合并后的性能表带 local 出口",
+              any("local" in (realms or {})
+                  for realms in (merged_p.get("by_model_realm") or {}).values()),
+              list((merged_p.get("by_model_realm") or {}).items())[:1])
 
     # 5. 其它口径没被劫持
     status, r = http("GET", base + "/usage/analytics?provider=workbuddy&range=today",

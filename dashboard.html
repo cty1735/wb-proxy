@@ -5284,9 +5284,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     </div>
   </div>
 
-  <!-- 本地口径说明条：只在「本地」视图下出现。
-       本地 = 本机各客户端自己的会话记录，统计时排除经本项目网关的请求——那部分
-       已经在网关口径里记过一次，混进来会重复计算。说明条把排除掉多少条讲清楚。 -->
+  <!-- 口径说明条：「本地」视图下说明本机会话与已排除的网关请求；「全部提供商」
+       下说明这一格 = 网关 + 本机非网关、本机计入了多少。其它口径隐藏。 -->
   <div id="localScopeBar" style="display:none;margin:-2px 0 12px;background:var(--panel2);
        border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:12px;
        line-height:1.7;color:var(--fg)"></div>
@@ -18067,6 +18066,7 @@ async function onKeyBeforeToggle(box){
 }
 function keyRealmCell(k){
   if(k.source === 'bucket') return '<span style="color:var(--dim)">—</span>';
+  if(k.source === 'local') return '<span class="badge off" style="font-size:10px">本地</span>';
   if(k.realm === 'cn') return '<span class="badge warn" style="font-size:10px">国内版</span>';
   if(k.realm === 'intl') return '<span class="badge s" style="font-size:10px">国际版</span>';
   // realm 为空的 Key 不绑出口，而是跟着模型走：它可能两个出口都用过，
@@ -18112,6 +18112,7 @@ function renderKeyTable(data){
     const cross = named.filter(k => k.cross_realm).length;
     const parts = [];
     if(!named.length) parts.push('设置里还没有任何 API Key，全部流量都落在下面的未归属行里。');
+    if(keys.some(k => k.source === 'local')) parts.push('本机没走网关的会话没有 API Key 归属，单独列在「本机会话」一行。');
     if(cross) parts.push('有 ' + cross + ' 把 Key 没有绑定出口，它的积分由国际版与国内版两套价格相加而来，只能当量级看。');
     // 收起那行时就不再解释那行，否则读者找不到话里指的东西。
     if(!keyBeforeHidden) parts.push('Key 维度只从本次升级之后开始记录：更早的请求没有这个字段，会一直留在「(切换前)」里且不会再增长。');
@@ -18125,7 +18126,7 @@ function renderKeyTable(data){
 
   tbody.innerHTML = shown.map(k => {
     const st = k.window || {};
-    const sub = {panel:'面板 Key', launcher:'启动参数', bucket:'未归属', builtin:'内置'}[k.source] || '';
+    const sub = {panel:'面板 Key', launcher:'启动参数', bucket:'未归属', builtin:'内置', local:'本机会话'}[k.source] || '';
     let nameCell = '<td style="text-align:left" data-label="API Key">'
       + '<b>' + esc(k.name || k.key) + '</b>';
     if(sub || !k.enabled){
@@ -18495,10 +18496,13 @@ async function loadRecent(){
     $('recentMeta').textContent = `共 ${fmtCompact(r.total || 0)} 条记录`;
     $('recentList').innerHTML = rows.map(x => {
       const ok = x.outcome === 'completed';
-      const nm = nicknameOf(x.account);
+      // 本机会话（没走网关）没有账号：用客户端名，并标一个「本地」。
+      const isLocal = x.gateway === false;
+      const nm = isLocal && x.client_label ? x.client_label : nicknameOf(x.account);
       // 历史行没有 agent 字段：不显示标签，但「全部」口径里照常列出。
-      const agent = x.agent
-        ? `<span class="agent">${analyticsAgentLabels[x.agent] || x.agent}</span>` : '';
+      const agent = isLocal
+        ? `<span class="agent">本地</span>`
+        : (x.agent ? `<span class="agent">${analyticsAgentLabels[x.agent] || x.agent}</span>` : '');
       return `<div class="recent-item">
         <span class="t">${(x.iso || '').slice(11, 19)}</span>
         <span class="m"><b>${x.model || ''}</b> → ${nm.length > 16 ? nm.slice(0, 16) + '…' : nm}${agent}${ok ? '' : ' <span class="err">[' + (x.outcome || '失败') + ']</span>'}</span>
@@ -18693,7 +18697,26 @@ function renderLocalScopeBar(){
   const bar = document.getElementById('localScopeBar');
   if (!bar) return;
   if ((analyticsProvider || 'all') !== 'local'){
-    bar.style.display = 'none';
+    // 「全部提供商」把本机没走网关的会话也算进来（见服务端 merge_local_*），
+    // 这里说明它占了多少，免得数字比只算网关时大了一截却不知道为什么。
+    const merged = (state.analytics || {}).local_merged;
+    if ((analyticsProvider || 'all') !== 'all' || !merged){
+      bar.style.display = 'none';
+      return;
+    }
+    renderAnalyticsAgentOptions();
+    const names = (merged.clients || []).map(c => c.label || c.id);
+    bar.style.display = 'block';
+    bar.innerHTML =
+      `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">`
+      + `<b style="font-weight:650">全部口径</b>`
+      + `<span style="color:var(--dim)">经本网关的请求 + 本机没走网关的会话`
+        + (names.length ? `（${esc(names.join('、'))}）` : '')
+        + `，两边不重复计入</span>`
+      + `<span style="color:var(--dim)">本机计入 <b style="color:var(--fg)">${fmtCompact(merged.requests)}</b> 次`
+        + ` · <b style="color:var(--fg)">${fmtCompact(merged.tokens)}</b> tokens</span>`
+      + `<span style="color:var(--dim);font-size:11px">积分只算网关部分，本机花费按等价价折算</span>`
+      + `</div>`;
     return;
   }
   const info = (state.analytics || {}).local || {};
@@ -19970,7 +19993,10 @@ let analyticsAgentCatalog = [];   /* 网关口径：已经一键配置过的客�
 let analyticsAgentSig = '';       /* 上一次画进下拉的选项串，避免每轮重建 */
 
 /* 当前口径下可选的客户端：网关口径来自 /usage/agents（只列已配置的），本地
-   口径来自刚才那份载荷里的 local.clients（本机实际有会话记录的客户端）。 */
+   口径来自刚才那份载荷里的 local.clients（本机实际有会话记录的客户端）。
+   「全部」= 两份并集：本机会话里的客户端也能筛，只是它的 id 要换成网关那套
+   （本地的 claude 在网关记账里叫 claude-code），服务端两边各自归一。 */
+const LOCAL_AGENT_TO_GATEWAY = {claude: 'claude-code'};
 function currentAgentOptions(){
   if ((analyticsProvider || 'all') === 'local'){
     const info = (state.analytics || {}).local || {};
@@ -19978,7 +20004,15 @@ function currentAgentOptions(){
       return {id: c.id, label: c.label || c.id};
     });
   }
-  return analyticsAgentCatalog;
+  const list = analyticsAgentCatalog.slice();
+  const merged = (state.analytics || {}).local_merged || {};
+  (merged.clients || []).forEach(function(c){
+    const id = LOCAL_AGENT_TO_GATEWAY[c.id] || c.id;
+    if (!list.some(function(x){ return x.id === id; })){
+      list.push({id: id, label: c.label || c.id});
+    }
+  });
+  return list;
 }
 
 function renderAnalyticsAgentOptions(){

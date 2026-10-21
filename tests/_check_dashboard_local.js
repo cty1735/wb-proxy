@@ -240,6 +240,42 @@ check('花费副行在本地口径下不说积分', costSub.innerHTML.indexOf('�
 check('说明条这时是显示的', document.getElementById('localScopeBar').style.display === 'block',
   document.getElementById('localScopeBar').style.display);
 
+// 10. 「全部提供商」= 网关 + 本机非网关：说明条与下拉并集
+ctx.setAnalyticsProvider('all');
+ctx.wbaDebug.setAnalytics({
+  summary: {
+    window: { requests: 49, errors: 0, prompt_tokens: 1000, completion_tokens: 100,
+              reasoning_tokens: 0, cached_tokens: 800, total_tokens: 1100,
+              credit: 1, cost_cny: 0.5, cache_hit_pct: 80, speed_avg: 100 },
+    all_time: { requests: 49, errors: 0, prompt_tokens: 1000, completion_tokens: 100,
+                reasoning_tokens: 0, cached_tokens: 800, total_tokens: 1100,
+                credit: 1, cost_cny: 0.5, cache_hit_pct: 80, speed_avg: 100 },
+  },
+  accounts: [], models: [],
+  local_merged: {
+    scope: 'nongw', requests: 42, errors: 0, tokens: 1100, cost_cny: 0,
+    clients: [
+      { id: 'opencode', label: 'OpenCode' },
+      { id: 'claude', label: 'Claude Code' },
+    ],
+  },
+});
+ctx.renderLocalScopeBar();
+check('全部口径说明条显示出来', bar.style.display === 'block', bar.style.display);
+check('全部口径说明条讲清两份来源',
+  bar.innerHTML.indexOf('全部口径') >= 0 && bar.innerHTML.indexOf('本机计入') >= 0
+  && bar.innerHTML.indexOf('OpenCode') >= 0, bar.innerHTML.slice(0, 300));
+check('全部口径说明条写明积分只算网关部分',
+  bar.innerHTML.indexOf('积分只算网关部分') >= 0, bar.innerHTML.slice(0, 400));
+check('全部口径的客户端下拉是本机会话 + 网关的并集',
+  ctx.wbaDebug.agents().map(o => o.id).join(',') === 'opencode,claude-code',
+  ctx.wbaDebug.agents());
+ctx.setAnalyticsAgent('claude-code');
+const allUrl = ctx.withAnalyticsProvider('/usage/analytics');
+check('全部口径筛本地客户端时用网关 id',
+  allUrl.indexOf('agent=claude-code') >= 0 && allUrl.indexOf('provider=local') < 0,
+  allUrl);
+
 console.log('');
 if (FAIL) { console.log('FAILED: ' + FAIL); process.exit(1); }
 console.log('all checks passed');
