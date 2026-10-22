@@ -556,6 +556,34 @@ def _yaml_leaf(text, key_path):
     return _yaml_find_leaf(lines, 0, len(lines), 0, keys)
 
 
+def _yaml_value(value):
+    """Normalise a YAML leaf for comparison: quotes and spacing are spelling.
+
+    客户端会自己重排配置（Hermes 把 `default: "x"` 写成 `default: x`），
+    值没变、字面变了。拿原文去比指纹就会读成「用户手改过我们那段」，
+    面板重刷模型清单时就会跳过这个客户端 —— 它的模型表就一直停在上一家
+    提供商的目录上（切网关后客户端模型不更新的第二个原因）。
+    """
+    text = str("" if value is None else value).strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
+        text = text[1:-1].strip()
+    return text
+
+
+def _yaml_json_value(value):
+    """Same as :func:`_yaml_value`, for a leaf that holds an inline JSON object.
+
+    重新序列化（键排序）后再比：键序与空格差异不算「被改过」。
+    """
+    text = _yaml_value(value)
+    if not text:
+        return ""
+    try:
+        return json.dumps(json.loads(text), sort_keys=True, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return text
+
+
 def _yaml_find_leaf(lines, start, end, indent, keys):
     """Block scanner for _yaml_leaf; mirrors _yaml_upsert_at's structure."""
     key = keys[0]
@@ -618,8 +646,8 @@ def _toml_top_value(text, key):
     return None
 
 
-def _managed_fingerprint(client, paths, contents):
-    """Hash of the slice of the client's files the gateway owns.
+def _managed_projection(client, paths, contents):
+    """The client's managed slice as *values* (not spelling).
 
     ``contents`` maps a file path to its current text. Returns None when the
     client declares no managed slice (or it cannot be read), which the caller
@@ -634,7 +662,20 @@ def _managed_fingerprint(client, paths, contents):
         return None
     if projection is None:
         return None
-    return _sha256_bytes(str(projection).encode("utf-8"))
+    return str(projection)
+
+
+def _managed_fingerprint(client, paths, contents):
+    """Hash of the slice of the client's files the gateway owns.
+
+    ``contents`` maps a file path to its current text. Returns None when the
+    client declares no managed slice (or it cannot be read), which the caller
+    treats as "unknown".
+    """
+    projection = _managed_projection(client, paths, contents)
+    if projection is None:
+        return None
+    return _sha256_bytes(projection.encode("utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -1014,8 +1055,10 @@ def _managed_dsh(paths, contents):
     text = contents.get(paths["settings"]) or ""
     cred = contents.get(paths["credentials"]) or ""
     return json.dumps({
-        "provider": _yaml_leaf(text, "llm-pi-ai.providers." + PROVIDER_ID),
-        "default_model": _yaml_leaf(text, "agent-default-model"),
+        "provider": _yaml_json_value(
+            _yaml_leaf(text, "llm-pi-ai.providers." + PROVIDER_ID)),
+        "default_model": _yaml_value(
+            _yaml_leaf(text, "agent-default-model")),
         "credential": _env_value(cred, CREDENTIAL_REF),
     }, sort_keys=True, ensure_ascii=False)
 
@@ -1218,9 +1261,10 @@ def _managed_hermes(paths, contents):
     text = contents.get(paths["config"]) or ""
     env = contents.get(paths["env"]) or ""
     return json.dumps({
-        "provider": _yaml_leaf(text, "providers." + PROVIDER_ID),
-        "model_provider": _yaml_leaf(text, "model.provider"),
-        "model_default": _yaml_leaf(text, "model.default"),
+        "provider": _yaml_json_value(
+            _yaml_leaf(text, "providers." + PROVIDER_ID)),
+        "model_provider": _yaml_value(_yaml_leaf(text, "model.provider")),
+        "model_default": _yaml_value(_yaml_leaf(text, "model.default")),
         "key": _env_value(env, CREDENTIAL_REF),
     }, sort_keys=True, ensure_ascii=False)
 
@@ -1415,8 +1459,8 @@ def overview(accounts_dir, home=None):
                         file_changed = True
                 except AgentConfigError:
                     file_changed = True
-            managed_sha = record.get("managed_sha256")
-            if managed_sha:
+            managed_values = record.get("managed_values")
+            if managed_values:
                 contents = {}
                 for entry in record.get("files") or []:
                     path = entry.get("path")
@@ -1426,13 +1470,17 @@ def overview(accounts_dir, home=None):
                         contents[path] = _read_text(path)
                     except AgentConfigError:
                         contents[path] = ""
-                current = _managed_fingerprint(client, paths, contents)
-                external = (current is None or current != managed_sha)
+                # 比的是**取值**而不是原文：客户端会自己重排配置（Hermes 把
+                # `default: "x"` 写成 `default: x`），字面变了值没变。按原文
+                # 比就会读成「用户改了我们那段」，面板重刷模型清单时跳过这个
+                # 客户端 —— 它的模型表就一直停在上一家提供商的目录上。
+                current = _managed_projection(client, paths, contents)
+                external = (current is None or current != managed_values)
             else:
-                # 旧记录没有指纹：无从判断我们那段有没有被改过。先当作没被改——
-                # 切网关时我们要做的正是「把我们那段重写一遍」，不能因为文件
-                # 里别的段落变了就把这个客户端跳过。下一次 apply 会记上指纹，
-                # 之后的判断就准了。
+                # 旧记录只存了指纹、没有可比对的取值：无从判断我们那段有没有
+                # 被改过。先当作没被改——切网关时我们要做的正是「把我们那段
+                # 重写一遍」，不能因为文件里别的段落变了就把这个客户端跳过。
+                # 下一次 apply 会记上取值，之后的判断就准了。
                 external = False
             applied = {
                 "at": record.get("applied_at"),
@@ -1619,8 +1667,12 @@ def integrate(accounts_dir, client_id, base_url, api_key, model=None,
         # 不会把用户特意选的 Key 换成全局 Key。
         "key_id": str(key_id or ""),
         "files": entries,
-        # 我们自己写的那一段（provider 条目 / 模型表 / 默认模型）的指纹：
-        # 之后判断「文件被外部改过」只看这一段，文件里别的部分怎么变都不算。
+        # 我们自己写的那一段（provider 条目 / 模型表 / 默认模型）：
+        # 存取值（可比对）与指纹（留个记录）。之后判断「文件被外部改过」只看
+        # 这一段，文件里别的部分怎么变都不算。
+        "managed_values": _managed_projection(
+            client, paths,
+            {entry["path"]: entry["content"] for entry in built["files"]}),
         "managed_sha256": _managed_fingerprint(
             client, paths,
             {entry["path"]: entry["content"] for entry in built["files"]}),

@@ -11923,9 +11923,14 @@ def _fetch_egg_models(realm):
             # 内置免费源这次没拉到，但自建池子有模型：清单仍然是活的。
             live = True
         source = "remote" if live else "bundled"
+        # 目录已经过期时交出去的是上一份（后台正在刷新）：这种缓存只留很短
+        # 一会儿，后台刷新一落地，下一次请求就能看到新名单 —— 否则客户端
+        # 会盯着同一份旧名单再等 5 分钟。
+        stale = bool(snap.get("at")
+                     and time.time() - snap["at"] > wb_zen.CATALOG_TTL_SECONDS)
+        ttl = 15 if stale else (300 if live else 20)
         with _lock:
-            _models_cache[key] = {"at": time.time(), "data": entries,
-                                  "ttl": 300 if live else 20}
+            _models_cache[key] = {"at": time.time(), "data": entries, "ttl": ttl}
             _catalog_meta[key] = {"source": source, "fetched_at": time.time(),
                                   "file_mtime": None}
         return entries

@@ -826,9 +826,14 @@ def _refresh_locked(force, timeout):
 def ensure(directory=None, timeout=LIST_TIMEOUT_SECONDS):
     """按 TTL 取目录；冷启动或过期时自动走一次刷新。
 
-    冷启动（目录还是空的）**不等上游**：先把静态兜底清单交出去，真实目录在
-    后台慢慢拉。新用户克隆下来第一次调 /v1/models，不该为了等一个要十几秒的
-    上游而卡住 —— 卡住的印象比「清单暂时是兜底版」差得多。
+    两种「目录还没准备好」都**不等上游**：
+
+    * 冷启动（目录还是空的）—— 先把静态兜底清单交出去，真实目录在后台慢慢拉。
+    * 过期但手上有一份可用目录 —— 先把手上这份交出去，刷新丢到后台。
+
+    两种都不等，是因为客户端探模型清单只给 5 秒（Hermes 的 /v1/models 探针
+    是 5 秒，快模式 1.5 秒），而免费源目录要拉 40 多秒：同步等上游等于
+    「客户端的模型列表永远停在上一家提供商」。
     """
     if directory is not None:
         configure(directory)
@@ -839,14 +844,17 @@ def ensure(directory=None, timeout=LIST_TIMEOUT_SECONDS):
     if cold:
         _warm_in_background()
         return _static_snapshot()
-    return refresh(force=False, timeout=timeout)
+    # 过期但有上一份可用目录：立刻交出去，刷新在后台跑（后台线程自己按
+    # _refresh_lock 排队，不会把上游放大成两倍请求）。
+    _warm_in_background(timeout)
+    return snapshot()
 
 
 _warm_thread = {"thread": None}
 
 
-def _warm_in_background():
-    """后台拉一次目录（冷启动用）。已经在跑就不重复拉。"""
+def _warm_in_background(timeout=LIST_TIMEOUT_SECONDS):
+    """后台拉一次目录（冷启动 / 目录过期时用）。已经在跑就不重复拉。"""
     with _lock:
         thread = _warm_thread["thread"]
         if thread is not None and thread.is_alive():
@@ -854,7 +862,7 @@ def _warm_in_background():
 
     def run():
         try:
-            refresh(force=False)
+            refresh(force=False, timeout=timeout)
         except Exception as exc:
             _log("egg catalog: 后台预热失败（%s）" % exc)
 
