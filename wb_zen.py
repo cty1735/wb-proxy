@@ -1319,101 +1319,34 @@ def _error_detail(status, raw, pool=None, model=""):
 
 def open_stream(payload, session_key="", timeout=600):
     """打开一次免费上游流；返回 (EggUpstream, 元数据)。"""
-    for attempt in range(2):
-        url, body, headers, rename, source, base, sse = build_request(
-            payload, session_key)
-        from wb_accounts import urlopen_with_fallback
-        data = json.dumps(body, ensure_ascii=False,
-                          separators=(",", ":")).encode("utf-8")
-        req = urllib.request.Request(url, data=data, method="POST",
-                                     headers=headers)
+    url, body, headers, rename, source, base, sse = build_request(payload,
+                                                                  session_key)
+    from wb_accounts import urlopen_with_fallback
+    data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+    try:
+        resp = urlopen_with_fallback(req, timeout=timeout, proxy=_proxy_url(),
+                                     log=_log)
+    except urllib.error.HTTPError as exc:
+        detail = ""
         try:
-            resp = urlopen_with_fallback(req, timeout=timeout, proxy=_proxy_url(),
-                                         log=_log)
-        except urllib.error.HTTPError as exc:
-            raw = b""
-            try:
-                raw = exc.read(4 << 10)
-            except Exception:
-                raw = b""
-            if (attempt == 0 and exc.code == 409
-                    and _is_catalog_stale(raw)
-                    and _refresh_platform_catalog(payload)):
-                # 模型快照过期：刷新目录后重来一次（CLI 也是这么做的）。
-                continue
-            if (attempt == 0 and exc.code in (401, 403)
-                    and _is_device_key_unknown(raw)
-                    and _forget_platform_device_key(payload)):
-                # 服务端不认这个设备密钥：重新注册一次再试。
-                continue
-            detail = ""
-            try:
-                detail = _error_detail(exc.code, raw,
-                                       _pool_of(payload),
-                                       str((payload or {}).get("model") or ""))
-            except Exception:
-                detail = "HTTP %d" % exc.code
-            raise EggError(exc.code, detail,
-                           retry_after=_retry_after(exc.headers))
-        except EggError:
-            raise
-        except Exception as exc:
-            pool = _pool_of(payload)
-            if pool:
-                raise EggError(502, "自建供应商池「%s」不可达：%s"
-                               % (pool.get("name") or pool.get("id") or "自建池",
-                                  exc))
-            raise EggError(502, "免费源不可达：%s" % exc)
-        return (EggUpstream(resp, source, base, rename=rename, sse=sse),
-                {"source": source, "model": base})
-    raise EggError(502, "免费源不可达：重试后仍然失败")
-
-
-def _is_catalog_stale(raw):
-    """响应体里是不是「模型目录快照过期」（Freebuff 409 freebuff_catalog_stale）。"""
-    try:
-        text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
-    except Exception:
-        return False
-    return "catalog_stale" in text
-
-
-def _refresh_platform_catalog(payload):
-    """Freebuff 目录过期时刷新一次目录；成功返回 True。"""
-    pool = _pool_of(payload)
-    if not pool or str(pool.get("platform") or "") != "freebuff":
-        return False
-    try:
-        import wb_platforms
-        return bool(wb_platforms.refresh_catalog(pool))
+            detail = _error_detail(exc.code, exc.read(4 << 10),
+                                    _pool_of(payload),
+                                    str((payload or {}).get("model") or ""))
+        except Exception:
+            detail = "HTTP %d" % exc.code
+        raise EggError(exc.code, detail,
+                       retry_after=_retry_after(exc.headers))
+    except EggError:
+        raise
     except Exception as exc:
-        _log("egg: Freebuff 模型目录刷新失败：%s" % exc)
-        return False
-
-
-def _is_device_key_unknown(raw):
-    """错误码是不是「服务端不认这个设备密钥」（CLI 的宽松匹配）。"""
-    try:
-        text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
-    except Exception:
-        return False
-    if not re.search(r"device[_-]?key", text, re.I):
-        return False
-    return bool(re.search(r"unknown|not[_-]?found|invalid|unregistered", text,
-                          re.I))
-
-
-def _forget_platform_device_key(payload):
-    """丢掉服务端不认的设备密钥；成功返回 True。"""
-    pool = _pool_of(payload)
-    if not pool or str(pool.get("platform") or "") != "freebuff":
-        return False
-    try:
-        import wb_platforms
-        return bool(wb_platforms.forget_device_key(pool))
-    except Exception as exc:
-        _log("egg: Freebuff 设备密钥重置失败：%s" % exc)
-        return False
+        pool = _pool_of(payload)
+        if pool:
+            raise EggError(502, "自建供应商池「%s」不可达：%s"
+                           % (pool.get("name") or pool.get("id") or "自建池", exc))
+        raise EggError(502, "免费源不可达：%s" % exc)
+    return (EggUpstream(resp, source, base, rename=rename, sse=sse),
+            {"source": source, "model": base})
 
 
 def _pool_of(payload):
