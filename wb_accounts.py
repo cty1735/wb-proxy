@@ -4211,6 +4211,21 @@ class AccountPool(object):
 
     def start_login(self, realm="intl", platform="CLI", provider=DEFAULT_PROVIDER,
                     callback_url=""):
+        """发起一次浏览器登录，按 provider 分流。
+
+        qoder 走自己的设备码通道（国际版：qoder.com/device/selectAccounts +
+        openapi deviceToken/poll）；trae 走 native_ide OAuth（授权完 302 回
+        网关本机 /authorize 换 token）；其余提供商保持 WorkBuddy 的
+        auth/state 流程不变（provider 缺省时行为与以前逐字节一致）。
+
+        分流这段在 2026-10-20 同步上游 v1.7.16 时被覆盖掉了：面板点「添加
+        Qoder 账号」拿到的是 WorkBuddy 的 workbuddy.ai 登录链接，浏览器授权
+        自然落不到 Qoder 账号池（Trae 那边同理，拿到的是腾讯的登录链接）。
+        """
+        if normalize_provider(provider) == "qoder":
+            return self._start_qoder_login(realm)
+        if normalize_provider(provider) == "trae":
+            return self._start_trae_login(realm, callback_url)
         cfg = get_realm_config(realm)
         url = "%s%s?platform=%s" % (cfg["chat_upstream"], AUTH_STATE_PATH, urllib.parse.quote(str(platform)))
         headers = {
