@@ -56,7 +56,7 @@ def _error_envelope():
         "code": "10605",
         "message": json.dumps({
             "isQueued": True, "queueCount": 0, "queueType": "p3",
-            "retryAfterSeconds": 30, "serviceAvailable": False,
+            "retryAfterSeconds": 30, "serviceAvailable": True,
             "subCode": "RESOURCE_LIMIT", "waitTime": 30,
         }),
         "subCode": "RESOURCE_LIMIT",

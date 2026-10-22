@@ -32,7 +32,11 @@ def check(name, cond, detail=""):
 
 
 def _queue_envelope(wait=30, queued=True):
-    """上游的排队信封：外层 statusCodeValue=403，里面裹着排队信息。"""
+    """上游的排队信封：外层 statusCodeValue=403，里面裹着排队信息。
+
+    queued=True 表示「真在排队」（serviceAvailable=true，等一会儿会轮到）；
+    服务不可用（serviceAvailable=false）是另一种信封，见 _unavailable_envelope。
+    """
     inner = json.dumps({
         "code": "10605",
         "message": json.dumps({
@@ -41,7 +45,7 @@ def _queue_envelope(wait=30, queued=True):
             "queueCount": 0,
             "queueType": "p3",
             "retryAfterSeconds": wait,
-            "serviceAvailable": not queued,
+            "serviceAvailable": True,
             "subCode": "RESOURCE_LIMIT",
             "waitTime": wait,
         }),
@@ -200,6 +204,52 @@ except Exception as exc:      # noqa: BLE001
 check("没有 reopen 就不重试", isinstance(raised, wb_qoder_chat.QoderQueuedError),
       type(raised).__name__)
 check("没有 reopen 就不等", waits == [], waits)
+
+
+# 4. serviceAvailable=false：这条队列没有服务，等多久都不会轮到 ——
+#    必须立刻报出去（面板测试 30 秒超时就是因为这里以前会一直等）。
+def _unavailable_envelope(wait=16):
+    inner = json.dumps({
+        "code": "10605",
+        "message": json.dumps({
+            "isQueued": True, "modelKey": "auto", "queueCount": 0,
+            "queueType": "p3", "retryAfterSeconds": wait,
+            "serviceAvailable": False, "subCode": "RESOURCE_LIMIT",
+            "waitTime": wait,
+        }),
+        "subCode": "RESOURCE_LIMIT",
+    })
+    return {
+        "headers": {"Content-Type": ["application/json"]},
+        "body": inner,
+        "statusCodeValue": 403,
+        "statusCode": "FORBIDDEN",
+    }
+
+
+err = wb_qoder_chat._qoder_status_error(_unavailable_envelope(), "Auto")
+check("serviceAvailable=false 仍是 QoderQueuedError",
+      isinstance(err, wb_qoder_chat.QoderQueuedError), type(err).__name__)
+check("serviceAvailable=false 被记下来",
+      getattr(err, "service_available", None) is False,
+      getattr(err, "service_available", None))
+check("serviceAvailable=false 的文案说清「没有服务」",
+      "serviceAvailable=false" in str(err) and "不会" in str(err), str(err))
+
+waits[:] = []
+reopened[:] = []
+unavailable = _Resp([("data:" + json.dumps(_unavailable_envelope()) + "\n\n").encode("utf-8")])
+adapter = wb_proxy.QoderUpstreamAdapter(unavailable, "Auto", reopen=_reopen,
+                                        queue_wait_budget=120)
+raised = None
+try:
+    adapter.read1(65536)
+except Exception as exc:      # noqa: BLE001
+    raised = exc
+check("serviceAvailable=false 立刻报错", isinstance(raised, wb_qoder_chat.QoderQueuedError),
+      type(raised).__name__)
+check("serviceAvailable=false 不等待", waits == [], waits)
+check("serviceAvailable=false 不重开", reopened == [], reopened)
 
 print()
 if FAIL:

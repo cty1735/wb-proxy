@@ -321,12 +321,15 @@ class QoderQueuedError(QoderChatError):
     """
 
     def __init__(self, message, retry_after=0, queue_type="", queue_count=0,
-                 model_key=""):
+                 model_key="", service_available=None):
         super(QoderQueuedError, self).__init__(message)
         self.retry_after = int(retry_after or 0)
         self.queue_type = str(queue_type or "")
         self.queue_count = queue_count
         self.model_key = str(model_key or "")
+        #: 上游的 serviceAvailable：True = 真的在排队（等一会儿会轮到），
+        #: False = 这条队列现在根本没有服务（等多久都不会轮到），None = 没说。
+        self.service_available = service_available
 
 
 # ---------------------------------------------------------------------------
@@ -975,6 +978,11 @@ def _envelope_queue_hint(envelope):
                 "queue_type": str(node.get("queueType") or ""),
                 "queue_count": node.get("queueCount"),
                 "model_key": str(node.get("modelKey") or ""),
+                # 上游只在这两种情况下发排队信封：isQueued=true（有队列在排）
+                # 或 serviceAvailable=false（这条队列没有服务）。两者后续处理
+                # 完全相反，所以把原值带出去。
+                "service_available": node.get("serviceAvailable")
+                if isinstance(node.get("serviceAvailable"), bool) else None,
             }
         node = node.get("message")
     return None
@@ -1026,17 +1034,33 @@ def _qoder_status_error(envelope, model):
     if hint is None:
         return QoderChatError(_qoder_status_message(envelope, model))
     wait = hint.get("wait") or 0
+    status = envelope.get("statusCodeValue") or envelope.get("statusCode") or 403
+    lane = hint.get("queue_type") or "RESOURCE_LIMIT"
+    if hint.get("service_available") is False:
+        # serviceAvailable=false 不是「排到后面了」，是「这条队列没有服务」：
+        # 实测账号套餐额度为 0（只剩加油包）时，auto / ultimate / efficient
+        # 全都回这个，等多久都不会轮到。这种失败要立刻报给客户端并说清原因，
+        # 否则客户端只会看到「等 30 秒再试」然后超时，误以为是网关卡住。
+        return QoderQueuedError(
+            ("Qoder 上游拒绝该请求（状态 %s / RESOURCE_LIMIT）：模型「%s」所在的"
+             "队列（%s）当前没有可用服务（serviceAvailable=false），等多久都不会"
+             "轮到。常见原因是该账号的套餐额度为 0（只剩加油包）或这个区域没给"
+             "该账号开通；请换一个有套餐额度的账号，或改用另一个区域的账号" % (
+                 status, model, lane)),
+            retry_after=wait,
+            queue_type=hint.get("queue_type") or "",
+            queue_count=hint.get("queue_count") or 0,
+            model_key=hint.get("model_key") or "",
+            service_available=False)
     return QoderQueuedError(
         ("Qoder 上游拒绝该请求（状态 %s / RESOURCE_LIMIT）：模型「%s」当前"
          "资源受限或正在排队（%s），该模型在所选区域暂无可用容量；上游建议"
-         "等 %d 秒后重试" % (
-             envelope.get("statusCodeValue") or envelope.get("statusCode") or 403,
-             model, hint.get("queue_type") or "serviceAvailable=false",
-             wait or 30)),
+         "等 %d 秒后重试" % (status, model, lane, wait or 30)),
         retry_after=wait,
         queue_type=hint.get("queue_type") or "",
         queue_count=hint.get("queue_count") or 0,
-        model_key=hint.get("model_key") or "")
+        model_key=hint.get("model_key") or "",
+        service_available=hint.get("service_available"))
 
 
 def _usage_to_openai(raw):

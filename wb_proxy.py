@@ -15358,7 +15358,9 @@ class QoderUpstreamAdapter:
                             retry_after=getattr(exc, "retry_after", 0),
                             queue_type=getattr(exc, "queue_type", ""),
                             queue_count=getattr(exc, "queue_count", 0),
-                            model_key=getattr(exc, "model_key", ""))
+                            model_key=getattr(exc, "model_key", ""),
+                            service_available=getattr(
+                                exc, "service_available", None))
                     raise
                 self._wait_then_reopen(exc)
                 continue
@@ -15376,6 +15378,11 @@ class QoderUpstreamAdapter:
     def _can_wait(self, exc):
         """这次排队还等不等：重开过、且等待秒数不超预算才等。"""
         if self._reopen is None or self._budget <= 0:
+            return False
+        # serviceAvailable=false 不是「排在队尾」，是「这条队列没有服务」：
+        # 等多久都不会轮到。继续等只会把客户端拖到超时（面板测试 30 秒一到
+        # 就是「测试时没有回答」），所以立刻把上游给的原因报出去。
+        if getattr(exc, "service_available", None) is False:
             return False
         return self._waited + self._queue_delay(exc) <= self._budget
 

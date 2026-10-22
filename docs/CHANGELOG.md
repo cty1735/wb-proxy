@@ -4,6 +4,7 @@
 
 | 日期 | 功能 |
 | --- | --- |
+| 2026-10-22 | 修 Qoder 模型「测试时没有回答、只等到超时」：账号没有套餐额度（只剩加油包）时，上游对每个模型都回 10605 + `serviceAvailable=false`（这条队列**没有服务**，不是排到队尾），以前网关照着 `retryAfterSeconds` 一等 30~120 秒，面板 30 秒一到就成了「超时：没有完成回答」。现在把 `serviceAvailable=false` 与「真在排队」分开：前者立刻把上游原因报给客户端（套餐额度为 0 / 该区域未开通该账号），后者仍按上游建议等待重试。 |
 | 2026-10-22 | 修 Trae「添加账号」在浏览器里直接失败（国内版 / 国际版都是）：面板把回调地址写成看板的 origin（用户用 http://localhost:8788 打开看板时就是 `http://localhost:8788/authorize`），而 Trae 授权页里写死了只收 `^http://127\.0\.0\.1:(\d+)/authorize$`，对不上就进 invalidUrl 分支，页面直接渲染「登录失败 / 网络错误」（国际版是 “Login Failed / Something went wrong. Try to refresh the page.”），连登录框都不出。现在回调地址一律由网关按自己的本机端口生成成 127.0.0.1 形状（localhost、局域网 IP、带 query 一律归一化），授权链接的 plugin_version / x_app_version 也对齐真实客户端（2.3.85576 / 3.3.102，版本号取本机 Trae 客户端的 iCubeLastVersion），login_trace_id 改成真实客户端那样的 UUID。 |
 | 2026-10-22 | 鸡蛋视图新增 **Freebuff 平台账号池** 卡片：浏览器授权登录，按账号拉模型目录，模型 id 带 `freebuff/` 前缀；聊天按 CLI 协议走（先开会话再用目录 handle），设备签名用 Ed25519。修掉签名分隔符写错、首次聊天未拉目录、handle 轮换后旧会话被复用三处问题。 |
 | 2026-10-22 | 修 Qoder 国际版与 Trae 的「浏览器登录」走错通道：同步上游 v1.7.16 时 `AccountPool.start_login()` 按 provider 分流的两行被覆盖，Qoder 拿到的是 WorkBuddy 的 workbuddy.ai 链接、Trae 拿到的是腾讯的 copilot.tencent.com 链接，浏览器授权落不到自家账号池。分流补回来后各家走自己的授权页，WorkBuddy 的登录入口不变。 |
