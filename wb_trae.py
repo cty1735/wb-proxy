@@ -61,6 +61,10 @@ REALM_CONFIGS = {
         "checkin_host": "https://api.trae.cn",
         "domain": "trae.cn",
         "ide_version": "3.3.67",
+        # 授权页拿来判「IDE 版本太旧」的 x_app_version（页面拿它和网站配置
+        # 里的 ide_required_version 比）。2026-10-22 抓真实客户端的授权链接：
+        # 国内版 IDE 报 3.3.102。
+        "oauth_app_version": "3.3.102",
     },
     "intl": {
         "realm": "intl",
@@ -73,6 +77,9 @@ REALM_CONFIGS = {
         "checkin_host": "https://api.trae.ai",
         "domain": "trae.ai",
         "ide_version": "3.5.51",
+        # 国际版 IDE 的版本号（网站侧 ide_required_version 目前为空，用哪个
+        # 都过得去；跟着本仓库已知的国际版 IDE 版本走）。
+        "oauth_app_version": "3.5.51",
     },
 }
 
@@ -86,12 +93,21 @@ INTL_CREDITS_HOST_US = "https://ug-normal.us.trae.ai"
 #: 桌面端 OAuth client id（公开的客户端标识，不是用户密钥）。
 OAUTH_CLIENT_ID = "ono9krqynydwx5"
 
-#: 浏览器授权页快照（2026-10-18 对齐 Trae CN 2.3.33255）。
+#: 浏览器授权页快照（2026-10-22 对齐 Trae CN 2.3.85576 / IDE 3.3.102）。
 #: native_ide 流程：授权页前端调用 GetPCAuthCode 绑定 PKCE challenge，
 #: 然后 302 回 auth_callback_url，回调参数是 authCodeInfo（JSON）。
-OAUTH_PAGE_PLUGIN_VERSION = "2.3.83560"
-OAUTH_PAGE_APP_VERSION = "3.3.100"
+OAUTH_PAGE_PLUGIN_VERSION = "2.3.85576"
+OAUTH_PAGE_APP_VERSION = "3.3.102"
 OAUTH_PAGE_PLATFORM_CODE = "IDE_PC"
+
+#: Trae 授权页（trae.ai / trae.cn 的 /authorization）只认这一种回调地址，
+#: 正则是写死在页面里的 ``^http://127\.0\.0\.1:(\d+)/authorize$``：主机必须
+#: 是 127.0.0.1（localhost、局域网 IP 都不行）、端口纯数字、路径恰好
+#: /authorize（不能带 query）。对不上时页面直接进 invalidUrl 分支，渲染
+#: “Login Failed / Something went wrong. Try to refresh the page.”，
+#: 连登录框都不出（2026-10-22 实测：回调写成 http://localhost:8788/authorize
+#: 就是这个结果，国内版 / 国际版都一样）。
+OAUTH_CALLBACK_RE = re.compile(r"^http://127\.0\.0\.1:(\d+)/authorize$")
 
 #: AuthCode 交换允许的官方 API 域（回调里的 host 不可信，防止令牌外发）。
 EXCHANGE_HOST_ALLOWLIST = (
@@ -764,25 +780,70 @@ def _pkce_pair():
     return verifier, challenge
 
 
+def normalize_oauth_callback(callback_url, fallback_port=0):
+    """把回调地址收拾成 Trae 授权页认的那一种形状。
+
+    授权页只接受 ``http://127.0.0.1:<端口>/authorize``（见
+    :data:`OAUTH_CALLBACK_RE`），所以主机一律换成 127.0.0.1、路径固定
+    /authorize（带 query 或别的路径都不认）；端口沿用调用方给的（网关自己
+    的端口），拿不到就用 ``fallback_port``。对不上形状的地址在授权页上只
+    会显示 “Login Failed”，没有别的反馈，所以在签发链接前就改掉。
+    """
+    text = str(callback_url or "").strip()
+    port = 0
+    if text:
+        try:
+            parts = urllib.parse.urlsplit(text)
+            port = int(parts.port or 0)
+            if not port and parts.scheme == "http":
+                port = 80
+        except ValueError:
+            port = 0
+    if not port:
+        try:
+            port = int(fallback_port or 0)
+        except (TypeError, ValueError):
+            port = 0
+    if not port:
+        return ""
+    return "http://127.0.0.1:%d/authorize" % port
+
+
+def local_plugin_version(realm):
+    """本机 Trae 客户端的插件版本（storage.json 的 iCubeLastVersion）。
+
+    真实客户端的授权链接里 plugin_version 就是这个值（2026-10-22 实测
+    2.3.85576），比写死的常量更贴近上游。
+    """
+    try:
+        value = str(_credential_storage(realm).get("iCubeLastVersion") or "")
+    except Exception:
+        value = ""
+    return value.strip()
+
+
 def oauth_login_url(realm, callback_url, device=None):
     """生成 Trae 浏览器授权 URL 与会话状态。"""
     realm = realm_key(realm)
     cfg = realm_config(realm)
     device = dict(device or oauth_device(realm))
-    trace_id = secrets.token_hex(32)
+    # 真实客户端的 login_trace_id 是 UUID 形态（2026-10-22 实测），照着来。
+    trace_id = str(uuid.uuid4())
     verifier, challenge = _pkce_pair()
     host = str(cfg.get("oauth_host") or cfg["site_url"]).rstrip("/")
     hostname = socket.gethostname() or "Windows-PC"
+    callback = normalize_oauth_callback(callback_url)
+    app_version = str(cfg.get("oauth_app_version") or OAUTH_PAGE_APP_VERSION)
     params = [
         ("login_version", "1"),
         ("auth_from", "trae"),
         ("login_channel", "native_ide"),
-        ("plugin_version", OAUTH_PAGE_PLUGIN_VERSION),
+        ("plugin_version", local_plugin_version(realm) or OAUTH_PAGE_PLUGIN_VERSION),
         ("auth_type", "local"),
         ("client_id", OAUTH_CLIENT_ID),
         ("redirect", "0"),
         ("login_trace_id", trace_id),
-        ("auth_callback_url", str(callback_url or "")),
+        ("auth_callback_url", callback),
         ("machine_id", device.get("machineId") or ""),
         ("device_id", device.get("deviceId") or ""),
         ("x_device_id", device.get("deviceId") or ""),
@@ -791,7 +852,7 @@ def oauth_login_url(realm, callback_url, device=None):
         ("x_device_type", "windows"),
         ("x_os_version", "Windows"),
         ("x_env", ""),
-        ("x_app_version", OAUTH_PAGE_APP_VERSION),
+        ("x_app_version", app_version),
         ("x_app_type", "stable"),
         ("code_challenge", challenge),
         ("code_challenge_method", "S256"),
@@ -808,8 +869,8 @@ def oauth_login_url(realm, callback_url, device=None):
         # DeviceProof 需要私钥；只在网关进程内保存，不写登录日志/不返回前端。
         "privateKeyPEM": device.get("privateKeyPEM") or "",
         "realm": realm,
-        "redirectUri": str(callback_url or ""),
-        "appVersion": device.get("appVersion") or OAUTH_PAGE_APP_VERSION,
+        "redirectUri": callback,
+        "appVersion": device.get("appVersion") or app_version,
     }
 
 
@@ -861,7 +922,9 @@ def parse_oauth_callback(value):
     auth_code = ""
     info = _json_param(params, "authCodeInfo", "auth_code_info")
     if info:
-        auth_code = str(info.get("AuthCode") or info.get("auth_code") or "")
+        auth_code = str(info.get("AuthCode") or info.get("auth_code")
+                        or info.get("authCode") or info.get("Code")
+                        or info.get("code") or "")
     if not auth_code:
         auth_code = str(_param(params, "AuthCode", "authCode", "code") or "")
 
@@ -1177,7 +1240,9 @@ def exchange_auth_code(code, verifier, host, device, realm="cn", proxy=""):
     device_id = str(device.get("deviceId") or "").strip()
     machine_id = str(device.get("machineId") or "").strip()
     public_key = str(device.get("publicKeyPEM") or "")
-    app_version = str(device.get("appVersion") or OAUTH_PAGE_APP_VERSION)
+    app_version = str(device.get("appVersion")
+                      or realm_config(realm).get("oauth_app_version")
+                      or OAUTH_PAGE_APP_VERSION)
     host = _validated_exchange_host(host, realm)
     headers = {
         "Content-Type": "application/json",
