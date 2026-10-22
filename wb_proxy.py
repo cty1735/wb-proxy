@@ -22745,14 +22745,19 @@ class Handler(BaseHTTPRequestHandler):
             payload.get("provider") or self._request_provider()
             or wb_accounts.DEFAULT_PROVIDER)
         callback_url = str(payload.get("callbackUrl") or "").strip()
-        if provider == "trae" and not callback_url:
-            # 浏览器回调必须打到网关本机端口；0.0.0.0 绑定换成 127.0.0.1。
+        if provider == "trae":
+            # Trae 授权页只认 http://127.0.0.1:<端口>/authorize（页面里写死
+            # 的正则，localhost / 局域网 IP 一律判 invalidUrl，页面直接显示
+            # “Login Failed”）。回调最终要落到网关自己，所以直接用网关的本机
+            # 端口生成，别信前端传的地址：看板可能是在 localhost 或局域网 IP
+            # 上打开的。
             try:
                 port = int(self.server.server_address[1])
             except Exception:
                 port = 0
-            if port:
-                callback_url = "http://127.0.0.1:%d/authorize" % port
+            normalized = wb_trae.normalize_oauth_callback("", port)
+            if normalized:
+                callback_url = normalized
         try:
             started = POOL.start_login(realm=target_realm, platform=platform,
                                        provider=provider,

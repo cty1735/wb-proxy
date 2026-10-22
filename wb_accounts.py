@@ -4255,6 +4255,9 @@ class AccountPool(object):
         登录」体验一致。设备凭证取本机 Trae 客户端的 icube-dc 公钥。
         """
         realm = "cn" if str(realm or "").lower() == "cn" else "intl"
+        # 回调地址统一成 Trae 授权页认的那一种形状（127.0.0.1:<端口>/authorize）：
+        # 写成 localhost / 局域网 IP 时页面会直接显示 “Login Failed”。
+        callback_url = wb_trae.normalize_oauth_callback(callback_url)
         with self._lock:
             accounts = list(self.accounts)
         used = {}

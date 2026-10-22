@@ -6686,12 +6686,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
           <span class="hint" style="margin:0">会打开 Trae 授权页；登录完成自动回到网关并加入账号池。</span>
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap">
-          <input id="traeCallbackInput" placeholder="如果浏览器没有自动跳回，可粘贴回调地址（http://127.0.0.1:…/authorize?…）"
+          <input id="traeCallbackInput" placeholder="浏览器没有自动跳回时，把地址栏里的回调地址粘到这里（http://127.0.0.1:…/authorize?…）"
                  style="flex:1;min-width:240px;background:var(--panel2);border:1px solid var(--line);
                         border-radius:8px;padding:8px 11px;color:var(--fg);font:inherit">
           <button class="sec" onclick="submitTraeCallback(this)">用回调地址完成</button>
         </div>
-        <div class="hint" style="margin-top:6px">回调地址必须能被当前浏览器访问：本机看板默认用 127.0.0.1，远程访问时按看板地址回调；浏览器没有自动跳回时用上面的输入框粘贴地址兜底。</div>
+        <div class="hint" style="margin-top:6px">Trae 的授权页只认 <b>http://127.0.0.1:&lt;网关端口&gt;/authorize</b> 这一种回调地址（写成 localhost 或局域网 IP 会被它判成非法地址，页面直接显示 “Login Failed”），所以用哪个域名打开看板都不影响，回调地址由网关按自己的本机端口生成。浏览器和网关不在同一台机器时，授权完跳不回本机，请用下面的「读取本机登录态」或手动粘贴令牌。</div>
       </div>
       <div style="border:1px dashed var(--line);border-radius:10px;padding:12px 14px;margin-bottom:16px">
         <div style="font-size:12px;color:var(--dim);margin-bottom:8px;font-weight:600">方式二：读取本机 Trae 客户端登录态</div>
@@ -7311,28 +7311,34 @@ function closeTraeLogin(){
 
 async function startTraeOAuth(btn){
   const realm = traeLoginRealm();
-  let callbackUrl = "";
-  try{
-    if(location.protocol === "http:" || location.protocol === "https:"){
-      callbackUrl = location.origin + "/authorize";
-    }
-  }catch(e){}
+  // 回调地址不跟着看板的域名走：Trae 授权页写死了只收
+  // http://127.0.0.1:<端口>/authorize，照抄 location.origin（localhost 或
+  // 局域网 IP）会被它判成非法地址，页面直接显示 “Login Failed”。
+  // 服务端按网关自己的本机端口生成，这里只管把端口告诉用户。
   if(btn){ btn.disabled = true; btn.textContent = "正在打开授权页..."; }
   setTraeLoginStatus("正在创建 Trae 授权链接…");
   // 先同步开一个空白标签页占住用户手势：Chrome 在 await 之后弹窗会被拦。
   let tab = null;
   try{ tab = window.open("about:blank", "_blank"); }catch(e){}
   try{
-    const r = await postJSON("/accounts/login/start", {
-      provider: "trae", realm: realm, callbackUrl: callbackUrl
-    });
+    const r = await postJSON("/accounts/login/start", {provider: "trae", realm: realm});
     if(!r || !r.authUrl){
       if(tab) try{ tab.close(); }catch(e){}
       throw new Error((r && (r.error || r.msg)) || "网关没有返回授权链接");
     }
     traeLoginState = r.state;
+    const cb = (r && r.redirectUri) || "";
+    const input = document.getElementById("traeCallbackInput");
+    if(input && cb){
+      input.placeholder = "浏览器没自动跳回时，把地址栏里的回调地址粘到这里（" + cb + "?…）";
+    }
     setTraeOAuthWaiting(true);
-    setTraeLoginStatus("已打开 Trae 授权页，请在浏览器里完成登录；完成后本页会自动刷新。");
+    const local = ["127.0.0.1", "localhost", "::1", "[::1]"].indexOf(location.hostname) >= 0;
+    if(local){
+      setTraeLoginStatus("已打开 Trae 授权页，请在浏览器里完成登录；完成后本页会自动刷新。");
+    }else{
+      setTraeLoginStatus("已打开 Trae 授权页（回调地址 " + cb + "）。注意：浏览器和网关不在同一台机器，Trae 只会跳到浏览器自己的 127.0.0.1，回调打不回网关；这种情况请用「读取本机登录态」或手动粘贴令牌。", "warn");
+    }
     let opened = null;
     if(tab && !tab.closed){
       try{ tab.location.href = r.authUrl; opened = tab; }catch(e){}
