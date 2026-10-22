@@ -94,6 +94,8 @@ const want = [
   'fmtElapsed', 'modelTestStateOf',
   'setModelTestState', 'clearModelTestState', 'saveModelTestState',
   'loadModelTestState',
+  'renderModelTestDetail', 'showModelTestDetail', 'closeModelTestDetail',
+  'copyModelTestError', 'retestFromModelDetail',
 ];
 const setters = [
   'MODELS_DATA', 'EGG_POOL_FILTER', 'currentProvider', 'esc', 'toast',
@@ -215,6 +217,17 @@ check('徽标带状态圆点', badge({status: 'ok', ms: 1}, false).indexOf('ava-
 check('停用的模型给的是未测试而不是不可用',
       badge(null, true).indexOf('ava-idle') >= 0 && badge(null, true).indexOf('ava-bad') < 0);
 
+// --- 徽标可点：点开是这条结论的详情弹框 ------------------------------
+const clickableBadge = badge({status: 'bad', error: 'boom'}, false, 'hy4-preview');
+check('表格里的徽标带模型 id（可点开详情）',
+      clickableBadge.indexOf('data-model-detail="hy4-preview"') >= 0, clickableBadge);
+check('表格里的徽标是可点样式', clickableBadge.indexOf('ava-btn') >= 0);
+check('表格里的徽标提示可以点', clickableBadge.indexOf('点击查看详情') >= 0);
+check('徽标仍然保留红色状态',
+      clickableBadge.indexOf('ava ava-bad') >= 0 && clickableBadge.indexOf('不可用') >= 0);
+check('弹框里的状态徽标不可点（不传 id）',
+      badge({status: 'bad', error: 'boom'}, false).indexOf('data-model-detail') < 0);
+
 api.__testState({
   'workbuddy|intl|hy4-preview': {status: 'ok', ms: 1234, ttft: 400, tool: true, text: '正常'},
   'workbuddy|intl|deepseek-v4.1-flash': {status: 'bad', ms: 800, error: 'HTTP 400：模型不存在'},
@@ -234,6 +247,51 @@ check('表头计数带可用 / 不可用条数',
 check('表头计数里可用是绿的、不可用是红的',
       countHtml.indexOf('color:var(--accent2)') >= 0
       && countHtml.indexOf('color:var(--bad)') >= 0, countHtml);
+
+// --- 可用性详情弹框：点徽标看「为什么不可用」 -------------------------
+api.__set({MODELS_DATA: sampleModels()});
+api.__testState({
+  'workbuddy|intl|hy4-preview': {
+    status: 'bad', at: Date.now(), ms: 800, http: 400,
+    error: 'HTTP 400：模型不存在', mode: 'agent', provider: 'workbuddy', realm: 'intl',
+  },
+});
+api.renderModelTestDetail('hy4-preview');
+const detailHtml = els.modelTestDetailBody.innerHTML || '';
+check('详情弹框把不可用原因写全', detailHtml.indexOf('HTTP 400：模型不存在') >= 0, detailHtml);
+check('详情弹框把原因放在「为什么不可用」里', detailHtml.indexOf('为什么不可用') >= 0);
+check('详情弹框给复制原因的入口', detailHtml.indexOf('copyModelTestError') >= 0);
+check('详情弹框写明测试口径', detailHtml.indexOf('Agent（带工具）') >= 0);
+check('详情弹框写明测的是哪家 / 哪个出口',
+      detailHtml.indexOf('WorkBuddy') >= 0 && detailHtml.indexOf('国际版') >= 0);
+check('详情弹框带上测试时间', detailHtml.indexOf('测试时间') >= 0);
+check('详情弹框标题带模型 id',
+      String(els.modelTestDetailTitle.textContent || '').indexOf('hy4-preview') >= 0,
+      els.modelTestDetailTitle.textContent);
+check('详情弹框的「重新测试」可用', els.modelTestDetailRetest.disabled !== true);
+
+// 停用的模型不能重测（网关会直接拒绝），弹框里也要说清为什么没有结论。
+api.renderModelTestDetail('deepseek-v4.1-flash');
+check('停用模型的详情里重测按钮禁用', els.modelTestDetailRetest.disabled === true);
+
+// 没测过：告诉用户怎么测，而不是空白一片。
+api.__testState({});
+api.renderModelTestDetail('hy4-preview');
+check('没测过的详情说明怎么发起测试',
+      (els.modelTestDetailBody.innerHTML || '').indexOf('还没测过') >= 0,
+      els.modelTestDetailBody.innerHTML);
+
+// 成功结论：把模型原话摘出来，并写清工具 / 推理情况。
+api.__testState({
+  'workbuddy|intl|hy4-preview': {
+    status: 'ok', at: Date.now(), ms: 1200, ttft: 300, tool: true, reasoning: false,
+    text: '正常', mode: 'agent', provider: 'workbuddy', realm: 'intl',
+  },
+});
+api.renderModelTestDetail('hy4-preview');
+const okDetail = els.modelTestDetailBody.innerHTML || '';
+check('可用的详情摘出模型回复', okDetail.indexOf('正常') >= 0 && okDetail.indexOf('回复摘录') >= 0);
+check('可用的详情写明工具调用情况', okDetail.indexOf('已调用工具') >= 0);
 
 // --- 空态 -------------------------------------------------------------
 api.__set({MODELS_DATA: []});
@@ -432,6 +490,26 @@ function okResponse() {
   check('超时的模型判为不可用', timedOut.status === 'bad', timedOut);
   check('超时的原因写明等了多久',
         String(timedOut.error || '').indexOf('1 秒内没有完成回答') >= 0, timedOut.error);
+  check('失败结论记下测试口径和提供商',
+        timedOut.mode === 'agent' && timedOut.provider === 'workbuddy', timedOut);
+
+  // HTTP 失败：错误正文要带状态码和上游原话，详情弹框还要单独拿到状态码。
+  const apiHttp = bootPage(function () {
+    return Promise.resolve({
+      ok: false, status: 400,
+      text: () => Promise.resolve('{"error":{"message":"模型不存在"}}'),
+    });
+  });
+  apiHttp.__set({
+    currentProvider: function () { return 'workbuddy'; },
+    esc: function (s) { return String(s == null ? '' : s); },
+    toast: function () {},
+  });
+  const httpBad = await apiHttp.runModelTest('bad-model', 5000);
+  check('失败结论记下 HTTP 状态码', httpBad.http === 400, httpBad);
+  check('失败原因带状态码和上游原文',
+        String(httpBad.error || '').indexOf('HTTP 400') >= 0
+        && String(httpBad.error || '').indexOf('模型不存在') >= 0, httpBad.error);
 
   // 叫停：已经发出去的那几条跑完就收手，没开始的就不再测。
   let started = 0;
@@ -520,6 +598,9 @@ function okResponse() {
 
   // --- 列头固定：清单自己纵向滚动，表头吸在容器上沿 ---------------------
   const htmlRaw = fs.readFileSync('dashboard.html', 'utf8');
+  check('有可用性详情弹框', /id="modelTestDetailModal"/.test(htmlRaw));
+  check('详情弹框带就地重测按钮', /id="modelTestDetailRetest"/.test(htmlRaw));
+  check('可用性徽标有可点样式', /\.ava-btn\{cursor:pointer/.test(htmlRaw));
   check('清单外面套了带 id 的滚动容器',
         /id="modelsTableScroll"/.test(htmlRaw));
   check('滚动容器自己纵向滚动',

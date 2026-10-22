@@ -176,6 +176,12 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 .ava-run{color:var(--warn);background:var(--warn-soft);border-color:rgba(183,121,31,.30)}
 .ava-run .ava-dot{animation:ava-blink 1.1s ease-in-out infinite}
 .ava-idle{color:var(--dim);background:var(--panel2);border-color:var(--line)}
+/* 可用性徽标可点：点开看这条结论的详情（尤其是「为什么不可用」）。
+   只加在表格里那一份上（带 data-model-detail 的），弹框里的状态徽标不可点。 */
+.ava-btn{cursor:pointer;user-select:none;-webkit-user-select:none;
+  transition:box-shadow .12s ease,filter .12s ease}
+.ava-btn:hover{filter:brightness(.97);box-shadow:0 0 0 3px rgba(120,130,150,.12)}
+.ava-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @keyframes ava-blink{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.7)}}
 @media (prefers-reduced-motion: reduce){ .ava-run .ava-dot{animation:none} }
 /* 启用列用设置页那套胶囊开关（.switch / .switch-track）。表格行高有限，
@@ -2802,6 +2808,22 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率；每行可单独测试与启用/停用，测过的可用性记在本机、刷新后还在': 'Official chat models in the current view, with their context size, reasoning/vision abilities, thinking controls, default sampling parameters and current rate; each row can be tested and enabled/disabled on its own, and the availability you measured is remembered on this machine and survives a refresh',
     '这条模型已在面板停用，网关会直接拒绝请求，所以还没有可用性结论。': 'This model is disabled in the panel. The gateway rejects requests for it, so there is no availability verdict yet.',
     '还没测过。点这一行的「测试」，或用上面的「一键测试模型」跑一次真请求。': 'Not tested yet. Click "Test" on this row, or use "Test all models" above to send a real request.',
+    // 可用性详情弹框（点徽标打开）：重点是「为什么不可用」，所以原因单独一块。
+    '模型可用性详情': 'Model availability details',
+    '模型可用性': 'Model availability',
+    '为什么不可用': 'Why it is unavailable',
+    '复制原因': 'Copy reason',
+    '重新测试': 'Test again',
+    '测试时间': 'Tested at',
+    '回复摘录': 'Reply excerpt',
+    '已调用工具': 'Tool called',
+    '未调用工具': 'Tool not called',
+    '有推理片段': 'Reasoning present',
+    '没有推理片段': 'No reasoning',
+    '（模型没有返回正文，只调用了工具）': '(No text reply - the model only called a tool)',
+    '正在测试这条模型…结果出来会自动更新这里。': 'Testing this model… this panel updates when the result arrives.',
+    '这条结论来自一次真实请求：走网关自己的 /v1/chat/completions，和 agent 同一条链路。': 'This verdict comes from a real request through the gateway\'s own /v1/chat/completions - the same path an agent takes.',
+    '点击查看详情': 'click for details',
     '个已停用': ' disabled',
     '可用（': 'usable (',
     '，工具调用正常': ', tool call OK',
@@ -6716,6 +6738,24 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
   </div>
 </div>
 
+<!-- 模型可用性详情：点「可用性」列的徽标弹这张卡。悬停的 tooltip 只放得下
+     一行原因，而上游回的错误正文（4xx/5xx 原文、超时、空响应）常常几百个
+     字符，还得能选中复制去搜，所以单独给一个能看清、能复制、能就地重测的
+     弹框。不可用的原因放在最上面，第一眼就能读到。 -->
+<div class="modal-mask" id="modelTestDetailModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modelTestDetailTitle" style="width:min(660px,100%)">
+    <div class="modal-hd">
+      <h2 id="modelTestDetailTitle">模型可用性详情</h2>
+      <button class="modal-x" onclick="closeModelTestDetail()" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-bd" id="modelTestDetailBody"></div>
+    <div class="modal-ft">
+      <button class="sec" id="modelTestDetailRetest" onclick="retestFromModelDetail(this)">重新测试</button>
+      <button class="sec" onclick="closeModelTestDetail()">关闭</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-mask" id="desktopScanModal">
   <div class="modal" role="dialog" aria-modal="true" style="width:min(720px,100%)">
     <div class="modal-hd">
@@ -8894,6 +8934,7 @@ function eggPlatformBalanceText(pool){
 }
 
 function eggPlatformExpiryText(account){
+  if(account && account.long_lived) return '长期有效';
   const sec = Number((account && account.expires_in) || 0);
   if(!sec) return '登录态已过期';
   if(sec < 3600) return Math.max(1, Math.round(sec / 60)) + ' 分钟后到期';
@@ -10123,9 +10164,10 @@ function renderAvailableModels(){
 
     // 11. 可用性：同一条结论，换成一眼能扫完一列的徽标 —— 绿=可用、
     //     红=不可用、琥珀=测试中、灰=还没测过。跟「测试」列同源同数据，
-    //     区别只是这里不用逐行读耗时就能看出整列的状态分布。
+    //     区别只是这里不用逐行读耗时就能看出整列的状态分布。徽标可点：
+    //     点开是这条结论的详情弹框（不可用的原因在那儿能看全、能复制）。
     const availCell = '<td class="ava-cell" style="text-align:center" data-label="可用性">'
-      + modelAvailabilityBadge(tst, modelOff)
+      + modelAvailabilityBadge(tst, modelOff, m.id)
       + '</td>';
 
     return '<tr' + rowStyle + '>'
@@ -10302,7 +10344,7 @@ function modelTestDetail(tst){
   const secs = (tst.ms / 1000).toFixed(tst.ms >= 10000 ? 0 : 1);
   return '可用 · 总耗时 ' + secs + ' 秒'
     + (tst.ttft != null ? ' · 首字 ' + tst.ttft + 'ms' : '')
-    + (tst.tool ? ' · 工具调用正常' : (MODEL_TEST_MODE === 'agent' ? ' · 未调用工具（只回答了内容）' : ''))
+    + (tst.tool ? ' · 工具调用正常' : (((tst.mode || MODEL_TEST_MODE) === 'agent') ? ' · 未调用工具（只回答了内容）' : ''))
     + (tst.reasoning ? ' · 有推理片段' : '')
     + (modelTestStamp(tst) ? ' · ' + modelTestStamp(tst) : '')
     + (tst.text ? '\n回复：' + String(tst.text).slice(0, 400) : '');
@@ -10310,27 +10352,198 @@ function modelTestDetail(tst){
 
 /* 可用性徽标：把 MODEL_TEST_STATE 里那条结论翻成一个一眼能看的状态。
    绿=可用、红=不可用、琥珀=测试中、灰=还没测过。徽标自带底色和描边，
-   圆点用 currentColor 跟着换色 —— 绿点/红点是「状态」本身，不靠文案区分。 */
-function modelAvailabilityBadge(tst, modelOff){
+   圆点用 currentColor 跟着换色 —— 绿点/红点是「状态」本身，不靠文案区分。
+
+   传了 id 就是表格里那一份：可点（data-model-detail 交给下面的委托监听），
+   点开是这条结论的详情弹框 —— 悬停的 tooltip 放不下「为什么不可用」的长
+   错误正文，红色徽标才是用户最想追问的地方。弹框里那份不传 id，纯展示。 */
+function modelAvailabilityBadge(tst, modelOff, id){
+  const clickable = !!id;
+  const cls = tone => 'ava ' + tone + (clickable ? ' ava-btn' : '');
+  const attr = clickable ? ' data-model-detail="' + esc(id) + '" tabindex="0" role="button"' : '';
+  const hint = clickable ? ' · 点击查看详情' : '';
   if(tst && tst.status === 'running'){
-    return '<span class="ava ava-run" title="正在测试这条模型…">'
+    return '<span class="' + cls('ava-run') + '"' + attr + ' title="正在测试这条模型…' + hint + '">'
       + '<i class="ava-dot"></i>测试中</span>';
   }
   if(tst && tst.status === 'ok'){
-    return '<span class="ava ava-ok" title="' + esc(modelTestDetail(tst)) + '">'
+    return '<span class="' + cls('ava-ok') + '"' + attr + ' title="' + esc(modelTestDetail(tst) + hint) + '">'
       + '<i class="ava-dot"></i>可用</span>';
   }
   if(tst && tst.status === 'bad'){
     const why = String(tst.error || '测试失败') + (modelTestStamp(tst) ? '\n' + modelTestStamp(tst) : '');
-    return '<span class="ava ava-bad" title="' + esc(why) + '">'
+    return '<span class="' + cls('ava-bad') + '"' + attr + ' title="' + esc(why + hint) + '">'
       + '<i class="ava-dot"></i>不可用</span>';
   }
   const why = modelOff
     ? '这条模型已在面板停用，网关会直接拒绝请求，所以还没有可用性结论。'
     : '还没测过。点这一行的「测试」，或用上面的「一键测试模型」跑一次真请求。';
-  return '<span class="ava ava-idle" title="' + esc(why) + '">'
+  return '<span class="' + cls('ava-idle') + '"' + attr + ' title="' + esc(why + hint) + '">'
     + '<i class="ava-dot"></i>未测试</span>';
 }
+
+/* ---------------------------------------------------------------- 可用性详情
+   点徽标弹这张卡：把那条结论摊开说清楚，尤其是「为什么不可用」。
+
+   为什么要弹框而不是只留 tooltip：上游回的 4xx / 5xx 原文、超时、空响应
+   常常几百个字符，tooltip 一行就截没了，而且没法选中复制（排查时经常要拿
+   着报错去搜）。这里把原因放在最上面、等宽字体、可选中，旁边一个「复制
+   原因」；顺手给出这次测试的口径 / 时间 / 耗时 / 首字，以及一个就地重测的
+   按钮 —— 上游改版后重新测一遍不用回到表格里找那一行。 */
+
+// 当前弹框在看哪条模型（重测完要按这个 id 重画弹框）。
+let MODEL_TEST_DETAIL_ID = '';
+
+function showModelTestDetail(id){
+  if(!id) return;
+  MODEL_TEST_DETAIL_ID = String(id);
+  renderModelTestDetail(MODEL_TEST_DETAIL_ID);
+  const mask = document.getElementById('modelTestDetailModal');
+  if(mask) mask.classList.add('show');
+}
+
+function closeModelTestDetail(){
+  const mask = document.getElementById('modelTestDetailModal');
+  if(mask) mask.classList.remove('show');
+  MODEL_TEST_DETAIL_ID = '';
+}
+
+/* 弹框正文。结论来自 MODEL_TEST_STATE，和表格里的徽标同源 —— 不会出现
+   「表里红、弹框里绿」这种两套数据。 */
+function renderModelTestDetail(id){
+  const box = document.getElementById('modelTestDetailBody');
+  if(!box) return;
+  const title = document.getElementById('modelTestDetailTitle');
+  if(title) title.textContent = '模型可用性 · ' + id;
+  const model = (MODELS_DATA || []).find(x => x && x.id === id) || {id: id};
+  const modelOff = model.disabled === true;
+  const tst = modelTestStateOf(id);
+  const status = (tst && tst.status) || 'idle';
+  const mode = (tst && tst.mode) || MODEL_TEST_MODE;
+  // 结论是按「提供商 + 出口」分别记的：批量测试中途切了视图也不会串味，
+  // 所以这里优先显示结论自己记下的那家，而不是「现在正停在哪个视图」。
+  const prov = (tst && tst.provider) || currentProvider();
+  const realm = (tst && tst.realm) || (window.VIEW_REALM === 'cn' ? 'cn' : 'intl');
+
+  const head = '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">'
+    + modelAvailabilityBadge(tst, modelOff)
+    + '<span class="mono" style="font-size:13px;font-weight:700;word-break:break-all">' + esc(id) + '</span>'
+    + '<span style="font-size:12px;color:var(--dim)">'
+    + esc(providerName(prov)) + ' · ' + esc(realm === 'cn' ? '国内版' : '国际版') + '</span>'
+    + '</div>';
+
+  let body = '';
+  if(status === 'bad'){
+    body += '<div style="border:1px solid rgba(181,71,59,.32);background:var(--bad-soft);'
+      + 'border-radius:10px;padding:12px 14px;margin-bottom:14px">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">'
+      + '<b style="font-size:12px;color:var(--bad)">为什么不可用</b>'
+      + '<button class="sec mini" onclick="copyModelTestError(this)">复制原因</button>'
+      + '</div>'
+      + '<pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-family:var(--mono);'
+      + 'font-size:12px;line-height:1.6;color:var(--fg);user-select:text">'
+      + esc(tst.error || '测试失败') + '</pre>'
+      + '</div>';
+  } else if(status === 'ok'){
+    body += '<div style="border:1px solid var(--line);background:var(--panel2);'
+      + 'border-radius:10px;padding:12px 14px;margin-bottom:14px">'
+      + '<b style="font-size:12px;color:var(--accent2)">回复摘录</b>'
+      + '<pre style="margin:8px 0 0;white-space:pre-wrap;word-break:break-word;font-family:var(--mono);'
+      + 'font-size:12px;line-height:1.6;color:var(--fg);user-select:text">'
+      + esc(tst.text ? String(tst.text).slice(0, 1200) : '（模型没有返回正文，只调用了工具）') + '</pre>'
+      + '</div>';
+  } else if(status === 'running'){
+    body += '<p class="hint" style="margin-top:0">正在测试这条模型…结果出来会自动更新这里。</p>';
+  } else {
+    body += '<p class="hint" style="margin-top:0">'
+      + (modelOff
+          ? '这条模型已在面板停用，网关会直接拒绝请求，所以还没有可用性结论。'
+          : '还没测过。点这一行的「测试」，或用上面的「一键测试模型」跑一次真请求。')
+      + '</p>';
+  }
+
+  // 元信息：口径 / 时间 / 耗时 / 首字 / 工具 / 推理。没有的就不占一行。
+  const rows = [];
+  rows.push(['测试口径', mode === 'agent' ? 'Agent（带工具）' : '对话（不带工具）']);
+  if(tst && tst.at){
+    try{ rows.push(['测试时间', new Date(tst.at).toLocaleString()]); }catch(e){}
+  }
+  if(tst && tst.ms != null){
+    rows.push(['耗时', (tst.ms / 1000).toFixed(tst.ms >= 10000 ? 0 : 1) + 's']);
+  }
+  if(tst && tst.ttft != null) rows.push(['首字', tst.ttft + 'ms']);
+  if(status === 'ok'){
+    rows.push(['工具调用', tst.tool ? '已调用工具' : '未调用工具']);
+    rows.push(['推理片段', tst.reasoning ? '有推理片段' : '没有推理片段']);
+  }
+  body += '<dl style="display:grid;grid-template-columns:max-content 1fr;gap:8px 18px;'
+    + 'margin:0;font-size:12px">'
+    + rows.map(r => '<dt style="color:var(--dim)">' + r[0] + '</dt>'
+        + '<dd style="margin:0;font-family:var(--mono);word-break:break-all">' + esc(r[1]) + '</dd>').join('')
+    + '</dl>';
+
+  body += '<p class="hint" style="margin:14px 0 0;font-size:11px">'
+    + '这条结论来自一次真实请求：走网关自己的 /v1/chat/completions，和 agent 同一条链路。</p>';
+
+  box.innerHTML = head + body;
+
+  const retest = document.getElementById('modelTestDetailRetest');
+  if(retest){
+    retest.disabled = modelOff || status === 'running';
+    retest.textContent = '重新测试';
+    retest.title = modelOff
+      ? '这条模型已停用，请求会在网关入口被拒绝；先在表格里打开「启用」开关再测试。'
+      : '';
+  }
+}
+
+/* 复制失败原因：排查时经常要拿着上游原文去搜 / 贴给上游。 */
+function copyModelTestError(){
+  const tst = modelTestStateOf(MODEL_TEST_DETAIL_ID);
+  const text = String((tst && tst.error) || '');
+  if(!text) return;
+  const fail = e => toast('复制失败: ' + ((e && e.message) || e), 'bad');
+  try{
+    const p = writeClipboard(text);
+    if(p && typeof p.then === 'function') p.then(() => toast('已复制到剪贴板', 'ok'), fail);
+    else toast('已复制到剪贴板', 'ok');
+  }catch(e){ fail(e); }
+}
+
+/* 就地重测：不用关弹框回表格里找那一行。跑的还是同一段 runModelTest
+   （单条 120 秒口径），结论写回 MODEL_TEST_STATE 后弹框与表格一起刷新。 */
+async function retestFromModelDetail(btn){
+  const id = MODEL_TEST_DETAIL_ID;
+  if(!id) return;
+  if(btn){ btn.disabled = true; btn.textContent = '测试中...'; }
+  try{
+    await testGatewayModel(id, null);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '重新测试'; }
+    if(MODEL_TEST_DETAIL_ID === id) renderModelTestDetail(id);
+  }
+}
+
+/* 徽标点击 / 回车打开详情。用事件委托：表格每画一次就重建几十个徽标，
+   逐个挂 onclick 既啰嗦又容易在重画后丢掉；这里只挂一次。 */
+(function bindModelTestDetail(){
+  const pick = t => (t && t.closest) ? t.closest('[data-model-detail]') : null;
+  document.addEventListener('click', function(e){
+    const el = pick(e.target);
+    if(el) showModelTestDetail(el.getAttribute('data-model-detail'));
+  });
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape'){ closeModelTestDetail(); return; }
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    const el = pick(e.target);
+    if(el){ e.preventDefault(); showModelTestDetail(el.getAttribute('data-model-detail')); }
+  });
+  const mask = document.getElementById('modelTestDetailModal');
+  if(mask && mask.addEventListener){
+    mask.addEventListener('click', function(e){ if(e.target === mask) closeModelTestDetail(); });
+  }
+})();
+
 
 /* 真发一次请求，测一条模型，返回 MODEL_TEST_STATE 里那条结论（ok / bad）。
    单条「测试」按钮和「一键测试模型」共用这一段：两条路径的判定口径必须
@@ -10342,12 +10555,15 @@ async function runModelTest(id, timeoutMs, provider, realm){
   const key = modelTestKey(id, provider, realm);
   const started = Date.now();
   const limit = Number(timeoutMs) > 0 ? Number(timeoutMs) : 120000;
-  setModelTestState(key, {status: 'running', at: started});
+  // 出口 / 提供商 / 口径都钉在这一轮开始时：中途切视图或改口径，结论仍要
+  // 记在「这次到底怎么测的」名下 —— 详情弹框里要把它们显示出来。
+  const p = provider || currentProvider();
+  const r = realm || (window.VIEW_REALM === 'cn' ? 'cn' : 'intl');
+  const mode = MODEL_TEST_MODE;
+  setModelTestState(key, {status: 'running', at: started, mode: mode, provider: p, realm: r});
   const ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
   const timer = ctl ? setTimeout(() => ctl.abort(), limit) : null;
   try{
-    const p = provider || currentProvider();
-    const r = realm || (window.VIEW_REALM === 'cn' ? 'cn' : 'intl');
     const url = '/v1/chat/completions?provider=' + encodeURIComponent(p)
               + '&realm=' + encodeURIComponent(r);
     const res = await fetch(url, {
@@ -10365,7 +10581,10 @@ async function runModelTest(id, timeoutMs, provider, realm){
         const obj = JSON.parse(detail);
         msg = (obj.error && (obj.error.message || obj.error.type)) || detail;
       }catch(e){}
-      throw new Error('HTTP ' + res.status + '：' + String(msg || '上游未返回内容').slice(0, 300));
+      const err = new Error('HTTP ' + res.status + '：' + String(msg || '上游未返回内容').slice(0, 300));
+      // 详情弹框里单独显示状态码；错误正文里也带着，但不靠它解析。
+      err.httpStatus = res.status;
+      throw err;
     }
     const agg = await readModelTestStream(res);
     if(agg.error) throw new Error(agg.error);
@@ -10374,13 +10593,16 @@ async function runModelTest(id, timeoutMs, provider, realm){
     }
     const ms = Date.now() - started;
     setModelTestState(key, {status: 'ok', at: Date.now(), ms: ms, ttft: agg.ttft,
-                             tool: agg.tool, text: agg.text, reasoning: agg.reasoning});
+                             tool: agg.tool, text: agg.text, reasoning: agg.reasoning,
+                             mode: mode, provider: p, realm: r});
   }catch(e){
     const aborted = !!(e && e.name === 'AbortError');
     const msg = aborted ? ('超时：' + Math.max(1, Math.round(limit / 1000)) + ' 秒内没有完成回答')
                         : ('测试请求失败：' + ((e && e.message) || e));
     setModelTestState(key, {status: 'bad', at: Date.now(),
-                             ms: Date.now() - started, error: msg});
+                             ms: Date.now() - started, error: msg,
+                             http: (e && e.httpStatus) || null,
+                             mode: mode, provider: p, realm: r});
   }finally{
     if(timer) clearTimeout(timer);
   }
@@ -10392,7 +10614,7 @@ async function runModelTest(id, timeoutMs, provider, realm){
 async function testGatewayModel(id, btn){
   const key = modelTestKey(id);
   const prev = MODEL_TEST_STATE[key];
-  if(prev && prev.status === 'running') return;
+  if(prev && prev.status === 'running') return prev;
   if(btn){ btn.disabled = true; btn.textContent = '测试中...'; }
   const res = await runModelTest(id);
   if(res && res.status === 'ok'){
@@ -10403,6 +10625,7 @@ async function testGatewayModel(id, btn){
   }
   // 只重画表格，不整页刷新
   renderAvailableModels();
+  return res;
 }
 
 /* 一键测试：把当前视图（当前池子筛选后）里每条启用的模型挨个真发一次请求，

@@ -151,15 +151,36 @@ def error_hint(base_url, status, model="", raw=""):
         if any(mark in body for mark in _HARNESS_MARKERS):
             return ("这个模型只开放给 agentic harness（编程助手一类）用，"
                     "普通聊天接口调不动；换一个普通聊天模型")
+        if status == 401 and ("freebuff.com" in host
+                              or "codebuff.com" in host):
+            return ("Freebuff 登录态已失效：请在平台卡片里点「添加账号」"
+                    "重新走一次浏览器授权")
+        if status == 403 and ("freebuff.com" in host
+                              or "codebuff.com" in host):
+            if "country_blocked" in body:
+                return ("Freebuff 在当前出口地区不可用：换一个出口网络，"
+                        "或改用别的模型")
+            if "banned" in body:
+                return "Freebuff 账号已被封禁：换一个账号或去官网申诉"
         for suffix, hint in _AUTH_HINTS.items():
             if suffix in host:
                 return hint
         return ""
+    if status == 429 and ("codebuff.com" in host or "freebuff.com" in host):
+        return ("Freebuff 免费额度或会话数已用完：等额度恢复后再试，"
+                "或换一个免费模型")
     if status == 429 and (text.endswith(":free") or text.endswith("/free")
                           or "free-models-per-day" in body):
         for suffix, hint in _FREE_QUOTA_HINTS.items():
             if suffix in host:
                 return hint
+    if status == 409 and ("freebuff.com" in host or "codebuff.com" in host):
+        if "freebuff_catalog_stale" in body:
+            return ("Freebuff 模型句柄已过期：在平台卡片点「刷新模型」"
+                    "后再试一次")
+        if "model_locked" in body:
+            return ("Freebuff 账号已有其他模型的会话：先在 CLI/桌面端"
+                    "结束它，或改用那个模型")
     return ""
 
 #: 一个池子最多记多少个模型（拉回来的清单可能几百条，全记下来文件会很大）。
@@ -490,6 +511,10 @@ def _clean_model(model_id, row=None):
     upstream_id = str(row.get("upstream_id") or "").strip()
     if upstream_id:
         row_out["upstream_id"] = upstream_id
+    # Freebuff 的目录 handle：聊天 body 用原始 key，会话准入用 handle。
+    handle = str(row.get("handle") or "").strip()
+    if handle:
+        row_out["handle"] = handle
     return row_out
 
 
@@ -589,7 +614,8 @@ def platform_model_info(pool_id, model_id):
             for row in pool.get("catalog") or []:
                 if isinstance(row, dict) and row.get("id") == mid:
                     return {"upstream_id": row.get("upstream_id") or mid,
-                            "channel": row.get("channel") or ""}
+                            "channel": row.get("channel") or "",
+                            "handle": row.get("handle") or ""}
     return None
 
 
@@ -1070,6 +1096,7 @@ def apply_platform_catalog(pool_id, models, select_all=True):
                 platform = str(pool.get("platform") or "")
                 break
     cleaned = []
+    seen_public = set()
     for item in models or []:
         if not isinstance(item, dict):
             continue
@@ -1077,6 +1104,12 @@ def apply_platform_catalog(pool_id, models, select_all=True):
         if not upstream:
             continue
         public = platform_model_id(platform, upstream)
+        # 同一个对外 id 只留一行：平台目录偶尔会给出重复 id（或大小写/
+        # 前缀变体），重复写进 catalog / models 会让客户端按 id 挑模型时
+        # 随机命中，也会在清单里出现两条同名模型。
+        if public in seen_public:
+            continue
+        seen_public.add(public)
         row = _clean_model(public, item)
         # 记住上游原始 id：构造请求时用它，别把前缀发给上游。
         row["upstream_id"] = upstream
