@@ -74,6 +74,7 @@ import wb_local
 import wb_logstore
 import wb_pricing
 import wb_settings
+import wb_tokensaver
 import wb_upstream_pool
 import wb_webtools
 import wb_identity
@@ -11260,6 +11261,7 @@ def runtime_settings_view():
         "credits_refresh_hours": wb_settings.credits_refresh_hours(ACCOUNTS_DIR),
         "section_max_height": wb_settings.section_max_height(ACCOUNTS_DIR),
         "ui_language": wb_settings.ui_language(ACCOUNTS_DIR),
+        "token_saver": wb_tokensaver.config(ACCOUNTS_DIR),
         "pricing_variant_inherit": wb_settings.pricing_variant_inherit(ACCOUNTS_DIR),
         "pricing_enabled": wb_settings.pricing_enabled(ACCOUNTS_DIR),
         "auto_switch_product": wb_settings.auto_switch_product(ACCOUNTS_DIR),
@@ -14441,6 +14443,11 @@ def build_upstream_body(payload):
     )
     if not messages or (messages[0].get("role") != "system"):
         messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+    # 省 token：提示词压缩（往 system 尾部追加写作指令）与工具结果压缩。
+    # 放在 SYSTEM_PROMPT 补齐之后，保证一定有一条 system 可追加；放在工具
+    # 配对修复之前，压缩只改 tool 正文、不动 call/result 结构。单条请求带
+    # X-WB-Token-Saver: off 时整段跳过（见 wb_tokensaver.begin_request）。
+    messages = wb_tokensaver.apply(messages, ACCOUNTS_DIR)
     body = dict(payload)
     # Private request markers ride along on the chat body for the Responses
     # path (the namespace map, the local-web-tools flag). They are not part of
@@ -14520,6 +14527,27 @@ def qoder_chat_request(payload):
         prompt = "\n".join(str(p) for p in prompt if p is not None)
     req["messages"] = [{"role": "user", "content": str(prompt)}]
     return req
+
+
+def _apply_token_saver_chat(body):
+    """Run the token saver on a chat body that skips build_upstream_body().
+
+    Qoder / Trae / egg adapters take the request straight from the client, so
+    they never pass the WorkBuddy body builder where compression normally runs.
+    This is the same single gate for those three: prompt injection first (needs
+    an existing system message), then tool-output compression.
+    """
+    if not isinstance(body, dict):
+        return body
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return body
+    new = wb_tokensaver.apply(messages, ACCOUNTS_DIR)
+    if new is messages:
+        return body
+    out = dict(body)
+    out["messages"] = new
+    return out
 
 
 
@@ -15522,6 +15550,7 @@ def open_qoder_upstream(payload, session_key=None, target_realm=None):
     account ...")（调用方映射 503）；429 -> RateLimited；401 -> 刷新凭证后对
     同一个账号重试一次；5xx 与网络错误换号；其余 4xx 原样抛出。
     """
+    payload = _apply_token_saver_chat(payload)
     realm = target_realm or CURRENT_REALM
     if POOL is None:
         raise RuntimeError("no usable account for realm '%s': the account pool "
@@ -15704,6 +15733,7 @@ def open_trae_upstream(payload, session_key=None, target_realm=None):
     account ...")；429 -> RateLimited；401 -> 刷新凭证后同号重试一次；5xx
     与网络错误换号；其余 4xx 原样抛出。
     """
+    payload = _apply_token_saver_chat(payload)
     realm = target_realm or CURRENT_REALM
     if POOL is None:
         raise RuntimeError("no usable account for realm '%s': the account pool "
@@ -15836,6 +15866,7 @@ def open_egg_upstream(payload, session_key=None, target_realm=None):
     返回 (upstream, 伪账号, effort)。免费源没有账号池、没有换号可用，限流与
     地区拦截统一抛 wb_zen.EggError（带上游状态码），由调用方如实回给客户端。
     """
+    payload = _apply_token_saver_chat(payload)
     realm = target_realm or CURRENT_REALM
     model = str(payload.get("model") or "")
     if not model:
@@ -19817,6 +19848,9 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if path.startswith("/settings"):
             return True
+        # 省 token 的统计是面板自己的视图，不是一个 OpenAI 兼容接口。
+        if path.startswith("/token-saver"):
+            return True
         if path.startswith("/updates"):
             return True
         if path.startswith("/logs"):
@@ -19956,6 +19990,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._get_pricing()
         if path == "/settings":
             return self._get_settings()
+        if path == "/token-saver/stats":
+            # 省 token 的节省统计：只读本机落盘的字节计数，面板轮询这里。
+            return self._json(200, wb_tokensaver.stats(ACCOUNTS_DIR))
         if path == "/updates":
             return self._get_updates()
         if path == "/proxy/slots":
@@ -21149,6 +21186,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(400, "ui_language must be zh, zh-Hant or en",
                                    "invalid_request_error")
             reply["ui_language"] = wb_settings.set_ui_language(ACCOUNTS_DIR, raw)
+        if "token_saver" in payload:
+            # 省 token 的四组开关（总开关 / 提示词 / RTK / 本地应答）。取值在
+            # wb_tokensaver 里归一：面板只发它管的那几个字段，手改坏的档位
+            # 落回 off，不会变成代码悄悄认的新开关。
+            raw = payload.get("token_saver")
+            if not isinstance(raw, dict):
+                return self._error(400, "token_saver must be an object",
+                                   "invalid_request_error")
+            reply["token_saver"] = wb_tokensaver.set_config(ACCOUNTS_DIR, raw)
         if "pricing_variant_inherit" in payload:
             # Strictly a JSON boolean, like the other switches: "false" as a
             # string would be truthy and silently keep the feature on.
@@ -24131,6 +24177,8 @@ class Handler(BaseHTTPRequestHandler):
         return
 
     def do_POST(self):
+        # 单条请求的省 token 逃生口要先落地：body builder 看不到 headers。
+        wb_tokensaver.begin_request(self.headers)
         if not self._apply_pinned_route():
             return
         path = self.path.split("?")[0]
@@ -24359,6 +24407,56 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             _release_key_slot(self.key_entry)
 
+    def _token_saver_reply(self, payload, answer):
+        """Answer a probe without opening an upstream connection.
+
+        Same OpenAI shapes as a normal chat turn (stream and non-stream), with
+        zero usage: no account is touched, no quota is spent, no row lands in
+        the upstream usage log. The panel's 本地应答 counters get the hit from
+        wb_tokensaver.local_answer() before this runs.
+        """
+        model = payload.get("model") or "unknown"
+        text = answer.get("text") or ""
+        chunk_id = "chatcmpl-wbtok-" + uuid.uuid4().hex[:16]
+        try:
+            log("token-saver: local answer kind=%s model=%s key=%s"
+                % (answer.get("kind"), model, key_label(self._key_id()) or "-"))
+        except Exception:
+            pass
+        if bool(payload.get("stream")):
+            body = "".join([
+                "data: %s\n\n" % chat_chunk(
+                    model, {"role": "assistant", "content": text}, None, chunk_id),
+                "data: %s\n\n" % chat_finish_chunk(model, "stop", chunk_id),
+                "data: [DONE]\n\n",
+            ]).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            if cors_origin_allowed(self.path):
+                self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                self.close_connection = True
+            return
+        return self._json(200, {
+            "id": chunk_id,
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": text},
+                "finish_reason": "stop",
+            }],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0,
+                      "total_tokens": 0},
+        })
+
     def _dispatch_chat_post(self, path, payload):
         provider = self._chat_provider(payload)
         # 先挡背景请求：Codex 自己发的（记忆整理／环境建议／自动复核）
@@ -24379,6 +24477,13 @@ class Handler(BaseHTTPRequestHandler):
         disabled_msg = self._disabled_model_error(payload.get("model"), provider)
         if disabled_msg:
             return self._error(400, disabled_msg, "invalid_request_error")
+        # 本地应答：五类探测的答案就在请求体里，出去一趟只是白花额度。
+        # 只认 /v1/chat/completions 这一条（Responses / Messages 的形状不同，
+        # 回包构造也要另一套，宁可不接）。默认关闭，见 wb_tokensaver。
+        if path not in ("/v1/responses", "/responses"):
+            local = wb_tokensaver.local_answer(payload, ACCOUNTS_DIR)
+            if local:
+                return self._token_saver_reply(payload, local)
         if path in ("/v1/responses", "/responses"):
             return self._handle_responses(payload, provider=provider)
         if provider == "qoder":

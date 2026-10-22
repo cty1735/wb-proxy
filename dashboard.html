@@ -342,6 +342,23 @@ body.pricing-off #kpiCostCard{display:none}
 .switch input:checked+.switch-track{background:var(--accent2);border-color:var(--accent2)}
 .switch input:checked+.switch-track::after{transform:translateX(18px);background:#fff}
 .switch input:focus-visible+.switch-track{outline:2px solid var(--accent2);outline-offset:2px}
+/* 省 token：统计卡与档位胶囊。沿用面板自己的卡片语言（细边框 + 圆角 + 等宽
+   数字），档位是单选，所以用与 .chiprow 同款的分段按钮，只是不要圆角气泡。 */
+.ts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:8px;margin-top:12px}
+.ts-card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.ts-num{font-size:20px;font-weight:600;color:var(--fg);line-height:1.2;font-variant-numeric:tabular-nums}
+.ts-cap{font-size:11px;color:var(--dim);margin-top:2px;line-height:1.5}
+.ts-block{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-top:10px}
+.ts-title{font-size:12px;font-weight:600;color:var(--dim);letter-spacing:.02em}
+.ts-pills{display:inline-flex;flex-wrap:wrap;gap:2px;background:var(--panel2);
+  border:1px solid var(--line);border-radius:8px;padding:2px;margin-top:8px}
+.ts-pills button{border:1px solid transparent;background:transparent;color:var(--dim);
+  font:inherit;font-size:12px;padding:5px 10px;border-radius:6px;cursor:pointer}
+.ts-pills button:hover{color:var(--fg)}
+.ts-pills button.on{background:var(--panel);color:var(--fg);font-weight:600;
+  border-color:var(--line);box-shadow:var(--shadow-sm)}
+.ts-local-row{display:flex;align-items:flex-start;justify-content:space-between;
+  gap:12px;padding:8px 0;border-top:1px solid var(--line);margin-top:4px}
 #costTip{position:fixed;z-index:80;display:none;max-width:min(480px,94vw);padding:10px 12px;
   border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--fg);
   font-size:12px;line-height:1.7;box-shadow:0 14px 34px rgba(15,23,42,.28);pointer-events:none}
@@ -3365,7 +3382,51 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '数据已恢复更新': 'Data updates resumed',
     '自动刷新频率已改为 ': 'Auto-refresh interval set to ',
     // 设计系统缺口 ⑤：图表键盘读数。
-    '图表读数已复位': 'Chart readout reset'
+    '图表读数已复位': 'Chart readout reset',
+    // 省 token（设置页）。
+    '省 token': 'Token saver',
+    '三块各管一段：提示词压缩改模型怎么写（唯一能省输出 Token 的一块），RTK 压缩工具结果（省输入），本地应答把五类探测就地回掉（省一次上游调用）。关掉总开关后所有压缩立即停止，请求按原样发出；下面的设置保留。': 'Three independent levers: prompt compression changes how the model writes (the only one that saves output tokens), RTK compresses tool output (saves input), and local answers reply to five kinds of probes in place (saves a round trip). Turning the master switch off stops every compression immediately and requests go out as-is; the settings below are kept.',
+    '关掉后所有压缩立即停止，请求按原样发出；下面的设置保留': 'Off stops every compression immediately and requests go out as-is; the settings below are kept',
+    '启用 Token 压缩': 'Enable token compression',
+    '(压缩中)': '(compressing)',
+    '节省统计': 'Savings',
+    '按字节统计本机实际发生的压缩，只写入本机': 'Counts the compression that actually happened on this machine, by bytes; written locally only',
+    '压缩前': 'Before',
+    '压缩后': 'After',
+    '节省字节': 'Bytes saved',
+    '压缩块数': 'Blocks compressed',
+    '统计调用': 'Requests counted',
+    '提示词注入': 'Prompt injections',
+    '还没有可统计的请求。发起一次对话后，这里显示的是真实压缩字节数，不是估算。': 'Nothing to count yet. After one conversation this shows real compressed bytes, not an estimate.',
+    '本机累计：': 'On this machine: ',
+    ' 次请求经过压缩管线，': ' requests went through the pipeline, ',
+    ' 块工具结果被压缩，': ' tool results were compressed, ',
+    ' 次探测由网关本地应答。数字是真实字节，不是估算。': ' probes were answered locally. Real bytes, not an estimate.',
+    '提示词压缩': 'Prompt compression',
+    '在系统提示里追加一条写作指令。这是唯一能减少输出 Token 的压缩，因为它改变的是模型怎么写。': 'Appends a writing instruction to the system prompt. This is the only compression that reduces output tokens, because it changes how the model writes.',
+    '电报体回复：去掉客套与重复解释，只留结论与代码。': 'Telegraph style: drop pleasantries and repeated explanations, keep only conclusions and code.',
+    'YAGNI 最小实现：只写被要求的那一件事，不主动加抽象、配置与兜底。': 'YAGNI minimal implementation: write only the one thing that was asked for - no unrequested abstraction, configuration or fallbacks.',
+    '注意：这两套会改变助手的说话方式，并且会留在你的对话记录里。默认关闭。': 'Note: these two change how the assistant talks, and they stay in your conversation record. Off by default.',
+    'RTK 工具输出压缩': 'RTK tool output compression',
+    '压缩的是工具结果：git diff / status / log、grep、find、ls、tree、构建日志、带行号的文件转储，以及重复的日志行。': 'Compresses tool results: git diff / status / log, grep, find, ls, tree, build logs, line-numbered file dumps and repeated log lines.',
+    '安全边界：报错类工具结果原样保留，小体积内容不碰；替换只在新文本更小且非空时发生——压缩结果永远不会比原文更大。': 'Safety boundary: error results are kept as-is, small content is untouched, and a replacement only happens when the new text is smaller and non-empty - compressed output is never larger than the original.',
+    '本地应答': 'Local answers',
+    '这五类请求的答案就在请求体里，转发出去只是白花一次上游额度与一个来回。默认关闭：只认单条 user 讯息、不带工具、不在一段对话中间的窄形状。': 'The answers to these five requests are already in the request body; forwarding them spends upstream quota and a round trip for nothing. Off by default: only a single user message, no tools, and never mid-conversation.',
+    '启用本地应答': 'Enable local answers',
+    '额度探测': 'Quota probe',
+    '回答「额度检查」这类探针，返回一句固定答复。': 'Answers quota-check probes with one fixed sentence.',
+    '命令前缀': 'Command prefix',
+    '回答权限提示要求的命令前缀，从 shell 命令里解析。': 'Answers the command-prefix prompt, parsed from the shell command.',
+    '会话标题': 'Session title',
+    '回答标题生成请求，返回固定标题。': 'Answers title-generation requests with a fixed title.',
+    '建议模式': 'Suggestion mode',
+    '回答建议模式的空转回包，不产生上游请求。': 'Answers the suggestion-mode no-op turn without an upstream request.',
+    '文件路径提取': 'File path extraction',
+    '从命令与输出里解析文件路径，返回结构化结果。': 'Parses file paths out of the command and returns them as structured data.',
+    '节省统计已刷新': 'Savings refreshed',
+    '读取节省统计失败：': 'Could not read savings: ',
+    '已关闭 Token 压缩': 'Token compression off',
+    '省 token 设置已保存': 'Token saver settings saved'
   };
   var HANT_PHRASES = {
     " · 周期已过": " · 週期已過",
@@ -5831,6 +5892,167 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
         <input id="setWinMaxHeight" type="number" min="0" max="4000" step="20" value="640"
                style="width:110px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 10px;color:var(--fg);font:inherit">
         <button class="sec" onclick="saveWinMaxHeight(this)">保存</button>
+      </div>
+    </section>
+
+    <section id="secTokenSaver">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div>
+          <h2 style="margin:0">省 token <em id="setTokenSaverState"></em></h2>
+          <div style="font-size:12px;color:var(--dim);margin-top:4px;max-width:760px">
+            三块各管一段：提示词压缩改模型怎么写（唯一能省输出 Token 的一块），RTK 压缩工具结果（省输入），本地应答把五类探测就地回掉（省一次上游调用）。关掉总开关后所有压缩立即停止，请求按原样发出；下面的设置保留。
+          </div>
+        </div>
+        <label class="switch" title="关掉后所有压缩立即停止，请求按原样发出；下面的设置保留">
+          <input id="setTokenSaverEnabled" type="checkbox"
+                 onchange="saveTokenSaver({enabled: this.checked})">
+          <span class="switch-track"></span>
+          <span style="font-size:12px;font-weight:600">启用 Token 压缩</span>
+        </label>
+      </div>
+
+      <div class="ts-block">
+        <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+          <div style="font-weight:600;font-size:13px">节省统计</div>
+          <div style="flex:1"></div>
+          <div style="font-size:11px;color:var(--dim)">按字节统计本机实际发生的压缩，只写入本机</div>
+          <button class="sec mini" onclick="loadTokenSaverStats(true)">刷新</button>
+        </div>
+        <div class="ts-grid">
+          <div class="ts-card"><div class="ts-num" id="tsBefore">0 B</div><div class="ts-cap">压缩前</div></div>
+          <div class="ts-card"><div class="ts-num" id="tsAfter">0 B</div><div class="ts-cap">压缩后</div></div>
+          <div class="ts-card"><div class="ts-num" id="tsSaved">0 B</div><div class="ts-cap">节省字节</div></div>
+          <div class="ts-card"><div class="ts-num" id="tsBlocks">0</div><div class="ts-cap">压缩块数</div></div>
+          <div class="ts-card"><div class="ts-num" id="tsCalls">0</div><div class="ts-cap">统计调用</div></div>
+          <div class="ts-card"><div class="ts-num" id="tsInjections">0</div><div class="ts-cap">提示词注入</div></div>
+        </div>
+        <div id="tsNote" style="font-size:11px;color:var(--dim);margin-top:10px">
+          还没有可统计的请求。发起一次对话后，这里显示的是真实压缩字节数，不是估算。
+        </div>
+        <div id="tsSummary" style="font-size:11px;color:var(--dim);margin-top:2px;font-family:var(--mono)">
+          统计口径 · token saver: 0 B saved over 0 request(s) (0%), 0 block(s) compacted
+        </div>
+      </div>
+
+      <div style="margin-top:16px">
+        <h2 style="margin:0;font-size:14px">提示词压缩</h2>
+        <div style="font-size:12px;color:var(--dim);margin:4px 0 10px">
+          在系统提示里追加一条写作指令。这是唯一能减少输出 Token 的压缩，因为它改变的是模型怎么写。
+        </div>
+        <div class="ts-block">
+          <div class="ts-title">Caveman</div>
+          <div class="ts-pills" id="tsCaveman">
+            <button type="button" data-level="off" class="on" onclick="saveTokenSaverPrompt('caveman','off')">关闭</button>
+            <button type="button" data-level="lite" onclick="saveTokenSaverPrompt('caveman','lite')">轻</button>
+            <button type="button" data-level="full" onclick="saveTokenSaverPrompt('caveman','full')">全</button>
+            <button type="button" data-level="ultra" onclick="saveTokenSaverPrompt('caveman','ultra')">极</button>
+            <button type="button" data-level="wenyan-lite" onclick="saveTokenSaverPrompt('caveman','wenyan-lite')">文言轻</button>
+            <button type="button" data-level="wenyan" onclick="saveTokenSaverPrompt('caveman','wenyan')">文言</button>
+            <button type="button" data-level="wenyan-ultra" onclick="saveTokenSaverPrompt('caveman','wenyan-ultra')">文言极</button>
+          </div>
+          <div class="ts-cap">电报体回复：去掉客套与重复解释，只留结论与代码。</div>
+        </div>
+        <div class="ts-block">
+          <div class="ts-title">Ponytail</div>
+          <div class="ts-pills" id="tsPonytail">
+            <button type="button" data-level="off" class="on" onclick="saveTokenSaverPrompt('ponytail','off')">关闭</button>
+            <button type="button" data-level="lite" onclick="saveTokenSaverPrompt('ponytail','lite')">轻</button>
+            <button type="button" data-level="full" onclick="saveTokenSaverPrompt('ponytail','full')">全</button>
+            <button type="button" data-level="ultra" onclick="saveTokenSaverPrompt('ponytail','ultra')">极</button>
+          </div>
+          <div class="ts-cap">YAGNI 最小实现：只写被要求的那一件事，不主动加抽象、配置与兜底。</div>
+        </div>
+        <div style="font-size:11px;color:var(--dim);margin-top:8px">
+          注意：这两套会改变助手的说话方式，并且会留在你的对话记录里。默认关闭。
+        </div>
+      </div>
+
+      <div style="margin-top:16px">
+        <h2 style="margin:0;font-size:14px">RTK 工具输出压缩</h2>
+        <div style="font-size:12px;color:var(--dim);margin:4px 0 10px">
+          压缩的是工具结果：git diff / status / log、grep、find、ls、tree、构建日志、带行号的文件转储，以及重复的日志行。
+        </div>
+        <div class="ts-block">
+          <label class="switch" style="min-height:0">
+            <input id="setTokenSaverRtk" type="checkbox"
+                   onchange="saveTokenSaver({rtk: this.checked})">
+            <span class="switch-track"></span>
+            <span style="font-size:13px;font-weight:600">RTK 工具输出压缩</span>
+          </label>
+          <div class="ts-cap" style="margin-top:8px">
+            安全边界：报错类工具结果原样保留，小体积内容不碰；替换只在新文本更小且非空时发生——压缩结果永远不会比原文更大。
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:16px">
+        <h2 style="margin:0;font-size:14px">本地应答</h2>
+        <div style="font-size:12px;color:var(--dim);margin:4px 0 10px">
+          这五类请求的答案就在请求体里，转发出去只是白花一次上游额度与一个来回。默认关闭：只认单条 user 讯息、不带工具、不在一段对话中间的窄形状。
+        </div>
+        <div class="ts-block" id="tsLocalRows">
+          <label class="switch" style="min-height:0">
+            <input id="setTokenSaverLocal" type="checkbox"
+                   onchange="saveTokenSaver({local: {enabled: this.checked}})">
+            <span class="switch-track"></span>
+            <span style="font-size:13px;font-weight:600">启用本地应答</span>
+          </label>
+          <div class="ts-local-row">
+            <label class="switch" style="min-height:0">
+              <input id="setTokenSaverLocalQuota" type="checkbox"
+                     onchange="saveTokenSaverLocal('quota', this.checked)">
+              <span class="switch-track"></span>
+              <span>
+                <span style="font-size:13px">额度探测</span>
+                <span class="ts-cap" style="display:block">回答「额度检查」这类探针，返回一句固定答复。</span>
+              </span>
+            </label>
+          </div>
+          <div class="ts-local-row">
+            <label class="switch" style="min-height:0">
+              <input id="setTokenSaverLocalCommandPrefix" type="checkbox"
+                     onchange="saveTokenSaverLocal('command_prefix', this.checked)">
+              <span class="switch-track"></span>
+              <span>
+                <span style="font-size:13px">命令前缀</span>
+                <span class="ts-cap" style="display:block">回答权限提示要求的命令前缀，从 shell 命令里解析。</span>
+              </span>
+            </label>
+          </div>
+          <div class="ts-local-row">
+            <label class="switch" style="min-height:0">
+              <input id="setTokenSaverLocalTitle" type="checkbox"
+                     onchange="saveTokenSaverLocal('title', this.checked)">
+              <span class="switch-track"></span>
+              <span>
+                <span style="font-size:13px">会话标题</span>
+                <span class="ts-cap" style="display:block">回答标题生成请求，返回固定标题。</span>
+              </span>
+            </label>
+          </div>
+          <div class="ts-local-row">
+            <label class="switch" style="min-height:0">
+              <input id="setTokenSaverLocalSuggestion" type="checkbox"
+                     onchange="saveTokenSaverLocal('suggestion', this.checked)">
+              <span class="switch-track"></span>
+              <span>
+                <span style="font-size:13px">建议模式</span>
+                <span class="ts-cap" style="display:block">回答建议模式的空转回包，不产生上游请求。</span>
+              </span>
+            </label>
+          </div>
+          <div class="ts-local-row">
+            <label class="switch" style="min-height:0">
+              <input id="setTokenSaverLocalFilePath" type="checkbox"
+                     onchange="saveTokenSaverLocal('file_path', this.checked)">
+              <span class="switch-track"></span>
+              <span>
+                <span style="font-size:13px">文件路径提取</span>
+                <span class="ts-cap" style="display:block">从命令与输出里解析文件路径，返回结构化结果。</span>
+              </span>
+            </label>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -15847,6 +16069,135 @@ async function saveWinMaxHeight(btn){
 }
 // ==== 面板窗口限高结束 ====
 
+// ==== 省 token 开始 ====
+// 设置页的「省 token」：总开关 / 两套提示词档位 / RTK / 本地应答 + 节省统计。
+// 开关与档位都即时保存（POST /settings/save 的 token_saver 一栏），统计另走
+// GET /token-saver/stats —— 字节数随请求变化，不跟设置一起缓存。
+function tsCfg(){
+  return (window.SETTINGS_DATA && window.SETTINGS_DATA.token_saver) || {};
+}
+
+function tsBytes(n){
+  n = Number(n) || 0;
+  if (n < 1024) return Math.round(n) + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB';
+  return (n / 1024 / 1024).toFixed(2) + ' MB';
+}
+
+function tsMarkPills(id, level){
+  const box = document.getElementById(id);
+  if(!box) return;
+  const buttons = box.querySelectorAll ? box.querySelectorAll('button') : [];
+  for(let i = 0; i < buttons.length; i++){
+    const btn = buttons[i];
+    if(btn.classList) btn.classList.toggle('on', btn.getAttribute('data-level') === level);
+  }
+}
+
+// 服务端存什么就显示什么：缺字段按默认（总开、RTK 开、提示词关、本地应答关）。
+function tsApply(cfg){
+  cfg = cfg || {};
+  const prompt = cfg.prompt || {};
+  const local = cfg.local || {};
+  const on = cfg.enabled !== false;
+  const enabled = document.getElementById('setTokenSaverEnabled');
+  if(enabled) enabled.checked = on;
+  const state = document.getElementById('setTokenSaverState');
+  if(state){
+    state.textContent = on ? '(压缩中)' : '(已关闭)';
+    state.style.color = on ? 'var(--accent2)' : 'var(--dim)';
+  }
+  const rtk = document.getElementById('setTokenSaverRtk');
+  if(rtk) rtk.checked = cfg.rtk !== false;
+  tsMarkPills('tsCaveman', prompt.caveman || 'off');
+  tsMarkPills('tsPonytail', prompt.ponytail || 'off');
+  const localOn = local.enabled === true;
+  const localMaster = document.getElementById('setTokenSaverLocal');
+  if(localMaster) localMaster.checked = localOn;
+  const boxes = {
+    quota: 'setTokenSaverLocalQuota',
+    command_prefix: 'setTokenSaverLocalCommandPrefix',
+    title: 'setTokenSaverLocalTitle',
+    suggestion: 'setTokenSaverLocalSuggestion',
+    file_path: 'setTokenSaverLocalFilePath'
+  };
+  Object.keys(boxes).forEach(function(kind){
+    const input = document.getElementById(boxes[kind]);
+    if(input) input.checked = local[kind] !== false;
+  });
+  const rows = document.getElementById('tsLocalRows');
+  if(rows) rows.style.opacity = localOn ? '1' : '.6';
+}
+
+function tsRenderStats(stats){
+  stats = stats || {};
+  const set = function(id, text){
+    const el = document.getElementById(id);
+    if(el) el.textContent = text;
+  };
+  const local = stats.local || {};
+  let localHits = 0;
+  Object.keys(local).forEach(function(kind){ localHits += Number(local[kind]) || 0; });
+  set('tsBefore', tsBytes(stats.before));
+  set('tsAfter', tsBytes(stats.after));
+  set('tsSaved', tsBytes(stats.saved));
+  set('tsBlocks', String(Number(stats.blocks) || 0));
+  set('tsCalls', String(Number(stats.calls) || 0));
+  set('tsInjections', String(Number(stats.injections) || 0));
+  const note = document.getElementById('tsNote');
+  if(note){
+    note.textContent = (Number(stats.calls) || Number(stats.blocks) || localHits)
+      ? ('本机累计：' + (Number(stats.calls) || 0) + ' 次请求经过压缩管线，'
+         + (Number(stats.blocks) || 0) + ' 块工具结果被压缩，'
+         + localHits + ' 次探测由网关本地应答。数字是真实字节，不是估算。')
+      : '还没有可统计的请求。发起一次对话后，这里显示的是真实压缩字节数，不是估算。';
+  }
+  const summary = document.getElementById('tsSummary');
+  if(summary){
+    summary.textContent = '统计口径 · token saver: ' + tsBytes(stats.saved)
+      + ' saved over ' + (Number(stats.calls) || 0) + ' request(s) ('
+      + Math.round(Number(stats.percent) || 0) + '%), '
+      + (Number(stats.blocks) || 0) + ' block(s) compacted';
+  }
+}
+
+async function loadTokenSaverStats(showToast){
+  try{
+    const stats = await getJSON('/token-saver/stats');
+    tsRenderStats(stats);
+    if(showToast) toast('节省统计已刷新', 'ok');
+  }catch(e){
+    if(showToast) toast('读取节省统计失败：' + e.message, 'bad');
+  }
+}
+
+async function saveTokenSaver(patch){
+  try{
+    const res = await postJSON('/settings/save', {token_saver: patch || {}});
+    const cfg = (res && res.token_saver) || tsCfg();
+    window.SETTINGS_DATA = Object.assign({}, window.SETTINGS_DATA || {}, {token_saver: cfg});
+    tsApply(cfg);
+    toast(cfg.enabled === false ? '已关闭 Token 压缩' : '省 token 设置已保存', 'ok');
+    loadTokenSaverStats();
+  }catch(e){
+    toast('保存失败：' + e.message, 'bad');
+    tsApply(tsCfg());
+  }
+}
+
+function saveTokenSaverPrompt(field, level){
+  const patch = {prompt: {}};
+  patch.prompt[field] = level;
+  saveTokenSaver(patch);
+}
+
+function saveTokenSaverLocal(kind, enabled){
+  const patch = {local: {}};
+  patch.local[kind] = !!enabled;
+  saveTokenSaver(patch);
+}
+// ==== 省 token 结束 ====
+
 async function loadSettings(showToast){
   try {
     const data = await getJSON('/settings');
@@ -15890,6 +16241,11 @@ async function loadSettings(showToast){
     applyWinMaxHeight(winMax);
     const winMaxInput = document.getElementById('setWinMaxHeight');
     if(winMaxInput) winMaxInput.value = String(Math.round(winMax));
+
+    // 省 token：开关与档位按服务端存值重放；统计另拉一次（字节数会随请求变，
+    // 不与设置同一个响应缓存）。
+    tsApply(data.token_saver || {});
+    loadTokenSaverStats();
 
       const creditsHoursInput = document.getElementById('setCreditsRefreshHours');
       if(creditsHoursInput && data.credits_refresh_hours !== undefined){
