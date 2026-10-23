@@ -2230,6 +2230,41 @@ def find_proxy_slot(accounts_dir, slot_id):
 # 关掉国际版的 deepseek 不该连带关掉国内版。鸡蛋（egg）的目录不分区域，它的
 # realm 恒为空，所以面板在鸡蛋视图里关一次就整条车道生效。
 DISABLED_MODELS_KEY = "disabled_models"
+#: 「路由」页的路由策略。池子里的模型作为一个整体暴露成 route/* 控制模型，
+#: 网关按这个策略挑一个成员再转发（参考 magpie 的路由组）。
+ROUTING_KEY = "routing"
+ROUTING_STRATEGIES = ("smart", "order", "rotate", "usage", "pace")
+ROUTING_DEFAULT_STRATEGY = "smart"
+
+
+def routing_config(accounts_dir):
+    """路由策略配置（缺省 smart）。"""
+    raw = load(accounts_dir).get(ROUTING_KEY)
+    if not isinstance(raw, dict):
+        raw = {}
+    strategy = str(raw.get("strategy") or ROUTING_DEFAULT_STRATEGY).strip().lower()
+    if strategy not in ROUTING_STRATEGIES:
+        strategy = ROUTING_DEFAULT_STRATEGY
+    return {"strategy": strategy}
+
+
+def set_routing_config(accounts_dir, patch):
+    """改路由策略；未知键原样保留，返回改完后的配置。"""
+    data = load(accounts_dir)
+    current = data.get(ROUTING_KEY)
+    if not isinstance(current, dict):
+        current = {}
+    merged = dict(current)
+    patch = patch or {}
+    if "strategy" in patch:
+        strategy = str(patch.get("strategy") or "").strip().lower()
+        if strategy not in ROUTING_STRATEGIES:
+            strategy = ROUTING_DEFAULT_STRATEGY
+        merged["strategy"] = strategy
+    data[ROUTING_KEY] = merged
+    save(accounts_dir, data)
+    return routing_config(accounts_dir)
+
 
 
 def _disabled_models_scope(provider, realm):
@@ -2312,6 +2347,42 @@ def set_model_disabled(accounts_dir, model, disabled, provider=None, realm=None)
     return ids
 
 
+def set_models_disabled(accounts_dir, models, disabled, provider=None, realm=None):
+    """批量开 / 关一组模型，返回该作用域停用后的完整 id 列表。
+
+    面板的「一键启用 / 停用」用它：一个作用域里几十上百条逐个走
+    set_model_disabled 要读写 settings.json 几十次，慢且中途出错会留下半套
+    状态。这里一次读、一次写，要么全改要么全不改。
+    """
+    scope = _disabled_models_scope(provider, realm)
+    wanted = []
+    for item in models or []:
+        mid = str(item or "").strip()
+        if mid and mid not in wanted:
+            wanted.append(mid)
+    if not wanted:
+        raise ValueError("models is required")
+    with _lock:
+        data = load(accounts_dir)
+        table = _clean_disabled_table(data.get(DISABLED_MODELS_KEY))
+        ids = list(table.get(scope) or [])
+        if disabled:
+            ids.extend(mid for mid in wanted if mid not in ids)
+        else:
+            drop = set(wanted)
+            ids = [item for item in ids if item not in drop]
+        if ids:
+            table[scope] = ids
+        else:
+            table.pop(scope, None)
+        if table:
+            data[DISABLED_MODELS_KEY] = table
+        else:
+            data.pop(DISABLED_MODELS_KEY, None)
+        save(accounts_dir, data)
+    return ids
+
+
 # ---------------------------------------------------------------------------
 # 鸡蛋车道的出口代理
 # ---------------------------------------------------------------------------
@@ -2351,6 +2422,53 @@ def egg_proxy_url(accounts_dir):
     if slot is None:
         return ""
     return str(slot.get("url") or "").strip()
+
+
+# --------------------------------------------------------- 新功能通知
+# 面板通知中心里「不再显示」的 id。只存 id、不存正文：正文在
+# docs/notices.md 里维护，面板每次现读，改 md 不用动 settings.json。
+# 缺失键读作空列表；上限只挡手编文件写出一个无限增长的清单。
+NOTICES_DISMISSED_KEY = "notices_dismissed"
+MAX_DISMISSED_NOTICES = 500
+_NOTICE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+def _clean_notice_ids(value):
+    """Normalise a stored/posted notice id list.
+
+    Unknown shapes read as empty; duplicates collapse; ids that cannot have
+    come from wb_notices are dropped so a hand-edited file cannot hide
+    something else later by accident.
+    """
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return []
+    out = []
+    for item in value:
+        text = str(item or "").strip().lower()
+        if not text or not _NOTICE_ID_RE.match(text) or text in out:
+            continue
+        out.append(text)
+        if len(out) >= MAX_DISMISSED_NOTICES:
+            break
+    return out
+
+
+def dismissed_notices(accounts_dir):
+    """The notice ids this install has chosen not to show again."""
+    return _clean_notice_ids(load(accounts_dir).get(NOTICES_DISMISSED_KEY))
+
+
+def dismiss_notices(accounts_dir, ids):
+    """Add ids to the dismissed list. Returns the stored (normalised) list."""
+    added = _clean_notice_ids(ids)
+    with _lock:
+        data = load(accounts_dir)
+        merged = _clean_notice_ids(list(dismissed_notices(accounts_dir)) + added)
+        data[NOTICES_DISMISSED_KEY] = merged
+        save(accounts_dir, data)
+    return merged
 
 
 class PanelSessions(object):

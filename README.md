@@ -10,6 +10,8 @@
 
 相对上游基座（v1.7.16）新增的功能（日期为落地当天）：
 
+- **2026-10-23｜新功能通知中心**：右上角新增铃铛图标与未读徽标，登录后自动展开未读通知；点「不再显示」按通知 id 记在网关本机（`settings.json` 的 `notices_dismissed`），换浏览器也记得。正文维护在 **[docs/notices.md](docs/notices.md)**，追加一节即增量同步（打开面板时回源 + 每分钟轮询，按文件 mtime 缓存），支持 `feature` / `improve` / `fix` / `notice` 四种标记与中英 / 正體中文文案。接口：`GET /notices`、`POST /notices/dismiss`（均只认面板会话）。
+- **2026-10-23｜「路由」总网关**：顶部新增「路由」页签（默认视图），把 WorkBuddy / Qoder / Trae（各含国际、国内）+ 鸡蛋的全部模型合成一个池子；`/v1/models` 不带 `?provider=` 时返回合并清单，id 为 `模型名 · 供应商`，后缀优先决定去向。策略 `smart` / `order` / `rotate` / `usage` / `pace`（参考 magpie），客户端用 `route/auto` 或 `route/<策略>`；四个网关标签只切视图，不再改网关上游。
 - **2026-10-22｜省 token（提示词压缩 / RTK 工具输出压缩 / 本地应答）**：设置页新增「省 token」一块。**Caveman** 七档（关闭 / 轻 / 全 / 极 / 文言轻 / 文言 / 文言极）与 **Ponytail** 四档（YAGNI）往 system 提示词尾部追加写作指令 —— 这是唯一能省**输出** Token 的一块，默认关闭。**RTK** 按内容识别 git diff / status / log、grep、find、ls、tree、构建日志、带行号的文件转储与重复日志行，只压缩 `role=tool` 的结果（默认开；小于 500 字节、报错类结果、压完不比原文小的一律原样）。**本地应答**把额度探测 / 命令前缀 / 会话标题 / 建议模式 / 文件路径提取五类探针就地回掉，不占上游额度（默认关闭）。省下的字节按本机真实统计显示（压缩前 / 后 / 节省 / 块数 / 调用数 / 提示词注入）。单条请求带 `X-WB-Token-Saver: off` 可整体绕过；开关与档位存在 `accounts/settings.json`，统计存在 `accounts/token-saver-stats.json`。
 - **2026-10-22｜可用性详情弹框**：点「可用性」徽标看这条结论的详情（失败原因、耗时、首字），可复制、可就地重测。
 - **2026-10-21｜平台账号池**：鸡蛋视图新增「平台账号」区 —— 华为云 CodeArts（浏览器授权）、Cline（设备码）登录即用，凭据自动续期。
@@ -209,7 +211,7 @@ python tests/run_all.py realm      # 只跑名字里含 realm 的
 
 清单与上游 `GET /v3/config` 的 `agents[cli].models` 保持同步（接口不可用时依次回落到桌面端缓存文件、内置快照）；过滤规则：去掉 5 个档位别名与 `auto`、去掉 `-sg` / `-x` 变体、同名的只留 0.00 倍率那一档。上游新上架的模型无需发版即出现在 `/v1/models`。
 
-> 同名模型（如 `deepseek-v4.1-flash`）**暂未实现跨国内 / 国际账号的混合轮询**：两个区域作为独立出口分别配置与调度，请求只走当前所选网关。这是出站指纹对齐与账号防风控的取舍，待长期实测确认稳定后再补。
+> 同名模型（如 `deepseek-v4.1-flash`）在**单网关视图**里仍按「当前所选出口」走，不做跨国内 / 国际账号的自动混跑。要让两个区域（以及四个网关）之间按策略挑一个，用「路由」视图的池子模型或 `route/auto`：每条候选自带 (网关, 出口)，选路不会改变单网关的默认出口，也不影响出站指纹对齐。
 
 ### 2. 设备指纹隔离（`derive_id`）
 
@@ -392,6 +394,31 @@ python wb_agents.py restore --client codex                 # 随时字节级还�
 - 设置 `WB_CN_CHAT_UPSTREAM=https://www.workbuddy.cn`，重启 `wb-proxy`；启动日志的 `realm` 行会显示新的出口，并多一行 `cn upstream: ... (WB_CN_CHAT_UPSTREAM)`；
 - 只改「往哪发」：`X-Domain` 仍用账号登录时记下的 domain，计费侧（`www.codebuddy.cn`）不变；
 - 不是 `http(s)://` 开头的值会被忽略并回落默认地址，启动日志给出提示；不设则行为与此前完全一致。
+
+---
+
+### 15. 路由总网关（四个网关合成一个池子）
+
+顶部提供商标签条最前面是 **「路由」**，也是默认视图。它把 WorkBuddy / Qoder / Trae（各含国际、国内）与鸡蛋的全部模型合成一个池子：
+
+- 不带 `?provider=` / `X-Provider` 请求 `GET /v1/models`，返回的就是这份合并清单；
+- 模型 id 是 **`模型名 · 供应商`**，例如 `MiniMax-M3.1-Flash · OpenRouter`。网关名后缀带出口：`WorkBuddy-global` / `WorkBuddy-cn`、`Qoder-global` / `Qoder-cn`、`Trae-global` / `Trae-cn`；鸡蛋用供应商或池子名；
+- 后缀决定真实去向，**优先于** `?provider=` / `X-Provider`：客户端不需要再按网关拆配置；
+- 顶部 WorkBuddy / Qoder / Trae / 鸡蛋 四个标签现在只是**看板视图**（本地记住选择），不再切换网关上游、不改默认出口。要改真实上游仍在对应视图的出口控件里操作。
+
+路由策略参考 [magpie](https://github.com/yetone/magpie) 的路由组，五种：
+
+| 策略 | 选谁 |
+| --- | --- |
+| `smart` | 额度最快重置的优先（重置时浪费最少） |
+| `order` | 按池子顺序，先用第一个 |
+| `rotate` | 每轮换一个成员 |
+| `usage` | 优先用得最少的 |
+| `pace` | 优先「距重置前每小时剩余额度」最多的 |
+
+客户端把模型写成 `route/auto` 就按「路由」页当前选定的策略选路；也可以钉死 `route/smart`、`route/order`、`route/rotate`、`route/usage`、`route/pace`。策略存在 `settings.json` 的 `routing.strategy`，`GET /routing` 可看候选排名与最近 200 条决策。同一会话上一轮选中的成员仍可用时继续用它（`rotate` 除外），以保住提示词缓存；候选只含有可用账号的网关，鸡蛋始终可用，面板停用的模型不参与路由。
+
+「路由」页还有两个按钮：**刷新全部模型清单**（后台重拉七份目录）与 **同步到客户端**（把统一清单写进已接入的客户端配置；不写 `X-Provider`，靠 id 后缀路由）。
 
 ---
 

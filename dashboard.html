@@ -477,6 +477,11 @@ table.account-cards tr.cool-row .cool-pill{display:inline-block;width:auto;max-w
 .modal-bd{padding:18px 20px}
 .modal-ft{padding:14px 20px;border-top:1px solid var(--line);display:flex;
   justify-content:flex-end;gap:8px}
+/* 系统内弹框（confirm / alert / prompt 的替身）：正文按输入里的换行排版；
+   输入框直接沿用面板的 .slot-input 那套（--panel2 底、8px 圆角、13px）。 */
+.ui-dialog-msg{white-space:pre-line;line-height:1.75;color:var(--fg);word-break:break-word}
+.ui-dialog-ipt{width:100%;margin-top:12px;background:var(--panel2);border:1px solid var(--line);
+  border-radius:8px;padding:6px 10px;color:var(--fg);font:inherit;font-size:13px}
 .login-link{display:block;word-break:break-all;background:var(--panel2);
   border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:12px 0;
   color:var(--accent);text-decoration:none;font-size:12px}
@@ -539,6 +544,36 @@ a:hover{text-decoration:underline}
 .provider-switch button.active#providerBtnQoder{color:var(--think);border-color:var(--think)}
 .provider-switch button.active#providerBtnTrae{color:var(--accent);border-color:var(--accent)}
 .provider-switch button.active#providerBtnEgg{color:#c2410c;border-color:#c2410c}
+.provider-switch button.active#providerBtnAll{color:var(--accent2);border-color:var(--accent2)}
+/* 「路由」总网关：四个网关的模型合成一个池子。账号 / 版本 / 出口都不属于
+   池子这一层，全部收起，只留池子概览、最近请求与统一模型清单。 */
+body:not(.provider-all) .routing-only{display:none !important}
+body.provider-all .realm-cards-grid,
+body.provider-all .gw-exit,
+body.provider-all #schedulerBar,
+body.provider-all #accountsHeader,
+body.provider-all #accountsRealmSwitch,
+body.provider-all #accountsToggle,
+body.provider-all .accounts-section,
+body.provider-all #btnNavAccounts,
+body.provider-all #btnNavTasks,
+body.provider-all .egg-only{display:none !important}
+/* 「路由」页：策略卡 + 候选 / 决策两栏。 */
+.route-strategy-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.route-strategy{text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:11px 12px;cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .15s;font:inherit;color:var(--fg)}
+.route-strategy:hover{border-color:var(--accent);transform:translateY(-1px);box-shadow:var(--shadow-sm)}
+.route-strategy.active{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft) inset}
+.route-strategy .rs-title{display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px}
+.route-strategy .rs-desc{font-size:11px;color:var(--dim);margin-top:5px;line-height:1.5}
+.route-strategy .rs-id{font-size:10px;color:var(--dim);margin-top:6px;font-family:var(--mono)}
+.route-panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-top:16px}
+.route-panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 13px}
+.route-list{display:flex;flex-direction:column;gap:6px;max-height:340px;overflow:auto}
+.route-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);font-size:12px;min-width:0}
+.route-row .rr-rank{font-family:var(--mono);font-size:11px;color:var(--dim);min-width:22px}
+.route-row .rr-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.route-row .rr-meta{font-size:10px;color:var(--dim);white-space:nowrap}
+.route-empty{font-size:12px;color:var(--dim);padding:10px 2px}
 /* 鸡蛋视图专属区块：免费模型概览 / 说明。其它视图下收起。 */
 body:not(.provider-egg) .egg-only{display:none !important}
 /* 鸡蛋没有账号池、也没有出口：账号区块、版本卡片、出口控件全部收起，只留
@@ -816,6 +851,77 @@ body.provider-trae #btnFetchCredits{display:none !important}
 @media (max-width: 640px){
   .lang-btn{min-width:36px;height:36px;padding:0 6px;font-size:12px}
 }
+
+/* ===== 顶栏「新功能通知」：图标 + 未读徽标 + 下拉面板 ===== */
+.notice-wrap{position:relative;display:inline-flex}
+.notice-btn{
+  position:relative;display:inline-flex;align-items:center;justify-content:center;
+  width:34px;height:32px;border-radius:8px;border:1px solid var(--line);
+  background:var(--panel);color:var(--dim);box-shadow:var(--shadow-sm);
+  cursor:pointer;padding:0;transition:all .15s ease;
+}
+.notice-btn:hover{color:var(--fg);border-color:var(--line-hover);
+  background:var(--panel2);box-shadow:var(--shadow-md)}
+.notice-btn[aria-expanded="true"]{color:var(--fg);border-color:var(--accent);background:var(--accent-soft)}
+.notice-btn svg{width:16px;height:16px;display:block}
+.notice-badge{
+  display:none;position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;
+  padding:0 4px;border-radius:999px;background:var(--accent);color:#fff;
+  font-size:10px;font-weight:700;line-height:16px;text-align:center;
+  box-shadow:0 0 0 2px var(--bg);pointer-events:none;
+}
+.notice-badge.on{display:block}
+.notice-dropdown{
+  display:none;position:absolute;top:calc(100% + 6px);right:0;
+  width:min(390px,calc(100vw - 24px));max-height:min(72vh,560px);
+  flex-direction:column;overflow:hidden;
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  box-shadow:var(--shadow-md);z-index:120;
+}
+.notice-dropdown.open{display:flex;animation:themePop .12s cubic-bezier(0,0,.2,1)}
+.notice-hd{display:flex;align-items:center;gap:8px;padding:12px 14px 10px;
+  border-bottom:1px solid var(--line);flex:none}
+.notice-hd b{font-size:13px;color:var(--fg)}
+.notice-hd .notice-count{font-size:11px;color:var(--dim)}
+.notice-close{
+  margin-left:auto;width:24px;height:24px;display:inline-flex;align-items:center;
+  justify-content:center;border:none;background:transparent;color:var(--dim);
+  border-radius:6px;cursor:pointer;padding:0;font-size:16px;line-height:1;
+}
+.notice-close:hover{color:var(--fg);background:var(--panel2)}
+.notice-list{overflow:auto;padding:2px 14px 6px}
+.notice-item{padding:12px 0;border-bottom:1px solid var(--line)}
+.notice-item:last-child{border-bottom:none}
+.notice-meta{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim)}
+.notice-level{padding:1px 6px;border-radius:999px;font-size:10.5px;font-weight:600;
+  border:1px solid var(--line);white-space:nowrap}
+.notice-level.feature{color:var(--accent);background:var(--accent-soft);border-color:transparent}
+.notice-level.improve{color:var(--accent2);background:var(--accent2-soft);border-color:transparent}
+.notice-level.fix{color:var(--warn);background:var(--warn-soft);border-color:transparent}
+.notice-level.notice{color:var(--dim);background:var(--panel2)}
+.notice-title{font-size:13px;font-weight:600;color:var(--fg);margin:5px 0 6px}
+.notice-body{font-size:12.5px;line-height:1.65;color:var(--dim);word-break:break-word}
+.notice-body p{margin:0 0 6px}
+.notice-body p:last-child{margin-bottom:0}
+.notice-body ul{margin:0 0 6px;padding-left:18px}
+.notice-body li{margin:2px 0}
+.notice-body code{font-size:11.5px;padding:1px 4px;border-radius:4px;
+  background:var(--panel2);border:1px solid var(--line)}
+.notice-body a{color:var(--accent)}
+.notice-actions{margin-top:8px;display:flex;justify-content:flex-end}
+.notice-dismiss{
+  font:inherit;font-size:11.5px;color:var(--dim);background:transparent;
+  border:1px solid var(--line);border-radius:999px;padding:3px 10px;cursor:pointer;
+  transition:all .12s ease;
+}
+.notice-dismiss:hover{color:var(--fg);border-color:var(--line-hover);background:var(--panel2)}
+.notice-empty{padding:30px 12px;text-align:center;font-size:12.5px;color:var(--dim)}
+.notice-ft{display:flex;align-items:center;gap:10px;padding:9px 14px;
+  border-top:1px solid var(--line);background:var(--panel);flex:none}
+.notice-ft .notice-src{font-size:11px;color:var(--dim);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.notice-ft .notice-dismiss{margin-left:auto;flex:none}
+@media (max-width:640px){.notice-btn{width:36px;height:36px}}
 
 [data-theme="dark"] .badge.ok{color:#9dbb87;background:rgba(143,174,120,.16);border-color:rgba(143,174,120,.34)}
 [data-theme="dark"] .badge.s{color:#8ab4d9;background:rgba(106,155,204,.18);border-color:rgba(106,155,204,.36)}
@@ -1876,6 +1982,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
   var ATTRS = ['title', 'placeholder', 'aria-label', 'data-label', 'alt'];
   var SKIP = {SCRIPT: 1, STYLE: 1, TEXTAREA: 1, NOSCRIPT: 1};
   var DICT = {
+    // ===== 顶栏「新功能通知」=====
+    '新功能通知': 'What’s new',
+    '不再显示': 'Don’t show again',
+    '全部不再显示': 'Dismiss all',
+    '已全部标记为不再显示': 'All notices dismissed',
+    '暂无新功能通知': 'No new notices',
+    '新功能': 'New feature',
+    '改进': 'Improved',
+    '修复': 'Fixed',
+    '通知': 'Notice',
     '(不限)': '(unlimited)',
     '(仅桌面端对话)': '(desktop chats only)',
     '(低于': '(below',
@@ -2258,6 +2374,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     '发起失败:': 'Could not start:',
     '取价输入 = 内置目录': 'Price input = built-in catalog',
     '取消': 'Cancel',
+    '确定': 'OK',
+    '提示': 'Notice',
+    '请确认': 'Please confirm',
+    '请输入': 'Enter a value',
     '变体名未命中基准': 'variant name matched no base',
     '变体后缀继承': 'Variant suffix inheritance',
     '可用': 'Available',
@@ -4515,6 +4635,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     if(lang === 'en' || lang === 'zh-Hant'){ restore(document.documentElement); walk(document.documentElement); observeOn(); }
     else { restore(document.documentElement); }
     syncButtons();
+    // 通知正文来自 md，语言切换后要按当前语言重选 title_en / title_hant。
+    if(window.renderNotices) window.renderNotices();
   }
   window.selectLang = function(next, evt){
     if(evt){ evt.preventDefault(); evt.stopPropagation(); }
@@ -4561,17 +4683,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
 </div>
 <header>
   <div class="header-left" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-    <!-- 品牌位＝「当前网关真实状态」：提供商名 + 网关真实默认出口版本，比如
-         Qoder · 国内版 (China)。它跟着服务端持久化的 provider/realm 走：切上面的
-         WorkBuddy / Qoder / Trae 就是切网关真实上游，品牌位会一起变；点右边 ⇄
-         只切出口版本。 -->
-    <h1><span class="dot" id="statusDot"></span><span id="brandTitle" data-no-i18n>WorkBuddy</span><span class="brand-sep" data-no-i18n aria-hidden="true">·</span><span id="brandRealm" title="网关真实默认出口">国际版 (Global)</span></h1>
-    <!-- 提供商切换：全站唯一入口，改的是服务端持久化的 provider（POST /realm）。
-         切 WorkBuddy / Qoder / Trae 就是切网关真实上游：提供商和出口一起落到
-         服务端并持久化（出口取该提供商自己记住的那版），后续普通客户端流量、
-         模型清单也跟着走这一版；左上角品牌位同步显示「提供商 · 版本」。 -->
+    <!-- 品牌位＝「当前视图」：路由（四个网关的池子）或某一家的名称 + 该家记住的
+         出口版本。顶部这四个标签只切**视图**，不再改网关真实上游。 -->
+    <h1><span class="dot" id="statusDot"></span><span id="brandTitle" data-no-i18n>路由</span><span class="brand-sep" data-no-i18n aria-hidden="true">·</span><span id="brandRealm" title="当前视图的出口版本；点顶部标签只切视图，不改网关上游">全池</span></h1>
+    <!-- 提供商切换：只切看板视图（localStorage 记住），不再 POST /realm。
+         四个网关的模型现在合成一个池子，客户端拿到的 /v1/models 是统一的
+         「模型名 · 供应商」，点哪家标签都只影响面板看到的内容。 -->
     <div class="provider-switch" id="providerSwitch" role="group" aria-label="提供商" data-no-i18n>
-      <button type="button" id="providerBtnWorkbuddy" class="active" onclick="switchProvider('workbuddy')" aria-pressed="true">WorkBuddy</button>
+      <button type="button" id="providerBtnAll" class="active" onclick="switchProvider('all')" aria-pressed="true" title="路由：四个网关的全部模型合成一个池子">路由</button>
+      <button type="button" id="providerBtnWorkbuddy" onclick="switchProvider('workbuddy')" aria-pressed="false">WorkBuddy</button>
       <button type="button" id="providerBtnQoder" onclick="switchProvider('qoder')" aria-pressed="false">Qoder</button>
       <button type="button" id="providerBtnTrae" onclick="switchProvider('trae')" aria-pressed="false">Trae</button>
       <button type="button" id="providerBtnEgg" onclick="switchProvider('egg')" aria-pressed="false" title="鸡蛋：免账号、免密钥的免费模型聚合">鸡蛋</button>
@@ -4666,6 +4786,29 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
           </svg>
           <span class="theme-opt-text">色彩配置</span>
         </button>
+      </div>
+    </div>
+    <!-- 新功能通知入口：正文来自 docs/notices.md，未读数与列表由 loadNotices() 渲染。 -->
+    <div class="notice-wrap" id="noticeWrap">
+      <button type="button" class="notice-btn" id="noticeToggleBtn" onclick="toggleNoticeMenu(event)"
+              title="新功能通知" aria-label="新功能通知" aria-haspopup="dialog" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+        <span class="notice-badge" id="noticeBadge" aria-hidden="true"></span>
+      </button>
+      <div class="notice-dropdown" id="noticeDropdown" role="dialog" aria-label="新功能通知">
+        <div class="notice-hd">
+          <b>新功能通知</b>
+          <span class="notice-count" id="noticeCount"></span>
+          <button type="button" class="notice-close" onclick="closeNoticeMenu(event)" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <div class="notice-list" id="noticeList"></div>
+        <div class="notice-ft">
+          <span class="notice-src" id="noticeSrc"></span>
+          <button type="button" class="notice-dismiss" id="noticeDismissAll" onclick="dismissAllNotices(event)">全部不再显示</button>
+        </div>
       </div>
     </div>
   </div>
@@ -4939,6 +5082,80 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
   <!-- 鸡蛋专属概览：免费、免账号、免密钥。切到鸡蛋时版本卡片与出口控件整个
        收起，这里换成两个免费源的实时状态 + 一键刷新。数据来自 /v1/models
        响应里的 egg 字段（见 wb_zen.status）。 -->
+  <!-- ===== 路由 · 总网关：四个网关的模型合成一个池子 =====
+       客户端不带 ?provider= 拉 /v1/models 拿到的就是这份统一清单，模型 id 是
+       「模型名 · 供应商」（WorkBuddy-global / Qoder-cn / Trae-global / 鸡蛋的
+       供应商名）。策略语义参考 magpie 的路由组：smart / order / rotate /
+       usage / pace，对话尽量留在上一轮回答它的成员上。 -->
+  <section id="sectionRoutingOverview" class="routing-only" style="margin-bottom:18px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <div>
+        <h2 style="margin:0">路由 · 总网关</h2>
+        <div style="font-size:12px;color:var(--dim);margin-top:4px">
+          WorkBuddy / Qoder / Trae（各含国际与国内）+ 鸡蛋的全部模型合成一个池子；
+          模型 id 是「模型名 · 供应商」，客户端不需要再带 X-Provider。顶部四个标签只切视图，不改网关上游。
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="primary" id="btnPoolRefresh" onclick="refreshModelCatalog(this)">刷新全部模型清单</button>
+        <button class="sec" id="btnPoolSync" onclick="syncPoolToClients(this)" title="把池子的统一模型清单写进已接入的客户端配置（不写 X-Provider，靠 id 后缀路由）">同步到客户端</button>
+        <button class="sec" id="btnRoutingRefresh" onclick="loadRouting(true)" title="重新读取策略、候选排名与最近决策">刷新状态</button>
+      </div>
+    </div>
+    <div class="cards" style="margin-bottom:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+      <div class="card accent2">
+        <div class="k">池子模型</div>
+        <div class="v" id="routeTotalCount">-</div>
+      </div>
+      <div class="card">
+        <div class="k">WorkBuddy</div>
+        <div class="v" id="routeWbCount" style="color:var(--accent2)">-</div>
+      </div>
+      <div class="card">
+        <div class="k">Qoder</div>
+        <div class="v" id="routeQoderCount" style="color:var(--think)">-</div>
+      </div>
+      <div class="card">
+        <div class="k">Trae</div>
+        <div class="v" id="routeTraeCount" style="color:var(--accent)">-</div>
+      </div>
+      <div class="card warn">
+        <div class="k">鸡蛋</div>
+        <div class="v" id="routeEggCount" style="color:var(--warn)">-</div>
+      </div>
+      <div class="card">
+        <div class="k">路由候选</div>
+        <div class="v" id="routeCandidateCount">-</div>
+      </div>
+    </div>
+    <div id="routeStatusLine" class="hint" style="margin:0"></div>
+
+    <div style="margin-top:16px">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        <h3 style="margin:0;font-size:14px">路由策略</h3>
+        <div style="font-size:11px;color:var(--dim)">客户端用 route/auto 时按这里选定的策略挑成员；也可以直接钉死 route/smart、route/order、route/rotate、route/usage、route/pace</div>
+      </div>
+      <div id="routeStrategyCards" class="route-strategy-grid"></div>
+    </div>
+
+    <div class="route-panels">
+      <div class="route-panel">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:8px">
+          <h3 style="margin:0;font-size:14px">候选顺序</h3>
+          <div style="font-size:11px;color:var(--dim)">按当前策略排；没有可用账号的网关会排在后面</div>
+        </div>
+        <div id="routeCandidateList" class="route-list"></div>
+      </div>
+      <div class="route-panel">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:8px">
+          <h3 style="margin:0;font-size:14px">最近决策</h3>
+          <div style="font-size:11px;color:var(--dim)">每 5 秒自动刷新；同一会话在成员仍可用时保持粘性</div>
+        </div>
+        <div id="routeDecisionList" class="route-list"></div>
+      </div>
+    </div>
+  </section>
+
   <section id="sectionEggOverview" class="egg-only" style="margin-bottom:18px">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px">
       <div>
@@ -5138,16 +5355,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
           <option value="agent">测试口径：Agent（带工具）</option>
           <option value="chat">测试口径：对话（不带工具）</option>
         </select>
-        <div style="font-size:12px;color:var(--dim)" id="modelsTableDesc">展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率；每行可单独测试与启用/停用，测过的可用性记在本机、刷新后还在</div>
+        <div style="font-size:12px;color:var(--dim)" id="modelsTableDesc">展示总路由池子的全部模型（WorkBuddy / Qoder / Trae / 鸡蛋，含国际与国内，id 为「模型名 · 供应商」）、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率；每行可单独测试与启用/停用，测过的可用性记在本机、刷新后还在</div>
         <!-- 手动刷新：强制走一次上游 /v3/config（只在当前视图的版本上，用该
              版本的账号），成功后本表立即重载。服务端同一版本 30s 冷却。 -->
         <button class="sec mini" id="btnRefreshModels" onclick="refreshModelCatalog(this)"
-                title="立即从上游 API 重新拉取当前视图版本的模型清单（不走缓存；同一版本 30 秒内只能刷一次）">刷新模型清单</button>
-        <!-- 一键测试：把当前视图（当前池子筛选后）里每条启用的模型挨个真发一次
+                title="立即从上游 API 重新拉取当前网关的模型清单（不走缓存；同一版本 30 秒内只能刷一次）。拉完后总路由池子与已接入的 Agent 会自动同步">刷新模型清单</button>
+        <!-- 一键测试：把路由池子（当前供应商筛选后）里每条启用的模型挨个真发一次
              请求，逐条把「可用性」列刷成绿/红。4 条并发（串行太慢，看着像卡住），
              单条 30 秒超时。测试期间亮出「停止测试」，随时能收手。 -->
         <button class="sec mini" id="btnTestAllModels" onclick="testAllGatewayModels(this)"
-                title="把当前视图下所有启用的模型挨个真发一次请求（走网关自己的 /v1/chat/completions，和 agent 同一条链路），逐条更新「可用性」列；已停用的模型会被网关直接拒绝，所以跳过。4 条并发、单条最多等 30 秒，三十来条一般一分多钟就完。">一键测试模型</button>
+                title="把路由池子里所有启用的模型挨个真发一次请求（走网关自己的 /v1/chat/completions，和 agent 同一条链路；id 后缀决定真正去哪个网关），逐条更新「可用性」列；已停用的模型会被网关直接拒绝，所以跳过。4 条并发、单条最多等 30 秒，全部测完要几分钟。">一键测试模型</button>
         <button class="sec mini" id="btnStopModelTests" onclick="stopModelBatchTest()"
                 style="display:none" title="叫停这一轮：已经在跑的请求跑完就收手，没开始的就不再测；测到一半的结果照样留着。">停止测试</button>
       </div>
@@ -5164,16 +5381,26 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
           <tr>
             <th style="text-align:left;width:12%">模型 ID</th>
             <th style="text-align:left;width:8%">名称</th>
-            <th style="text-align:center;width:8%">免费池</th>
+            <th id="modelsPoolCol" style="text-align:center;width:8%">免费池</th>
             <th style="text-align:center;width:9%">消费倍率 / 优惠</th>
             <th style="text-align:center;width:10%">模型能力</th>
             <th style="text-align:center;width:6%">上下文窗口</th>
             <th style="text-align:center;width:6%">最大输出</th>
             <th style="text-align:left;width:10%">思考档位</th>
             <th style="text-align:left;width:7%;white-space:nowrap">默认采样参数</th>
-            <th style="text-align:center;width:6%">启用</th>
-            <th style="text-align:center;width:8%">可用性</th>
-            <th style="text-align:center;width:10%">测试</th>
+            <th style="text-align:center;width:8%;white-space:nowrap">
+              <!-- 启用列头的总闸：勾上 = 打开当前清单里的全部模型（按上面的
+                   视图与池子筛选，和「一键测试模型」同一个口径），取消 =
+                   全部停用。半开半关时显示半选，点一下把剩下的全打开。
+                   路由控制模型 route/* 不是真实模型，不参与批量。 -->
+              <label class="switch" id="modelsBulkSwitchWrap" style="margin-right:5px;vertical-align:middle"
+                     title="一键启用 / 停用当前清单里的全部模型（按当前视图与池子筛选；路由控制模型 route/* 不参与）">
+                <input type="checkbox" id="modelsBulkSwitch" onchange="toggleModelsEnabled(this.checked, this)">
+                <span class="switch-track"></span>
+              </label>启用
+            </th>
+            <th style="text-align:center;width:7%">可用性</th>
+            <th style="text-align:center;width:9%">测试</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -7225,6 +7452,11 @@ function openLoginModal(targetRealm){
     toast('鸡蛋网关不需要账号：免费模型直接可用', 'ok');
     return;
   }
+  if(currentProvider() === 'all'){
+    // 账号属于具体某家网关：路由视图不替用户猜，先切过去再加。
+    toast('路由视图不区分网关：请先切到 WorkBuddy / Qoder / Trae 标签再添加账号', 'warn');
+    return;
+  }
   // Qoder / Trae 各有自己的弹窗（Qoder：设备码 + PAT；Trae：本机登录态 + JWT）；
   // WorkBuddy 保持原 OAuth 弹窗。
   if(currentProvider() === 'qoder'){ openQoderLogin(); return; }
@@ -7935,6 +8167,9 @@ window.ACTIVE_GATEWAY_REALM = "intl";
 window.VIEW_REALM = "intl";
 window.REALM_FILTER = "all";
 window.MODELS_DATA = [];
+// 「网关模型清单」用的那份：固定是总路由池子（``模型名 · 供应商``），不跟
+// 顶部网关标签切换。MODELS_DATA 仍按当前视图取，给概览 / Trae 目录等在用。
+window.POOL_MODELS_DATA = [];
 // 逐条模型测试的结果：键是「提供商|版本|模型 id」。表会被切换/刷新重画，
 // 结果存在表外才不会一点「刷新」就消失；同时避免同一行并发发起多条测试。
 const MODEL_TEST_STATE = {};
@@ -8033,24 +8268,27 @@ function expireModelTestState(){
   return dirty;
 }
 window.ACCOUNTS = [];
-// 当前提供商（workbuddy|qoder|trae），也是网关真实上游：头部切换器改的是服务端
-// 持久化的 provider（POST /realm），提供商与它记住的出口一起落盘；面板每个按
-// 提供商取数的请求仍显式带 ?provider=，保证看板数字和网关真实状态一致。
-window.PROVIDER = "workbuddy";
+// 当前视图（all|workbuddy|qoder|trae|egg）。顶部标签只改这个本地视图，不再
+// POST /realm：网关真实上游与默认出口保持服务端原来的设置。面板每个按提供商
+// 取数的请求仍显式带 ?provider=，池子视图带 provider=all。
+window.PROVIDER = "all";
 window.PROVIDER_REALMS = {workbuddy: "intl", qoder: "intl", trae: "cn", egg: "intl"};
+// 视图选择只记在本机：它不再改服务端的上游，刷新后保持上次看的视图。
+const PROVIDER_VIEW_STORE = 'wb-proxy-view-provider';
 
-const PROVIDER_NAMES = {workbuddy: "WorkBuddy", qoder: "Qoder", trae: "Trae", egg: "鸡蛋"};
+const PROVIDER_NAMES = {all: "路由", workbuddy: "WorkBuddy", qoder: "Qoder", trae: "Trae", egg: "鸡蛋"};
 /* 鸡蛋没有账号池：它的请求记在一个伪账号 uid 上（"egg"），日志里也只有这个
  * uid。直接显示 "egg" 看不出是什么，按「免账号免密钥」说明它。
  * 必须放在全局作用域（这里是看板主脚本）：最近请求表的账号列在主脚本里渲染，
  * 数据看板页那个 IIFE 里的同名常量它取不到，会抛 "EGG_ACCT_UID is not defined"。 */
 const EGG_ACCT_UID = 'egg';
 function currentProvider(){
-  const p = String(window.PROVIDER || "workbuddy").toLowerCase();
-  return (p === "qoder" || p === "trae" || p === "egg") ? p : "workbuddy";
+  const p = String(window.PROVIDER || "all").toLowerCase();
+  return (p === "qoder" || p === "trae" || p === "egg"
+          || p === "workbuddy" || p === "all") ? p : "all";
 }
 function providerName(p){
-  return PROVIDER_NAMES[p || currentProvider()] || "WorkBuddy";
+  return PROVIDER_NAMES[p || currentProvider()] || "路由";
 }
 // 给 URL 追加 provider=：面板按提供商取数的请求全走它（不带 ? 时自己补）。
 function withProvider(url){
@@ -8060,22 +8298,26 @@ function withProvider(url){
 }
 
 const GATEWAY_TITLE_WB = "网关与账号";
+const GATEWAY_TITLE_ALL = "路由 · 总网关";
 const GATEWAY_TITLE_QODER = "Qoder 网关与账号";
 const GATEWAY_TITLE_TRAE = "Trae 网关与账号";
 const GATEWAY_TITLE_EGG = "鸡蛋网关 · 免费白嫖";
 const GATEWAY_DESC_WB = "管理账号池与代理出口，查看当日调用量、估算花费、成功率、最近请求与网关模型清单。";
+const GATEWAY_DESC_ALL = "WorkBuddy / Qoder / Trae（各含国际与国内）+ 鸡蛋的全部模型合成一个池子；模型 id 是「模型名 · 供应商」，客户端不需要再带 X-Provider。";
 const GATEWAY_DESC_QODER = "管理 Qoder 账号池与代理出口，查看当日调用量、成功率、最近请求与网关模型清单。";
 const GATEWAY_DESC_TRAE = "管理 Trae 账号池与代理出口，查看当日调用量、成功率、最近请求与网关模型清单。";
 const GATEWAY_DESC_EGG = "免账号、免密钥聚合 OpenCode Zen 免费车道与 Kilo 免费池；切到鸡蛋会自动刷新免费模型清单。";
 // 「任务与福利」页的副标题与标题之外的说明；Qoder 模式下整页内容换成额度视图，
 // 副标题必须跟着换，否则页面在说一件它没做的事。
 const TASKS_DESC_WB = "每日活跃打卡、Buddy 加油站、成长任务与福利积分总览。";
+const TASKS_DESC_ALL = "路由视图不区分网关，账号相关的签到与成长任务请切到对应网关查看。";
 const TASKS_DESC_QODER = "Qoder 账号的套餐与加油包额度总览：剩余、已用与到期。";
 const TASKS_DESC_TRAE = "Trae 账号状态、积分与模型目录总览（国内版每天可签到，模型倍率随账号目录更新）。";
 const TASKS_DESC_EGG = "鸡蛋免费白嫖：没有签到与成长任务，模型清单在「网关」页刷新。";
 // 模型清单页的说明：Qoder 的目录可能没有倍率（按账号额度计费）；Trae 的
 // 倍率来自账号目录的 consumption_rate（客户端选择器同款），可正常展示。
 const MODELS_DESC_WB = "展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率";
+const MODELS_DESC_ALL = "展示路由池子里的全部模型（模型名 · 供应商，含国际与国内）、上下文容量、推理/视觉能力、思考控制与倍率口径；「供应商」列标明它真实走哪个网关或免费源";
 const MODELS_DESC_QODER = "展示 Qoder 的官方对话大模型、上下文容量、推理/视觉能力、思考控制与默认采样参数；倍率为 Credits 消耗参考系数";
 const MODELS_DESC_TRAE = "展示 Trae 的官方对话大模型、上下文容量、推理/视觉能力与默认采样参数；倍率为客户端选择器同款消耗倍率（Credits 消耗系数，含低谷折扣）";
 const MODELS_DESC_EGG = "展示鸡蛋当前可用的模型（每行标注所属池子：OpenCode Zen 免费车道 / Kilo 免费池 / 自建供应商池）、上下文容量、推理/视觉能力与工具支持；内置的两路免费源免账号免密钥，自建池用你自己的 Key";
@@ -8085,6 +8327,7 @@ const PROVIDER_HOSTS = {
   qoder: {intl: "qoder.com", cn: "qoder.com.cn"},
   trae: {intl: "www.trae.ai", cn: "www.trae.cn"},
   egg: {intl: "opencode.ai", cn: "api.kilo.ai"},
+  all: {intl: "四个网关", cn: "四个网关"},
 };
 
 // 提供商相关的界面同步（头部切换器、品牌名、页头文案、版本卡片主机名、
@@ -8099,31 +8342,39 @@ function syncProviderChrome(force){
   document.body.classList.toggle("provider-qoder", p === "qoder");
   document.body.classList.toggle("provider-trae", p === "trae");
   document.body.classList.toggle("provider-egg", p === "egg");
+  document.body.classList.toggle("provider-all", p === "all");
   // 品牌位由 updateUI() 写：提供商名（WorkBuddy / Qoder / Trae / 鸡蛋）+ 网关
   // 真实默认出口版本，两者都跟着服务端持久化的真实状态走。
   const gt = document.getElementById("gatewayPageTitle");
   if(gt){
     gt.textContent = p === "qoder" ? GATEWAY_TITLE_QODER
                    : p === "trae" ? GATEWAY_TITLE_TRAE
-                   : p === "egg" ? GATEWAY_TITLE_EGG : GATEWAY_TITLE_WB;
+                   : p === "egg" ? GATEWAY_TITLE_EGG
+                   : p === "all" ? GATEWAY_TITLE_ALL : GATEWAY_TITLE_WB;
   }
   const gd = document.getElementById("gatewayPageDesc");
   if(gd){
     gd.textContent = p === "qoder" ? GATEWAY_DESC_QODER
                    : p === "trae" ? GATEWAY_DESC_TRAE
-                   : p === "egg" ? GATEWAY_DESC_EGG : GATEWAY_DESC_WB;
+                   : p === "egg" ? GATEWAY_DESC_EGG
+                   : p === "all" ? GATEWAY_DESC_ALL : GATEWAY_DESC_WB;
   }
   const td = document.getElementById("pageTasksDesc");
   if(td){
     td.textContent = p === "qoder" ? TASKS_DESC_QODER
                    : p === "trae" ? TASKS_DESC_TRAE
-                   : p === "egg" ? TASKS_DESC_EGG : TASKS_DESC_WB;
+                   : p === "egg" ? TASKS_DESC_EGG
+                   : p === "all" ? TASKS_DESC_ALL : TASKS_DESC_WB;
   }
   const md = document.getElementById("modelsTableDesc");
   if(md){
-    md.textContent = p === "qoder" ? MODELS_DESC_QODER
-                   : p === "trae" ? MODELS_DESC_TRAE
-                   : p === "egg" ? MODELS_DESC_EGG : MODELS_DESC_WB;
+    // 清单固定是总路由池子：说明也跟着池子走，不跟顶部网关切换。
+    md.textContent = MODELS_DESC_ALL;
+  }
+  const btnAll = document.getElementById("providerBtnAll");
+  if(btnAll){
+    btnAll.classList.toggle("active", p === "all");
+    btnAll.setAttribute("aria-pressed", p === "all" ? "true" : "false");
   }
   const btnWb = document.getElementById("providerBtnWorkbuddy");
   if(btnWb){
@@ -8152,9 +8403,9 @@ function syncProviderChrome(force){
   if(hCn) hCn.textContent = hosts.cn;
 }
 
-// 切换提供商：切网关真实上游（POST /realm 只带 provider，服务端把它和该家
-// 记住的出口一起落盘）。左上角品牌位、模型清单、未绑定版本的 Key 都跟着换；
-// 只想换出口版本（不改提供商）就点顶部那颗 ⇄ 按钮。
+// 切换视图：顶部标签只是本地视图（localStorage 记住），**不再** POST /realm，
+// 网关真实上游与默认出口都不动。模型清单、用量、账号区跟着视图换；
+// 要改真实上游/出口，在对应视图里点 ⇄ 或账号操作。
 /* ---------- 首屏 loading ----------
    静态标记里的 #bootScreen 一解析就开始转，不等任何脚本。这里只负责推进文案、
    慢的时候给一个「先进入面板」的出口，以及首批数据到齐后把它淡出移除。 */
@@ -8232,26 +8483,27 @@ async function endSwitch(minMs){
 
 async function switchProvider(p){
   if(p === currentProvider()){ syncProviderChrome(); return; }
-  // 目标出口取该提供商自己记住的那版（服务端 /realm 只给 provider 时也是这么落）。
+  if(p !== 'workbuddy' && p !== 'qoder' && p !== 'trae' && p !== 'egg' && p !== 'all') p = 'all';
+  // 目标出口取该提供商自己记住的那版；「路由」是全池视图，没有单一出口。
   const targetRealm = (window.PROVIDER_REALMS && (window.PROVIDER_REALMS[p] === "intl" || window.PROVIDER_REALMS[p] === "cn"))
                       ? window.PROVIDER_REALMS[p] : window.ACTIVE_GATEWAY_REALM;
   beginSwitch('正在切换到 ' + providerName(p)
-              + (p === 'egg' ? ' · 免费白嫖'
-                              : ' · ' + (targetRealm === "cn" ? "国内版" : "国际版"))
+              + (p === 'all' ? ' · 总网关池子'
+                 : (p === 'egg' ? ' · 免费白嫖'
+                                : ' · ' + (targetRealm === "cn" ? "国内版" : "国际版")))
               + '…');
-  // 模型清单先清空：等待新目录返回的这段间隙里，不该还挂着上一个提供商的模型。
+  // 模型清单先清空：等待新目录返回的这段间隙里，不该还挂着上一个视图的模型。
   renderModelsLoading();
   try{
-    const res = await postJSON("/realm", {provider: p});
-    window.PROVIDER = (res.provider === "qoder" || res.provider === "trae" || res.provider === "egg" || res.provider === "workbuddy") ? res.provider : p;
-    if(res.realms && typeof res.realms === "object") window.PROVIDER_REALMS = res.realms;
-    // 切提供商就是切网关真实上游：服务端把提供商和该家记住的出口一起落盘，
-    // 这里同步网关出口和视图版本，品牌位（提供商 · 版本）与右边出口控件都显示
-    // 这个真实值；后续模型清单、未绑定版本的 Key 也跟着走这一版。
-    if(res.current) window.ACTIVE_GATEWAY_REALM = res.current;
-    window.VIEW_REALM = window.ACTIVE_GATEWAY_REALM;
+    // 纯本地视图切换：不 POST /realm，网关真实上游与默认出口都不动。视图选择
+    // 记在 localStorage，刷新页面后还停在同一页；客户端拿到的 /v1/models 始终
+    // 是路由池子（不带 ?provider= 时），与这里点哪家无关。
+    window.PROVIDER = p;
+    try{ localStorage.setItem(PROVIDER_VIEW_STORE, p); }catch(e){}
+    window.VIEW_REALM = (p === 'all')
+      ? window.ACTIVE_GATEWAY_REALM : targetRealm;
     RECENT_PAGE = 1;
-    // 先把上一提供商的账号行清掉再重载：返回前这段间隙里，Qoder 页上不该还挂着
+    // 先把上一视图的账号行清掉再重载：返回前这段间隙里，Qoder 页上不该还挂着
     // WorkBuddy 的账号（重载失败时它们会一直挂着）。
     window.ACCOUNTS = [];
     renderAccounts();
@@ -8263,53 +8515,56 @@ async function switchProvider(p){
     LAST_GRANTS_DATA = null;
     lastRemainingFp = null;
     lastRemainingData = null;
+    // 池子筛选按视图重建：上一家的池子名在新视图里不存在。
+    EGG_POOL_FILTER = '';
     syncProviderChrome();
+    // 路由视图没有「当前网关」，按网关分开的任务页退回网关页（入口也收起了）。
+    if(p === 'all' && currentMainTab === 'tasks') switchMainTab('gateway');
     window.updateUI();
-    // 切到鸡蛋就自动刷新免费清单：服务端 /realm 已经在后台预热，这里再强制
-    // 跑一次并等它完成，保证第一屏看到的是这次刷新的结果而不是旧名单。
-    window.__EGG_SWITCH_REFRESH__ = "";
-    if(window.PROVIDER === 'egg'){
-      try{
-        const cr = await postJSON('/catalog/refresh', {
-          realm: window.ACTIVE_GATEWAY_REALM || 'intl', provider: 'egg'});
-        window.__EGG_SWITCH_REFRESH__ = (cr && cr.ok) ? 'ok' : 'warn';
-      }catch(e){ window.__EGG_SWITCH_REFRESH__ = 'bad'; }
-    }
-    await Promise.all([loadAccounts(), loadModels(), loadSchedulerStatus(), refresh()]);
-    // 自建供应商池只在鸡蛋视图下有意义：切过去就把池子与预设拉回来。
-    if(window.PROVIDER === 'egg') await loadEggPools();
-    // 当前页签的内容跟着换提供商重拉一遍：这些页面只在切页签或轮询时取数，
-    // 光等下一轮会停在旧提供商的数字上。
-    if(currentMainTab === 'analytics'){
-      // 看板筛选先对齐到刚切过去的提供商；真变了它会整套重取，
-      // 没变（用户本来就看这个提供商）才走原来的单次刷新。
-      const changed = (typeof window.setAnalyticsProvider === 'function')
-                      && window.setAnalyticsProvider(currentProvider());
-      if(!changed) loadAnalytics();
-      loadAnalyticsMatrix();
-    }
-    if(currentMainTab === 'tasks' && currentProvider() === 'qoder'){ loadQoderQuota(); }
-    if(currentMainTab === 'tasks' && currentProvider() === 'trae'){
-      renderTraeOverview();
-      autoRefreshTraeCreditsIfNeeded();
-    }
-    // 已配置过的客户端：内嵌的模型表也换到当前提供商（OpenCode 等把模型
-    // 写死在配置文件里，不重应用就会一直留着上一家的模型）。
-    await loadAgents();
-    const synced = await syncAppliedAgents();
-    if(window.PROVIDER === 'egg'){
-      toast('网关已切换到 鸡蛋（免费白嫖）'
-            + (window.__EGG_SWITCH_REFRESH__ === 'ok' ? '，免费模型清单已刷新' : '')
-            + (window.__EGG_SWITCH_REFRESH__ === 'warn' ? '，但这次刷新没拿到新清单，已保留上次结果' : '')
-            + (synced ? '，已同步 ' + synced + ' 个客户端的模型（重启客户端后生效）' : ''), 'ok');
+    // 切到鸡蛋不再同步等「刷新免费清单」：那一趟要打 Zen / Kilo 两个免费源外加
+    // 全部自建池（上游慢时 90s 封顶），把整个视图切换挡在后面。先用网关已发布
+    // 的清单画第一屏，刷新丢到后台；要立刻拿新名单用页面上的「刷新免费模型」。
+    if(p === 'egg') kickEggCatalogRefresh();
+    if(p === 'all'){
+      // 全池视图：账号区块收起了，但顶部 KPI 还要用账号池 / 积分的合计，
+      // 所以账号仍要拉（provider=all → 四个网关的账号全拿）。
+      await Promise.all([loadAccounts(), loadModels(), loadRouting(true), loadAgents(), refresh()]);
+      // 数据看板停在这一页时，口径也要跟着切到「全部提供商」。
+      if(currentMainTab === 'analytics'){
+        const changed = (typeof window.setAnalyticsProvider === 'function')
+                        && window.setAnalyticsProvider(currentProvider());
+        if(!changed) loadAnalytics();
+        loadAnalyticsMatrix();
+      }
+      toast('已切换到「路由」视图：四个网关的模型合成一个池子；网关上游不变。'
+            + ' 客户端用 route/auto 可按策略自动选路。', 'ok');
     } else {
-      toast('网关默认上游已切换并永久保存为: ' + providerName() + '（'
-            + (window.ACTIVE_GATEWAY_REALM === "cn" ? "国内版" : "国际版") + '）'
-            + (synced ? '，已同步 ' + synced + ' 个客户端的模型（重启客户端后生效）' : ''), 'ok');
+      await Promise.all([loadAccounts(), loadModels(), loadSchedulerStatus(), refresh()]);
+      // 自建供应商池只在鸡蛋视图下有意义：切过去就把池子与预设拉回来。
+      if(p === 'egg') await loadEggPools();
+      // 当前页签的内容跟着换提供商重拉一遍：这些页面只在切页签或轮询时取数，
+      // 光等下一轮会停在旧提供商的数字上。
+      if(currentMainTab === 'analytics'){
+        const changed = (typeof window.setAnalyticsProvider === 'function')
+                        && window.setAnalyticsProvider(currentProvider());
+        if(!changed) loadAnalytics();
+        loadAnalyticsMatrix();
+      }
+      if(currentMainTab === 'tasks' && p === 'qoder'){ loadQoderQuota(); }
+      if(currentMainTab === 'tasks' && p === 'trae'){
+        renderTraeOverview();
+        autoRefreshTraeCreditsIfNeeded();
+      }
+      // 接入页的模型下拉要换成当前视图的目录（不自动改写客户端配置：那由
+      // 「同步到客户端」或接入页的按钮显式触发）。
+      await loadAgents();
+      toast('已切换到 ' + providerName(p) + ' 视图（只切视图，网关上游仍是原来的设置）'
+            + (p === 'egg' ? '，免费清单正在后台刷新' : '')
+            + '。', 'ok');
     }
   }catch(e){
-    alert('切换提供商失败: ' + e.message);
-    // 切失败时表还停在「加载中…」，把当前提供商的清单拉回来。
+    toast('切换视图失败: ' + e.message, 'bad');
+    // 切失败时表还停在「加载中…」，把当前视图的清单拉回来。
     loadModels();
   }finally{
     await endSwitch(600);
@@ -8351,29 +8606,43 @@ function updateUI(){
                           : currentProvider() === 'trae' ? "Trae · " : "");
   const sectionRealm = (currentProvider() === 'egg')
                      ? "（鸡蛋 · 免费模型）"
+                     : (currentProvider() === 'all')
+                     ? "（全池 · 国际 + 国内）"
                      : "（" + sectionProvider + (isIntlView ? "国际版" : "国内版") + "）";
-  ["disabledRealmTag", "recentRealmTag", "modelsRealmTag"].forEach(function(id){
+  ["disabledRealmTag", "recentRealmTag"].forEach(function(id){
     const el = document.getElementById(id);
     if(el) el.textContent = sectionRealm;
   });
+  // 模型清单固定是总路由池子：标签不跟着顶部网关切换。
+  const modelsTag = document.getElementById("modelsRealmTag");
+  if(modelsTag) modelsTag.textContent = "（全池 · 国际 + 国内）";
 
   // 工具栏上「一键切换所有出站身份」的当前值：它作用于全部账号（含另一个
   // 版本），所以不看视图、只看 window.ACCOUNTS。
   updateProductAllButton();
 
-  const isIntlGw = (window.ACTIVE_GATEWAY_REALM === "intl");
+  const serverIsIntl = (window.ACTIVE_GATEWAY_REALM === "intl");
+  // 顶部 ⇄ / 品牌位看的是「当前视图这家网关」的真实出口（服务端按 provider
+  // 记着的那一版），不是全局 CURRENT_REALM —— 路由 / 鸡蛋视图没有自己的出口，
+  // 才回落到全局值。这样在 Qoder 视图点 ⇄ 切的就是 Qoder 的出口。
+  const gwProvider = currentProvider();
+  const gwRealm = (gwProvider === 'all' || gwProvider === 'egg')
+    ? window.ACTIVE_GATEWAY_REALM
+    : ((window.PROVIDER_REALMS || {})[gwProvider] || window.ACTIVE_GATEWAY_REALM);
+  const isIntlGw = (gwRealm === "intl");
   const dbIntl = document.getElementById("tabIntlDefaultBadge");
   if(dbIntl) dbIntl.style.display = isIntlGw ? "inline-block" : "none";
   const dbCn = document.getElementById("tabCnDefaultBadge");
   if(dbCn) dbCn.style.display = !isIntlGw ? "inline-block" : "none";
 
-  // 品牌位＝「当前网关真实状态」：提供商名 + 网关真实默认出口版本，如
-  // Qoder · 国内版 (China)。切提供商（真实上游）与点 ⇄ 切出口都会让它变。
+  // 品牌位＝「当前视图的网关 + 它的真实默认出口版本」，如 Qoder · 国内版
+  // (China)。切视图会换提供商名，点 ⇄ 切出口会让版本变。
   const brandTitle = document.getElementById("brandTitle");
   if(brandTitle) brandTitle.textContent = providerName();
   const brandRealm = document.getElementById("brandRealm");
-  if(brandRealm) brandRealm.textContent = currentProvider() === 'egg'
-    ? "免费白嫖" : (isIntlGw ? "国际版 (Global)" : "国内版 (China)");
+  if(brandRealm) brandRealm.textContent = currentProvider() === 'all'
+    ? "全池" : (currentProvider() === 'egg'
+    ? "免费白嫖" : (isIntlGw ? "国际版 (Global)" : "国内版 (China)"));
   const gwName = document.getElementById("activeGatewayName");
   if(gwName) gwName.textContent = isIntlGw ? "国际版" : "国内版";
   const ep = document.getElementById("activeEndpoint");
@@ -8402,7 +8671,9 @@ function updateUI(){
   const intlKeys = keys.filter(k => k.enabled !== false && k.realm === 'intl').length;
   const cnKeys = keys.filter(k => k.enabled !== false && k.realm === 'cn').length;
   const followKeys = keys.filter(k => k.enabled !== false && !k.realm).length;
-  const activeKeysTotal = isIntlGw ? (intlKeys + followKeys) : (cnKeys + followKeys);
+  // Key 是全局的、按 realm 绑定：哪一把「生效」取决于服务端当前出口
+  // （CURRENT_REALM），不是视图里那家网关记住的出口。
+  const activeKeysTotal = serverIsIntl ? (intlKeys + followKeys) : (cnKeys + followKeys);
 
   const elGwKeyBadge = document.getElementById("activeGatewayKeyCount");
   if(elGwKeyBadge) elGwKeyBadge.textContent = activeKeysTotal + ' 个 Key 生效';
@@ -8488,12 +8759,27 @@ async function switchViewRealm(r){
 };
 
 async function toggleActiveGatewayRealm(){
-  const next = (window.ACTIVE_GATEWAY_REALM === "intl" ? "cn" : "intl");
+  // ⇄ 是显式操作：切的是**当前视图这家网关**的真实默认出口，不是服务端上次
+  // 停在谁身上就切谁。带 provider 一起发，服务端会把这家的记忆和出口一起落盘。
+  const viewProvider = currentProvider();
+  // 起点用「这家网关真实记住的出口」（与 header 里 ⇄ 的文案同源），不是当前
+  // 正在看的版本：视图可以先切到另一版浏览，⇄ 仍然是切真实默认出口。
+  const currentRealm = (viewProvider === 'all' || viewProvider === 'egg')
+    ? (window.ACTIVE_GATEWAY_REALM || 'intl')
+    : ((window.PROVIDER_REALMS || {})[viewProvider]
+       || window.ACTIVE_GATEWAY_REALM || 'intl');
+  const next = (currentRealm === "intl" ? "cn" : "intl");
+  const body = {realm: next};
+  if(viewProvider !== 'all' && viewProvider !== 'egg') body.provider = viewProvider;
   beginSwitch('正在切换到 ' + providerName() + ' · ' + (next === 'cn' ? '国内版' : '国际版') + '…');
   renderModelsLoading();
   try {
-    const res = await postJSON("/realm", {realm: next});
+    const res = await postJSON("/realm", body);
     window.ACTIVE_GATEWAY_REALM = res.current || next;
+    if(viewProvider !== 'all'){
+      window.PROVIDER_REALMS = window.PROVIDER_REALMS || {};
+      window.PROVIDER_REALMS[viewProvider] = window.ACTIVE_GATEWAY_REALM;
+    }
     setViewRealm(window.ACTIVE_GATEWAY_REALM);
     window.updateUI();
     await Promise.all([loadAccounts(), loadModels(), loadGrowthTasks(),
@@ -8505,7 +8791,7 @@ async function toggleActiveGatewayRealm(){
           + (window.ACTIVE_GATEWAY_REALM === "intl" ? "国际版" : "国内版") + "）"
           + (synced ? '，已同步 ' + synced + ' 个客户端的模型（重启客户端后生效）' : ''));
   }catch(e){
-    alert("切换失败: " + e.message);
+    await uiAlert("切换失败: " + e.message, {title: '切换失败'});
     loadModels();
   }finally{
     await endSwitch(600);
@@ -8523,21 +8809,27 @@ async function refreshActiveRealm(){
     const r = await getJSON("/realm");
     if(r && r.current) window.ACTIVE_GATEWAY_REALM = r.current;
     if(r && r.realms && typeof r.realms === "object") window.PROVIDER_REALMS = r.realms;
-    if(r && (r.provider === "qoder" || r.provider === "trae" || r.provider === "egg" || r.provider === "workbuddy")) window.PROVIDER = r.provider;
+    // 注意：不再用服务端的 provider 覆盖看板视图。顶部标签现在只是本地视图，
+    // 服务端记的是网关真实上游；覆盖会让用户选的「路由 / Qoder」视图在每次
+    // 账号操作后跳回去。
   } catch(e){}
 }
 
 async function initRealm(){
-  // Boot only - 初始视图跟网关真实出口走（品牌位、出口控件、视图三处同一口径），
-  // 只有 ?view= 能钉住本次会话的视图。Account actions call refreshActiveRealm()
-  // instead: reading ?view= here was what moved the panel back to the other realm
-  // after 签到 / 活跃打卡, because the view buttons do not rewrite the URL.
+  // Boot only。初始视图的优先级：?provider= → localStorage（上次看的视图）→
+  // 「路由」（默认总网关）。服务端的 provider 只用于品牌位里的真实上游与版本，
+  // 不再决定看板停在哪个视图。Account actions call refreshActiveRealm().
   await refreshActiveRealm();
-  // ?provider= 只在本次会话里钉住看板视图（书签/对比用），**不**改服务端状态；
-  // 刷新后仍然跟服务端记着的值走。
+  const valid = v => (v === 'all' || v === 'qoder' || v === 'trae'
+                      || v === 'egg' || v === 'workbuddy');
+  let saved = null;
+  try{ saved = localStorage.getItem(PROVIDER_VIEW_STORE); }catch(e){}
   const provFromUrl = new URLSearchParams(window.location.search).get('provider');
-  if(provFromUrl === 'qoder' || provFromUrl === 'trae' || provFromUrl === 'egg' || provFromUrl === 'workbuddy') window.PROVIDER = provFromUrl;
-  window.VIEW_REALM = window.ACTIVE_GATEWAY_REALM;
+  const initial = valid(provFromUrl) ? provFromUrl : (valid(saved) ? saved : 'all');
+  window.PROVIDER = initial;
+  window.VIEW_REALM = (initial === 'all')
+    ? window.ACTIVE_GATEWAY_REALM
+    : ((window.PROVIDER_REALMS || {})[initial] || window.ACTIVE_GATEWAY_REALM);
   const viewFromUrl = new URLSearchParams(window.location.search).get('view');
   if(viewFromUrl && ['intl', 'cn'].includes(viewFromUrl)) window.VIEW_REALM = viewFromUrl;
   const limitFromUrl = new URLSearchParams(window.location.search).get('limit');
@@ -8551,23 +8843,29 @@ async function refreshModelCatalog(btn){
   // （服务端会挑该版本自己的账号发请求）。Qoder 由面板显式点名 provider。
   const realm = window.VIEW_REALM === 'cn' ? 'cn' : 'intl';
   const provider = currentProvider();
-  const label = provider === 'egg' ? '鸡蛋 '
+  const label = provider === 'all' ? '路由池子'
+              : (provider === 'egg' ? '鸡蛋 '
               : (provider === 'qoder' ? 'Qoder ' : (provider === 'trae' ? 'Trae ' : ''))
-                + (realm === 'cn' ? '国内版' : '国际版');
+                + (realm === 'cn' ? '国内版' : '国际版'));
   if(btn) btn.disabled = true;
   const prevText = btn ? btn.textContent : '';
   if(btn) btn.textContent = '刷新中...';
   try{
     const r = await postJSON('/catalog/refresh', {realm: realm, provider: provider});
+    if(provider === 'all' && r && r.ok){
+      // 七份目录一起拉要几十秒：服务端后台跑，这里先回话，稍后再拉清单。
+      toast(label + '：' + (r.msg || '已在后台刷新'), 'ok');
+      setTimeout(() => { if(currentProvider() === 'all') loadModels(); }, 5000);
+      setTimeout(() => { if(currentProvider() === 'all') loadModels(); }, 15000);
+      setTimeout(() => { if(currentProvider() === 'all') loadModels(); }, 45000);
+      return;
+    }
     if(r && r.ok){
       toast(label + '模型清单：' + (r.msg || '已更新'), 'ok');
       await loadModels();
-      // 上游清单变了，客户端配置里写死的模型表也得跟着换（OpenCode 等）。
+      // 目录变了由网关后台把总路由池子同步进已接入的客户端（指纹变了才写盘），
+      // 面板不再按当前视图的提供商重写客户端配置。
       await loadAgents();
-      const synced = await syncAppliedAgents();
-      if(synced){
-        toast('已同步 ' + synced + ' 个客户端的模型（重启客户端后生效）', 'ok');
-      }
     } else if(r && r.cooldown){
       // 冷却不是失败：清单还在、只是这次没到窗口，按提示语气说。
       toast(label + '模型清单：' + (r.msg || '刷新太频繁'), 'warn');
@@ -8589,40 +8887,65 @@ function renderModelsLoading(){
   const tb = document.querySelector('#modelsTable tbody');
   const countEm = document.getElementById('availModelCount');
   if(countEm) countEm.textContent = '(加载中…)';
-  if(tb) tb.innerHTML = '<tr><td colspan="12" class="empty">正在加载当前提供商 · 版本的模型清单…</td></tr>';
+  if(tb) tb.innerHTML = '<tr><td colspan="12" class="empty">正在加载路由池子的模型清单（四个网关全部模型）…</td></tr>';
   const src = document.getElementById('modelsSourceLine');
   if(src){
     src.style.cssText = CATALOG_BANNER_BASE + 'background:transparent;border:1px dashed var(--line);color:var(--dim)';
-    src.textContent = '正在加载当前视图的模型清单…';
+    src.textContent = '正在加载路由池子的模型清单…';
   }
 }
 
 async function loadModels(){
   const seq = ++MODELS_REQ_SEQ;
+  // 模型清单固定是「路由」池子：顶部四个网关标签只切账号 / 网关面板，不再
+  // 把清单缩到某一家（总路由本来就包含全部模型）。当前视图那份仍要拉：
+  // 概览、Trae 模型数、鸡蛋池子状态都按视图口径。
+  const poolOnly = currentProvider() === 'all';
+  const path = '/v1/models?realm=' + encodeURIComponent(window.VIEW_REALM)
+             + '&include_disabled=1';
   try{
     // include_disabled=1：面板自己要看见已停用的行才能再启用它们。服务端只
     // 对面板会话认这个参数——普通 API Key 拉到的清单里没有停用的模型，agent
     // 与客户端的选择器因此看不到它们。
-    const r = await getJSON(withProvider('/v1/models?realm=' + encodeURIComponent(window.VIEW_REALM)
-                                        + '&include_disabled=1'));
+    const [r, poolRes] = await Promise.all([
+      getJSON(withProvider(path)),
+      poolOnly ? null : getJSON(path + '&provider=all').catch(() => null)
+    ]);
     if(seq !== MODELS_REQ_SEQ) return;
     MODELS_DATA = r.data || [];
-    renderModelsSourceLine(r.catalog || null);
+    if(poolOnly){
+      POOL_MODELS_DATA = MODELS_DATA;
+    }else if(poolRes && poolRes.data){
+      // 池子那一份拉失败就保留上一次的：清单不该因为一次网络抖动变空。
+      POOL_MODELS_DATA = poolRes.data;
+    }
+    const poolStatus = (poolOnly ? r.pool : (poolRes && poolRes.pool)) || null;
+    if(poolStatus) window.POOL_STATUS = poolStatus;
+    window.POOL_STATUS = window.POOL_STATUS || null;
     if(currentProvider() === 'egg'){
       window.EGG_STATUS = r.egg || null;
       renderEggOverview();
     }
+    if(currentProvider() === 'all'){
+      window.EGG_STATUS = r.egg || null;
+      renderRoutingOverview();
+    }
+    renderModelsSourceLine(r.catalog || null);
     renderAvailableModels();
   }catch(e){
     if(seq !== MODELS_REQ_SEQ) return;
     console.error('loadModels error:', e);
-    // 切换时表已经被清空：失败就明确说失败，别一直停在「加载中…」。
-    if(!MODELS_DATA.length){
-      const tb = document.querySelector('#modelsTable tbody');
-      if(tb) tb.innerHTML = '<tr><td colspan="12" class="empty">模型清单加载失败，点「刷新模型清单」重试</td></tr>';
-      const countEm = document.getElementById('availModelCount');
-      if(countEm) countEm.textContent = '(加载失败)';
+    // 清单固定是池子：池子那一份还在，就把表画回上一次的样子，别停在
+    // 「正在加载…」（只有从来没取到过才显示失败行）。
+    if(POOL_MODELS_DATA.length){
+      renderModelsSourceLine(null);
+      renderAvailableModels();
+      return;
     }
+    const tb = document.querySelector('#modelsTable tbody');
+    if(tb) tb.innerHTML = '<tr><td colspan="12" class="empty">模型清单加载失败，点「刷新模型清单」重试</td></tr>';
+    const countEm = document.getElementById('availModelCount');
+    if(countEm) countEm.textContent = '(加载失败)';
   }
 }
 
@@ -8677,6 +9000,192 @@ function renderEggOverview(){
     + '<span style="color:var(--dim)">' + esc(poolLine) + '</span>'
     + '<span style="color:var(--dim)">' + esc(platformLine) + '</span>'
     + '<span style="color:var(--dim)">免费名单轮换很快：切到鸡蛋会自动刷新，清单 180 秒过期；失败的源会保留上一次可用结果。</span>';
+}
+
+/* ---------------------------------------------------------------- 路由 · 总网关
+   四个网关（WorkBuddy / Qoder / Trae 各含国际+国内，鸡蛋按供应商）的模型在
+   /v1/models 里合成一个池子，id 是「模型名 · 供应商」。这里展示池子概览、路由
+   策略与最近的决策；策略语义参考 magpie 的路由组（smart / order / rotate /
+   usage / pace）。 */
+
+let ROUTING_DATA = null;
+let ROUTING_REQ_SEQ = 0;
+
+const ROUTING_PROVIDER_TONE = {
+  workbuddy: 'background:var(--accent2-soft);color:var(--accent2);border-color:rgba(94,140,79,.28)',
+  qoder: 'background:rgba(124,58,237,.12);color:var(--think);border-color:rgba(124,58,237,.3)',
+  trae: 'background:var(--accent-soft);color:var(--accent);border-color:rgba(124,58,237,.3)',
+  egg: 'background:var(--warn-soft);color:var(--warn);border-color:rgba(183,121,31,.35)',
+  routing: 'background:rgba(124,58,237,.12);color:var(--think);border-color:rgba(124,58,237,.3)',
+};
+
+async function loadRouting(force){
+  if(currentProvider() !== 'all') return;
+  const seq = ++ROUTING_REQ_SEQ;
+  try{
+    const r = await getJSON('/routing');
+    if(seq !== ROUTING_REQ_SEQ) return;
+    ROUTING_DATA = r || null;
+    renderRoutingOverview();
+  }catch(e){
+    if(force) toast('路由状态读取失败：' + e.message, 'bad');
+  }
+}
+
+function routingReasonText(reason){
+  const r = String(reason || '');
+  if(r === 'session-sticky') return '会话粘性（沿用上一轮的成员）';
+  if(r.indexOf('strategy:') === 0) return '按策略选路';
+  return r || '—';
+}
+
+function renderRoutingOverview(){
+  if(currentProvider() !== 'all') return;
+  const pool = window.POOL_STATUS || null;
+  const providers = (pool && pool.providers) || {};
+  const set = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
+  const pcount = key => {
+    const item = providers[key] || {};
+    const realms = item.realms || {};
+    return (realms.intl || 0) + (realms.cn || 0);
+  };
+  const total = (pool && pool.total) || (MODELS_DATA || []).filter(m => m && m.pool_provider !== 'routing').length;
+  set('routeTotalCount', total ? String(total) : '—');
+  set('routeWbCount', String(pcount('workbuddy')));
+  set('routeQoderCount', String(pcount('qoder')));
+  set('routeTraeCount', String(pcount('trae')));
+  const egg = (pool && pool.egg) || null;
+  set('routeEggCount', String((egg && egg.total) || 0));
+
+  const rt = ROUTING_DATA || {};
+  const strategies = rt.strategies || [];
+  const config = rt.config || {};
+  const active = String(config.strategy || 'smart');
+  set('routeCandidateCount', rt.candidates != null ? String(rt.candidates) : '—');
+
+  const status = document.getElementById('routeStatusLine');
+  if(status){
+    const note = total
+      ? ('池子 ' + total + ' 个模型，其中 ' + (rt.candidates || 0) + ' 个进入路由候选；'
+         + '客户端用 route/auto 时按当前策略挑一个成员。')
+      : '正在读取池子…';
+    status.style.cssText = 'flex-direction:column;align-items:flex-start;gap:2px';
+    status.innerHTML = '<b>当前策略：' + esc((strategies.find(s => s.id === active) || {}).label || active) + '</b>'
+      + '<span style="color:var(--dim)">' + esc(note) + '</span>'
+      + '<span style="color:var(--dim)">候选只含有可用账号的网关（鸡蛋始终可用）；面板停用的模型不参与路由。'
+      + '没有账号的网关不会出现在候选里，配好账号后自动加入。</span>';
+  }
+
+  const box = document.getElementById('routeStrategyCards');
+  if(box){
+    box.innerHTML = strategies.length
+      ? strategies.map(s => {
+          const on = s.id === active;
+          return '<button type="button" class="route-strategy' + (on ? ' active' : '') + '"'
+            + ' onclick="setRoutingStrategy(&quot;' + esc(s.id) + '&quot;)"'
+            + ' aria-pressed="' + (on ? 'true' : 'false') + '">'
+            + '<span class="rs-title">' + (on ? '✓ ' : '') + esc(s.label) + '</span>'
+            + '<span class="rs-desc">' + esc(s.desc) + '</span>'
+            + '<span class="rs-id">route/' + esc(s.id) + '</span>'
+            + '</button>';
+        }).join('')
+      : '<div class="route-empty">正在读取策略…</div>';
+  }
+
+  const list = document.getElementById('routeCandidateList');
+  if(list){
+    const models = rt.models || [];
+    list.innerHTML = models.length
+      ? models.map((m, i) => {
+          const tone = ROUTING_PROVIDER_TONE[m.provider] || '';
+          const ready = m.ready === false ? ' · 无可用账号' : '';
+          return '<div class="route-row">'
+            + '<span class="rr-rank">' + (i + 1) + '</span>'
+            + '<span class="rr-name" title="' + esc(String(m.model || '')) + '">' + esc(String(m.model || '')) + '</span>'
+            + '<span class="badge" style="font-size:10px;' + tone + '">' + esc(String(m.label || m.provider || '')) + '</span>'
+            + '<span class="rr-meta">' + esc(ready) + '</span>'
+            + '</div>';
+        }).join('')
+      : '<div class="route-empty">还没有候选：先给至少一个网关配好账号，或直接使用鸡蛋。</div>';
+  }
+
+  const decisions = document.getElementById('routeDecisionList');
+  if(decisions){
+    const rows = rt.decisions || [];
+    decisions.innerHTML = rows.length
+      ? rows.map(d => {
+          const when = d.at ? clockText(d.at * 1000) : '—';
+          const tone = ROUTING_PROVIDER_TONE[d.provider] || '';
+          return '<div class="route-row">'
+            + '<span class="rr-rank">' + esc(when) + '</span>'
+            + '<span class="rr-name" title="' + esc(String(d.requested || '') + ' → ' + String(d.model || '')) + '">'
+            + esc(String(d.model || '—'))
+            + '<span style="color:var(--dim)"> ← ' + esc(String(d.requested || '')) + '</span></span>'
+            + '<span class="badge" style="font-size:10px;' + tone + '">' + esc(String(d.label || d.provider || '')) + '</span>'
+            + '<span class="rr-meta">' + esc(routingReasonText(d.reason)) + '</span>'
+            + '</div>';
+        }).join('')
+      : '<div class="route-empty">还没有路由决策。客户端请求 route/auto（或 route/smart 等）后，这里会实时显示每次选了谁。</div>';
+  }
+}
+
+async function setRoutingStrategy(strategy){
+  if(!strategy) return;
+  try{
+    const r = await postJSON('/routing/config', {strategy: strategy});
+    if(r && r.ok){
+      const chosen = String((r.config && r.config.strategy) || strategy);
+      const found = ((ROUTING_DATA && ROUTING_DATA.strategies) || [])
+        .find(s => s.id === chosen);
+      toast('路由策略已切到「' + ((found && found.label) || chosen) + '」：route/auto 立即按新策略选路', 'ok');
+      await loadRouting(true);
+    }else{
+      toast('切换路由策略失败：' + ((r && r.msg) || '未知原因'), 'bad');
+    }
+  }catch(e){
+    toast('切换路由策略失败：' + e.message, 'bad');
+  }
+}
+
+async function syncPoolToClients(btn){
+  if(btn) btn.disabled = true;
+  const prev = btn ? btn.textContent : '';
+  if(btn) btn.textContent = '同步中...';
+  try{
+    await loadAgents();
+    const synced = await syncAppliedAgents();
+    toast(synced
+      ? '已把池子的统一模型清单同步到 ' + synced + ' 个客户端（重启客户端后生效）'
+      : '没有已接入的客户端需要同步：先在「接入」页接入一个客户端',
+      synced ? 'ok' : 'warn');
+  }catch(e){
+    toast('同步到客户端失败：' + e.message, 'bad');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = prev; }
+  }
+}
+
+// 切到鸡蛋视图时的后台刷新：不 await、不占切换遮罩，第一屏用网关已发布的
+// 清单。刷新回来时用户可能已经切走，只在还停在鸡蛋视图时才更新面板；冷却中
+// 或上游拉不到就静默保留旧清单（手动按钮才给明确提示）。
+let EGG_BG_REFRESH = false;
+async function kickEggCatalogRefresh(){
+  if(EGG_BG_REFRESH) return;
+  EGG_BG_REFRESH = true;
+  try{
+    const r = await postJSON('/catalog/refresh', {
+      realm: window.VIEW_REALM || 'intl', provider: 'egg'});
+    if(currentProvider() !== 'egg') return;
+    if(r && r.ok){
+      await loadModels();
+      await loadEggPools();
+      toast('鸡蛋免费模型：' + (r.msg || '清单已刷新'), 'ok');
+    }
+  }catch(e){
+    console.warn('egg background refresh failed:', e && e.message);
+  }finally{
+    EGG_BG_REFRESH = false;
+  }
 }
 
 async function refreshEggCatalog(btn){
@@ -9341,7 +9850,7 @@ function eggPlatformModelsHtml(platform, p){
 // base（落盘时的模型清单）对不上就重来一次 —— 说明池子被刷新/保存过了。
 function eggPlatformPicked(poolId, p){
   const saved = ((p && p.models) || []).slice();
-  const base = saved.join(' ');
+  const base = saved.join('\u0000');
   const state = EGG_PLATFORM_PICK[poolId];
   if(!state || state.base !== base){
     EGG_PLATFORM_PICK[poolId] = {ids: saved, base: base};
@@ -9496,7 +10005,7 @@ async function toggleEggPlatformAccount(input){
 async function deleteEggPlatformAccount(el){
   const platform = el.dataset.platform;
   const accountId = el.dataset.account;
-  if(!confirm('删除这个账号？它提供的模型会从平台池里移除。')) return;
+  if(!(await uiConfirm('删除这个账号？它提供的模型会从平台池里移除。', {danger: true, okText: '删除'}))) return;
   try{
     const r = await postJSON('/egg/platforms/account/delete', {
       platform: platform, account_id: accountId});
@@ -9903,7 +10412,7 @@ async function refreshEggPool(id){
 async function deleteEggPool(id){
   const p = EGG_POOLS.find(x => x.id === id);
   const label = (p && p.name) || id;
-  if(!confirm('删除供应商「' + label + '」？该池子的模型会从清单里消失。')) return;
+  if(!(await uiConfirm('删除供应商「' + label + '」？该池子的模型会从清单里消失。', {danger: true, okText: '删除'}))) return;
   try{
     const r = await postJSON('/egg/pools/delete', {id: id});
     if(r && r.ok){
@@ -9925,17 +10434,16 @@ async function deleteEggPool(id){
 const EGG_POOL_NAME_MAX = 44;   // 下拉里单个模型名最多显示多少字符
 const EGG_POOL_NAME_SHOW = 2;   // 下拉里最多列几个模型名（其余用「…」收尾）
 
-// 按池子分组清单里的模型：key 是 egg_source（内置源是 zen / kilo，自建池
-// 是 pool-xxx），value 是 {src, label, models}。
+// 按供应商分组清单里的模型：key 是 pool_label（WorkBuddy-global / Qoder-cn /
+// Zen 免费车道 / 自建池名…），value 是 {src, label, models}。清单固定是总路由
+// 池子，所以每一行都带 pool_label，跟顶部选了哪家网关无关。
 function eggPoolGroups(){
   const groups = new Map();
-  MODELS_DATA.forEach(m => {
-    const src = String((m && m.egg_source) || '').trim();
+  POOL_MODELS_DATA.forEach(m => {
+    const src = String((m && m.pool_label) || '').trim();
     if(!src) return;
     if(!groups.has(src)){
-      groups.set(src, {src: src,
-                       label: String((m && m.egg_source_label) || src).trim(),
-                       models: []});
+      groups.set(src, {src: src, label: src, models: []});
     }
     groups.get(src).models.push(m);
   });
@@ -9967,14 +10475,14 @@ function eggPoolOptionLabel(group){
 function renderEggPoolFilterHint(groups){
   const el = document.getElementById('eggPoolFilterHint');
   if(!el) return;
-  if(!groups || currentProvider() !== 'egg'){
+  if(!groups){
     el.textContent = '';
     el.style.display = 'none';
     return;
   }
   el.style.display = '';
   if(!EGG_POOL_FILTER){
-    // 全部池子：按池子给个摘要
+    // 全部供应商：按供应商给个摘要
     const parts = [];
     const titles = [];
     groups.forEach(group => {
@@ -9982,8 +10490,8 @@ function renderEggPoolFilterHint(groups){
       parts.push(group.label + ' ' + names.length);
       titles.push(group.label + '（' + names.length + '）：' + names.join('\n'));
     });
-    el.textContent = '全部池子（' + MODELS_DATA.length + ' 个模型）：'
-      + parts.join(' · ');
+    el.textContent = '全部供应商'
+      + '（' + POOL_MODELS_DATA.length + ' 个模型）：' + parts.join(' · ');
     el.title = titles.join('\n\n');
     return;
   }
@@ -10003,21 +10511,16 @@ function renderEggPoolFilterHint(groups){
 function buildEggPoolFilter(){
   const sel = document.getElementById('eggPoolFilter');
   if(!sel) return;
-  if(currentProvider() !== 'egg'){
-    sel.style.display = 'none';
-    EGG_POOL_FILTER = '';
-    renderEggPoolFilterHint(null);
-    return;
-  }
   const groups = eggPoolGroups();
   if(groups.size < 2){
-    // 只有一个池子时筛选没有意义，藏起来别占地方。
+    // 只有一个供应商时筛选没有意义，藏起来别占地方。
     sel.style.display = 'none';
     EGG_POOL_FILTER = '';
     renderEggPoolFilterHint(null);
     return;
   }
-  const opts = ['<option value="">全部池子（' + MODELS_DATA.length + ' 个模型）</option>'];
+  const allLabel = '全部供应商';
+  const opts = ['<option value="">' + allLabel + '（' + POOL_MODELS_DATA.length + ' 个模型）</option>'];
   groups.forEach(group => {
     const names = eggPoolModelNames(group.models);
     opts.push('<option value="' + esc(group.src) + '"'
@@ -10036,10 +10539,10 @@ function onEggPoolFilterChange(value){
   renderAvailableModels();
 }
 
-// 池子筛选后的模型行：非鸡蛋视图不筛选。
+// 池子筛选后的模型行：清单固定是总路由池子，按供应商（pool_label）筛。
 function eggFilteredModels(){
-  if(currentProvider() !== 'egg' || !EGG_POOL_FILTER) return MODELS_DATA;
-  return MODELS_DATA.filter(m => String((m && m.egg_source) || '') === EGG_POOL_FILTER);
+  if(!EGG_POOL_FILTER) return POOL_MODELS_DATA;
+  return POOL_MODELS_DATA.filter(m => String((m && m.pool_label) || '') === EGG_POOL_FILTER);
 }
 
 // 视觉上分清楚——非 API 来源给黄色警示（模型、倍率数据可能不一致），API 来源
@@ -10079,6 +10582,27 @@ function fmtCatalogStamp(sec){
 function renderModelsSourceLine(meta){
   const el = document.getElementById('modelsSourceLine');
   if(!el) return;
+  // 清单固定是「路由」池子：横幅也固定说池子的构成，跟顶部选了哪家无关。
+  const pool = window.POOL_STATUS || null;
+  if(pool){
+    const providers = pool.providers || {};
+    const parts = ['workbuddy', 'qoder', 'trae'].map(function(p){
+      const item = providers[p] || {};
+      const realms = item.realms || {};
+      return (item.label || p) + ' ' + ((realms.intl || 0) + (realms.cn || 0));
+    });
+    const eggCount = pool && pool.egg ? (pool.egg.total || 0) : 0;
+    parts.push('鸡蛋 ' + eggCount);
+    el.style.cssText = CATALOG_BANNER_BASE
+      + 'flex-direction:column;align-items:flex-start;gap:2px;'
+      + 'background:var(--accent2-soft);border:1px solid rgba(94,140,79,.28);color:var(--accent2)';
+    el.title = '四个网关的模型合成一个池子：WorkBuddy / Qoder / Trae 各含国际与国内，鸡蛋按供应商（免费源 / 自建池 / 平台池）分。'
+      + '客户端不带 ?provider= 拉 /v1/models 拿到的就是这份清单。';
+    el.innerHTML = '<b>✓ 路由池子：' + ((pool && pool.total) || POOL_MODELS_DATA.length) + ' 个模型</b>'
+      + '<span style="color:var(--dim)">' + esc(parts.join(' · '))
+      + ' · 点「刷新全部模型清单」让后台把七份目录各拉一次</span>';
+    return;
+  }
   const tip = (currentProvider() === 'qoder')
     ? '清单构建顺序：先请求上游 API（Qoder 模型清单接口，用当前视图版本的账号）→ 失败则用内置快照。'
       + '清单在 5 分钟缓存期内复用，过期自动重取；网关后台每天也会兜底获取一次；点「刷新模型清单」可立即从上游更新。'
@@ -10127,9 +10651,13 @@ function renderModelsSourceLine(meta){
 function renderAvailableModels(){
   const tb = document.querySelector('#modelsTable tbody');
   if(!tb) return;
+  // 清单固定是总路由池子，这一列永远是「供应商」，跟顶部选哪家网关无关。
+  const poolCol = document.getElementById('modelsPoolCol');
+  if(poolCol) poolCol.textContent = '供应商';
   // 池子筛选的下拉要先建好（选项从清单里长出来），再按它过滤行。
   buildEggPoolFilter();
   const rows = eggFilteredModels();
+  syncModelsBulkSwitch(rows);
   const disabledInRows = rows.filter(m => m && m.disabled === true).length;
   const countEm = document.getElementById('availModelCount');
   if(countEm){
@@ -10139,7 +10667,7 @@ function renderAvailableModels(){
     // 视图整体能不能用。没测过就不显示，免得让人以为「一条都没测」。
     let okCount = 0, badCount = 0;
     rows.forEach(m => {
-      const t = modelTestStateOf(m && m.id);
+      const t = modelTestStateOf(m && m.id, modelTestProviderFor(m));
       if(!t) return;
       if(t.status === 'ok') okCount++;
       else if(t.status === 'bad') badCount++;
@@ -10149,10 +10677,10 @@ function renderAvailableModels(){
          + ' · <span style="color:var(--bad)">不可用 ' + badCount + '</span>')
       : '';
     countEm.innerHTML = EGG_POOL_FILTER
-      ? '(共 ' + rows.length + ' / ' + MODELS_DATA.length + ' 个' + offNote + testedNote + ')'
+      ? '(共 ' + rows.length + ' / ' + POOL_MODELS_DATA.length + ' 个' + offNote + testedNote + ')'
       : '(共 ' + total + ' 个' + offNote + testedNote + ')';
   }
-  if(!MODELS_DATA.length){
+  if(!POOL_MODELS_DATA.length){
     tb.innerHTML = '<tr><td colspan="12" class="empty">暂无可用模型</td></tr>';
     return;
   }
@@ -10161,18 +10689,19 @@ function renderAvailableModels(){
     return;
   }
   tb.innerHTML = rows.map(m => {
-    // 1. 倍率与折扣 —— 一律以 /v1/models 取回的 credits 为准（活目录优先、
-    //    内置快照兜底）。以前这里还按模型 id 写死了 hy3 / hy4-preview-f /
-    //    国际版 deepseek-v4.1-flash 三个"限时免费"，与 credits 值是 OR 关系，
-    //    上游一旦调价面板会继续宣传免费；cn 的夜间注记在 credits 缺失时还会
-    //    兜底显示写死的 0.79x。现在取不到就不显示数字。
+    // 「路由」池子里同一张表混着四家：行上的 pool_provider / pool_realm 才是
+    // 这条模型真正的归属，倍率口径、停用开关与测试都必须按它走，不能看视图。
+    const rowProvider = String(m.pool_provider || currentProvider());
+    const eggLike = rowProvider === 'egg';
+    const rowRealm = m.pool_realm || (window.VIEW_REALM === 'cn' ? 'cn' : 'intl');
+    const routingRow = rowProvider === 'routing';
     let credBadge = '-';
     const credText = (m.credits == null ? '' : String(m.credits)).trim();
     const c = credText.toLowerCase().replace('x', '');
     const credNote = String(m.credits_note || '').trim();
     const credTitle = credNote ? ' title="' + esc(credNote) + '"' : '';
     const eggKind = String(m.egg_source_kind || '');
-    if(currentProvider() === 'egg' && (eggKind === 'pool' || eggKind === 'platform')){
+    if(eggLike && (eggKind === 'pool' || eggKind === 'platform')){
       // 自建供应商池 / 平台账号池：前者用操作者自己的 Key，后者用平台登录态。
       // 上游明确标成免费的模型（id 结尾 :free / /free，或上游报 0 价）确实
       // 不消耗额度 —— 那种标「免费」，别把免费模型说成要付费。
@@ -10186,7 +10715,7 @@ function renderAvailableModels(){
         credBadge = '<span class="badge s" style="background:var(--warn-soft);color:var(--warn);border-color:rgba(183,121,31,.35)"'
           + credTitle + '>按供应商计费</span>';
       }
-    } else if(currentProvider() === 'egg' && (c === '0.00' || c === '0' || !credText)){
+    } else if(eggLike && (c === '0.00' || c === '0' || !credText)){
       // 鸡蛋的全部模型都是免费额度：显示「免费」比「限时免费 0.00x」准确。
       credBadge = '<span class="badge ok" style="background:var(--accent2-soft);color:var(--accent2)"' + credTitle + '>免费</span>';
     } else if(c === '0.00' || c === '0'){
@@ -10200,10 +10729,10 @@ function renderAvailableModels(){
       const night = offPeak
         ? ' <span style="font-size:10px;color:var(--accent)">(夜间' + esc(offPeak) + 'x)</span>' : '';
       credBadge = '<span class="badge s"' + credTitle + '>' + esc(raw) + night + '</span>';
-    } else if(currentProvider() === 'qoder' || currentProvider() === 'trae'){
+    } else if(rowProvider === 'qoder' || rowProvider === 'trae'){
       // 目录里没给倍率（Qoder 的老客户端 / 精简目录，或 Trae 的自定义模型）
       // 时别留一列「-」，说清楚是按账号额度扣费、实际扣减看「最近请求」。
-      credBadge = '<span class="badge s" title="' + esc(currentProvider() === 'trae'
+      credBadge = '<span class="badge s" title="' + esc(rowProvider === 'trae'
         ? '该模型在上游目录里没有消耗倍率字段；实际扣减以 Trae 客户端账单为准。'
         : '该模型在上游目录里没有倍率字段；Qoder 按账号额度（credits）计费，实际扣减见「最近请求」的「积分」列。') + '">按额度计费</span>';
     }
@@ -10319,15 +10848,32 @@ function renderAvailableModels(){
       + offBadge
       + '</td>';
 
-    // 7. 免费池（鸡蛋才有这个维度）：Zen 免费车道 / Kilo 免费池 / 自建供应商池。
+    // 7. 免费池 / 供应商（鸡蛋是免费源，路由池子是网关名或供应商名）。
     //    各路的限流、地区门与提示词记录口径不同，看清单时就得知道这条模型走的是
     //    哪一路。其它提供商没有池子概念，这一列留空（不占视觉重量）。
     const poolSrc = String(m.egg_source || '').trim();
     const poolKind = String(m.egg_source_kind || 'builtin').trim();
+    const poolLabel = String(m.pool_label || '').trim();
     let poolCell;
-    if(poolSrc){
-      const poolLabel = String(m.egg_source_label || poolSrc).trim();
-      const poolTip = String(m.description || '').trim() || poolLabel;
+    if(routingRow){
+      poolCell = '<td style="text-align:center" data-label="供应商">'
+        + '<span class="badge" style="font-size:11px;font-weight:600;background:rgba(124,58,237,.12);color:var(--think);border-color:rgba(124,58,237,.3)"'
+        + ' title="路由控制模型：按策略从池子里挑一个成员再转发">路由</span></td>';
+    } else if(currentProvider() === 'all' && poolLabel){
+      const tone = rowProvider === 'workbuddy'
+        ? 'background:var(--accent2-soft);color:var(--accent2);border-color:rgba(94,140,79,.28)'
+        : (rowProvider === 'qoder'
+            ? 'background:rgba(124,58,237,.12);color:var(--think);border-color:rgba(124,58,237,.3)'
+            : (rowProvider === 'trae'
+                ? 'background:var(--accent-soft);color:var(--accent);border-color:rgba(124,58,237,.3)'
+                : 'background:var(--warn-soft);color:var(--warn);border-color:rgba(183,121,31,.35)'));
+      poolCell = '<td style="text-align:center" data-label="供应商">'
+        + '<span class="badge" style="font-size:11px;font-weight:600;' + tone + '"'
+        + ' title="真实模型 id：' + esc(String(m.pool_model || m.id)) + '">'
+        + esc(poolLabel) + '</span></td>';
+    } else if(poolSrc){
+      const srcLabel = String(m.egg_source_label || poolSrc).trim();
+      const poolTip = String(m.description || '').trim() || srcLabel;
       const poolTone = poolKind === 'pool'
         ? 'background:var(--warn-soft);color:var(--warn);border-color:rgba(183,121,31,.35)'
         : (poolSrc === 'kilo'
@@ -10335,7 +10881,7 @@ function renderAvailableModels(){
             : 'background:rgba(124,58,237,.12);color:var(--think);border-color:rgba(124,58,237,.3)');
       poolCell = '<td style="text-align:center" data-label="免费池">'
         + '<span class="badge" style="font-size:11px;font-weight:600;' + poolTone + '"'
-        + ' title="' + esc(poolTip) + '">' + esc(poolLabel) + '</span></td>';
+        + ' title="' + esc(poolTip) + '">' + esc(srcLabel) + '</span></td>';
     } else {
       poolCell = '<td style="text-align:center" data-label="免费池">'
         + '<span style="color:var(--dim)">—</span></td>';
@@ -10355,19 +10901,26 @@ function renderAvailableModels(){
     //    checkbox 管状态与键盘可达性，视觉是 .switch-track 胶囊。关掉 = 从
     //    /v1/models 的清单里消失，agent 与客户端的选择器里就看不到它了；
     //    面板自己仍保留这一行（灰着），随时能再打开。
-    const enabledCell = '<td style="text-align:center" data-label="启用">'
-      + '<label class="switch"'
-      + ' title="' + esc(modelOff
-          ? '已停用：agent / 客户端的模型清单里不显示这条模型，直接调用会被拒绝。打开后立即恢复。'
-          : '对外提供中。关掉后立即从 agent 的模型清单里消失，且直接点名调用会被拒绝。') + '">'
-      + '<input type="checkbox"' + (modelOff ? '' : ' checked')
-      + ' onchange="toggleModelEnabled(&quot;' + esc(m.id) + '&quot;, this.checked, this)">'
-      + '<span class="switch-track"></span></label>'
-      + '</td>';
+    //    路由控制模型（route/*）不是真实模型，没有「停用」这一说，显示 —。
+    const enabledCell = routingRow
+      ? '<td style="text-align:center" data-label="启用">'
+        + '<span style="color:var(--dim)" title="路由控制模型：按策略挑一个池子成员，不需要单独启用 / 停用">—</span></td>'
+      : '<td style="text-align:center" data-label="启用">'
+        + '<label class="switch"'
+        + ' title="' + esc(modelOff
+            ? '已停用：agent / 客户端的模型清单里不显示这条模型，直接调用会被拒绝。打开后立即恢复。'
+            : '对外提供中。关掉后立即从 agent 的模型清单里消失，且直接点名调用会被拒绝。') + '">'
+        + '<input type="checkbox"' + (modelOff ? '' : ' checked')
+        + ' onchange="toggleModelEnabled(&quot;' + esc(m.id) + '&quot;, this.checked, this, &quot;'
+        + esc(m.pool_provider || '') + '&quot;, &quot;' + esc(m.pool_realm || '') + '&quot;)">'
+        + '<span class="switch-track"></span></label>'
+        + '</td>';
 
     // 10. 测试（真请求，走网关自己的 /v1/chat/completions）。结果按
     //     「提供商 + 版本 + 模型」记在 MODEL_TEST_STATE 里，表被重新渲染也还在。
-    const tst = modelTestStateOf(m.id);
+    //     池子的行统一按 provider=all 测（后缀决定真实出口）。
+    const testProvider = modelTestProviderFor(m);
+    const tst = modelTestStateOf(m.id, testProvider);
     let testStateText = '';
     if(tst && tst.status === 'running'){
       // 「测试中」不用在这里再写一遍：按钮本身已经变成「测试中...」，
@@ -10382,7 +10935,8 @@ function renderAvailableModels(){
     }
     const testCell = '<td class="test-cell" style="text-align:center" data-label="测试">'
       + '<button class="sec mini"' + (modelOff ? ' disabled' : '')
-      + ' onclick="testGatewayModel(&quot;' + esc(m.id) + '&quot;, this)"'
+      + ' onclick="testGatewayModel(&quot;' + esc(m.id) + '&quot;, this, &quot;'
+      + esc(testProvider) + '&quot;)"'
       + ' title="' + esc((modelOff ? '这条模型已停用，请求会在网关入口被拒绝；先在左边打开「启用」开关再测试。'
           : '真发一条对话请求，走网关自己的 /v1/chat/completions —— 和 agent / 客户端完全同一条链路（选号、路由、上游请求、流式聚合都在里面）。')
           + (MODEL_TEST_MODE === 'agent'
@@ -10458,8 +11012,22 @@ function setModelTestMode(mode){
    也不能把后面那几条发到别家去（id 不通用，跑了白跑，结论还会记错地方）。 */
 function modelTestKey(id, provider, realm){
   const p = provider || currentProvider();
-  const r = realm || (window.VIEW_REALM === 'cn' ? 'cn' : 'intl');
+  // 路由池子的行：id 后缀已经带着真实出口，测试统一按 provider=all 发，
+  // 键里也就不再区分 intl/cn（否则同一个 id 在国际/国内视图下会记成两条）。
+  const r = (p === 'all') ? '' : (realm || (window.VIEW_REALM === 'cn' ? 'cn' : 'intl'));
   return p + '|' + r + '|' + String(id || '');
+}
+
+/* 表里的行该按哪个提供商读写测试结论：池子行统一 all（id 后缀决定真实
+   出口），只有非池子（当前视图自己的清单）才按当前提供商。 */
+function modelTestProviderFor(model){
+  return (model && model.pool_provider) ? 'all' : currentProvider();
+}
+
+function poolModelById(id){
+  return (POOL_MODELS_DATA || []).find(m => m && m.id === id)
+      || (MODELS_DATA || []).find(m => m && m.id === id)
+      || null;
 }
 
 /* 一次测试要发什么。Agent 口径刻意带上工具定义：很多模型能闲聊、但一到
@@ -10645,15 +11213,16 @@ function renderModelTestDetail(id){
   if(!box) return;
   const title = document.getElementById('modelTestDetailTitle');
   if(title) title.textContent = '模型可用性 · ' + id;
-  const model = (MODELS_DATA || []).find(x => x && x.id === id) || {id: id};
+  const model = poolModelById(id) || {id: id};
   const modelOff = model.disabled === true;
-  const tst = modelTestStateOf(id);
+  const tst = modelTestStateOf(id, modelTestProviderFor(model));
   const status = (tst && tst.status) || 'idle';
   const mode = (tst && tst.mode) || MODEL_TEST_MODE;
   // 结论是按「提供商 + 出口」分别记的：批量测试中途切了视图也不会串味，
   // 所以这里优先显示结论自己记下的那家，而不是「现在正停在哪个视图」。
-  const prov = (tst && tst.provider) || currentProvider();
-  const realm = (tst && tst.realm) || (window.VIEW_REALM === 'cn' ? 'cn' : 'intl');
+  const prov = (tst && tst.provider) || model.pool_provider || currentProvider();
+  const realm = (tst && tst.realm) || model.pool_realm
+             || (window.VIEW_REALM === 'cn' ? 'cn' : 'intl');
 
   const head = '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">'
     + modelAvailabilityBadge(tst, modelOff)
@@ -10729,7 +11298,8 @@ function renderModelTestDetail(id){
 
 /* 复制失败原因：排查时经常要拿着上游原文去搜 / 贴给上游。 */
 function copyModelTestError(){
-  const tst = modelTestStateOf(MODEL_TEST_DETAIL_ID);
+  const model = poolModelById(MODEL_TEST_DETAIL_ID) || {id: MODEL_TEST_DETAIL_ID};
+  const tst = modelTestStateOf(MODEL_TEST_DETAIL_ID, modelTestProviderFor(model));
   const text = String((tst && tst.error) || '');
   if(!text) return;
   const fail = e => toast('复制失败: ' + ((e && e.message) || e), 'bad');
@@ -10747,7 +11317,8 @@ async function retestFromModelDetail(btn){
   if(!id) return;
   if(btn){ btn.disabled = true; btn.textContent = '测试中...'; }
   try{
-    await testGatewayModel(id, null);
+    const model = poolModelById(id) || {id: id};
+    await testGatewayModel(id, null, modelTestProviderFor(model));
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = '重新测试'; }
     if(MODEL_TEST_DETAIL_ID === id) renderModelTestDetail(id);
@@ -10841,12 +11412,12 @@ async function runModelTest(id, timeoutMs, provider, realm){
 
 /* 点一行的「测试」：真发一条请求，结论写进 MODEL_TEST_STATE 并就地渲染。
    不弹确认框、不阻塞其它行；同一条模型在测的时候按钮置灰防重复。 */
-async function testGatewayModel(id, btn){
-  const key = modelTestKey(id);
+async function testGatewayModel(id, btn, provider){
+  const key = modelTestKey(id, provider);
   const prev = MODEL_TEST_STATE[key];
   if(prev && prev.status === 'running') return prev;
   if(btn){ btn.disabled = true; btn.textContent = '测试中...'; }
-  const res = await runModelTest(id);
+  const res = await runModelTest(id, null, provider);
   if(res && res.status === 'ok'){
     toast('「' + id + '」可用（' + (res.ms / 1000).toFixed(1) + 's'
           + (res.tool ? '，工具调用正常' : '') + '）', 'ok');
@@ -10894,7 +11465,7 @@ async function testAllGatewayModels(btn){
   const list = all.filter(m => m.disabled !== true);
   const skipped = all.length - list.length;
   if(!list.length){
-    toast('当前视图没有可测试的模型（已停用的模型会被网关直接拒绝，已跳过）', 'warn');
+    toast('池子里没有可测试的模型（已停用的模型会被网关直接拒绝，已跳过）', 'warn');
     return;
   }
   MODEL_BATCH_TEST_RUNNING = true;
@@ -10903,10 +11474,10 @@ async function testAllGatewayModels(btn){
   const startedAt = Date.now();
   const label = btn ? btn.textContent : '';
   const stopBtn = document.getElementById('btnStopModelTests');
-  // 这一轮测的是哪个视图的模型，开跑时就钉死：中途切了提供商 / 出口，
-  // 后面那几条不能跟着跑到别家去（模型 id 不通用，跑了也是白跑，
-  // 结论还会记到别家的键下面）。
-  const provider = currentProvider();
+  // 清单固定是路由池子：整轮都按 provider=all 发（id 后缀决定真正去向），
+  // 与逐行「测试」按钮同一口径 —— 中途切网关标签也不影响这一轮，结论还落在
+  // 同一个键上（见 modelTestKey）。
+  const provider = 'all';
   const realm = window.VIEW_REALM === 'cn' ? 'cn' : 'intl';
   let next = 0, done = 0, ok = 0, bad = 0;
   // 按钮上带进度 + 已用时间；停止按钮亮出来，让人随时能收手。
@@ -10970,19 +11541,23 @@ function stopModelBatchTest(){
 }
 
 /* 勾选 / 取消勾选一行：「停用」写进 settings.json，下次 /v1/models 起效。 */
-async function toggleModelEnabled(id, enabled, input){
+async function toggleModelEnabled(id, enabled, input, provider, realm){
   if(input) input.disabled = true;
   try{
-    const r = await postJSON('/models/toggle', {
+    // 池子的行带着自己的 (provider, realm)：同一个基础 id 在国际版 / 国内版
+    // 各有一条，停用只能改被点的那一条。普通视图仍按当前提供商 / 版本。
+    const body = {
       model: id,
       disabled: !enabled,
-      provider: currentProvider(),
-      realm: window.VIEW_REALM === 'cn' ? 'cn' : 'intl'
-    });
-    const item = (MODELS_DATA || []).find(m => m && m.id === id);
+      provider: provider || currentProvider(),
+      realm: realm || (window.VIEW_REALM === 'cn' ? 'cn' : 'intl')
+    };
+    const r = await postJSON('/models/toggle', body);
+    const item = (POOL_MODELS_DATA || []).find(m => m && m.id === id)
+              || (MODELS_DATA || []).find(m => m && m.id === id);
     if(item) item.disabled = (r && typeof r.disabled === 'boolean') ? r.disabled : !enabled;
     // 开关变了，上一次的测试结论不再代表当前状态：清掉，别让人误读。
-    clearModelTestState(modelTestKey(id));
+    clearModelTestState(modelTestKey(id, item && item.pool_provider ? 'all' : body.provider));
     renderAvailableModels();
     toast(enabled
       ? '已启用「' + id + '」：它会重新出现在 agent 的模型清单里。'
@@ -10993,6 +11568,85 @@ async function toggleModelEnabled(id, enabled, input){
     toast('切换「' + id + '」失败：' + e.message, 'bad');
   }finally{
     if(input) input.disabled = false;
+  }
+}
+
+/* 「启用」列头的总闸：勾上 = 打开当前清单里的全部模型，取消 = 全部停用。
+   范围是「当前视图 + 当前池子筛选」里的行（与「一键测试模型」同一口径）；
+   路由控制模型 route/* 不是真实模型，不参与。半开半关时是半选，点一下把
+   剩下的全打开。批量走 /models/toggle 的 models 数组，服务端按作用域合并
+   成几次写盘，不会发上百条请求。 */
+let BULK_MODEL_BUSY = false;
+function bulkModelRows(rows){
+  return (rows || []).filter(m => m
+    && String(m.pool_provider || currentProvider()) !== 'routing');
+}
+function syncModelsBulkSwitch(rows){
+  const input = document.getElementById('modelsBulkSwitch');
+  if(!input) return;
+  const targets = bulkModelRows(rows);
+  const off = targets.filter(m => m && m.disabled === true).length;
+  // 请求在跑的时候别让勾选状态跟着中途的数据抖：只锁住，不改值。
+  if(!BULK_MODEL_BUSY){
+    input.checked = targets.length > 0 && off === 0;
+    input.indeterminate = off > 0 && off < targets.length;
+  }
+  input.disabled = BULK_MODEL_BUSY || !targets.length;
+  const wrap = document.getElementById('modelsBulkSwitchWrap');
+  if(wrap){
+    wrap.title = targets.length
+      ? '一键启用 / 停用当前清单里的 ' + targets.length + ' 个模型（' + off
+        + ' 个已停用）；路由控制模型 route/* 不参与'
+      : '当前清单里没有可启用的模型';
+  }
+}
+
+async function toggleModelsEnabled(enabled, input){
+  if(BULK_MODEL_BUSY) return;
+  const all = bulkModelRows(eggFilteredModels());
+  const targets = all.filter(m => (enabled ? m.disabled === true : m.disabled !== true));
+  if(!targets.length){ syncModelsBulkSwitch(all); return; }
+  // 一次关掉几十上百条会立刻影响 agent 与客户端，先问一句；打开不用问。
+  if(!enabled && !(await uiConfirm('确认停用当前清单里的 ' + targets.length + ' 个模型？\n\n'
+      + '停用后 agent / 客户端的模型清单里不再显示它们，直接点名调用也会被拒绝。\n'
+      + '随时可以在同一个开关上再一键打开。', {danger: true, okText: '停用'}))){
+    syncModelsBulkSwitch(all);
+    return;
+  }
+  BULK_MODEL_BUSY = true;
+  syncModelsBulkSwitch(all);
+  const ids = new Set(targets.map(m => m.id));
+  try{
+    const r = await postJSON('/models/toggle', {
+      models: targets.map(m => ({
+        model: m.id,
+        // 与单行开关同一套口径：池子行用自己的 (provider, realm)，普通视图
+        // 用当前视图那一家（服务端的 CURRENT_PROVIDER 可能停在别家）。
+        provider: m.pool_provider || currentProvider(),
+        realm: m.pool_realm || (window.VIEW_REALM === 'cn' ? 'cn' : 'intl')
+      })),
+      disabled: !enabled
+    });
+    [POOL_MODELS_DATA, MODELS_DATA].forEach(list => {
+      (list || []).forEach(m => {
+        if(m && ids.has(m.id)) m.disabled = !enabled;
+      });
+    });
+    // 开关变了，上一次的测试结论不再代表当前状态：逐条清掉。
+    targets.forEach(m => clearModelTestState(
+      modelTestKey(m.id, m.pool_provider ? 'all' : currentProvider())));
+    // 服务端是权威：立刻重拉一次清单，别让并发的那轮 5s 轮询把刚改的状态盖回去。
+    await loadModels();
+    const n = (r && r.count) || targets.length;
+    toast(enabled
+      ? '已启用当前清单里的 ' + n + ' 个模型：它们会重新出现在 agent 的模型清单里。'
+      : '已停用当前清单里的 ' + n + ' 个模型：agent 的模型清单里不再显示它们。',
+      enabled ? 'ok' : 'warn');
+  }catch(e){
+    toast((enabled ? '批量启用' : '批量停用') + '失败：' + e.message, 'bad');
+  }finally{
+    BULK_MODEL_BUSY = false;
+    renderAvailableModels();
   }
 }
 
@@ -11028,7 +11682,7 @@ async function loadIntlTasks(){
 
 async function loadGrowthTasks(){
   // Trae / 鸡蛋没有签到/成长任务体系：切到这些视图时不必去打 WorkBuddy 的任务接口。
-  if(currentProvider() === 'trae' || currentProvider() === 'egg') return;
+  if(currentProvider() === 'trae' || currentProvider() === 'egg' || currentProvider() === 'all') return;
   loadIntlTasks();
   const sec = document.getElementById("sectionGrowthTasks");
   if(!sec) return;
@@ -11560,7 +12214,7 @@ async function runGrowthTasks(btn){
     toast("成长任务流水执行完成" + sumC + "！");
   }catch(e){
     if(logBox) logBox.innerHTML += '<div style="color:var(--warn)">执行出错: ' + esc(e.message) + '</div>';
-    alert("任务执行失败: " + e.message);
+    await uiAlert("任务执行失败: " + e.message, {title: '任务执行失败'});
   }finally{
     btn.disabled = false;
     btn.textContent = oldText;
@@ -11767,7 +12421,7 @@ async function doDailyChatPending(btn){
 /* 网页通道打卡：只建网页端会话（官方每日活跃只认网页端对话）。
  * 会真的起一次任务，所以先确认一次。 */
 async function doDailyChatWeb(btn){
-  if(!confirm('将为每个已启用的国际版账号各建一个网页端会话。\n\n这会真的起一次任务，用于计入官方「每日活跃」；活跃走免费模型（0.00x）。继续？')) return;
+  if(!(await uiConfirm('将为每个已启用的国际版账号各建一个网页端会话。\n\n这会真的起一次任务，用于计入官方「每日活跃」；活跃走免费模型（0.00x）。继续？', {okText: '继续'}))) return;
   btn.disabled = true; const ot = btn.textContent; btn.textContent = "打卡中...";
   try {
     const r = await postJSON("/accounts/daily-chat-web", {});
@@ -12427,7 +13081,7 @@ function toggleConsoleWindow(){
 }
 
 async function shutdownGateway(opts){
-  if(!confirm('确定关闭网关服务？进程会退出，需要重新运行启动脚本才能再次使用。')) return;
+  if(!(await uiConfirm('确定关闭网关服务？进程会退出，需要重新运行启动脚本才能再次使用。', {danger: true, okText: '关闭服务'}))) return;
   const pollMs = (opts && opts.pollMs) || 600;
   const tries = (opts && opts.tries) || 10;
   let sent = false;
@@ -12545,6 +13199,155 @@ function toast(msg, kind){
     item.style.transform = 'translateY(6px)';
     setTimeout(() => item.remove(), 250);
   }, 4200);
+}
+
+/* ===== 系统内弹框（替代原生 confirm / alert / prompt）=====
+   面板原先用浏览器原生弹框：在局域网地址下会显示成「localhost:8788 显示」的
+   浏览器框，样式、主题、语言都和面板不搭。这里用面板自己的 .modal 一套，
+   三件套改成异步接口：
+     await uiAlert('...')              // 只有「确定」
+     await uiConfirm('...')            // true / false
+     await uiPrompt('...', '默认值')    // string / null
+   同一时刻只留一个：新弹框把上一个按「取消」收尾。Esc / 点遮罩 / × 都是取消，
+   Enter 是确定（焦点在按钮上时交给按钮自己）；prompt 的焦点落在输入框上。
+   danger: true 把「确定」按钮换成危险色，用于删除 / 停用这类不可逆操作。 */
+let UI_DIALOG_OPEN = null;
+
+function uiDialogSettle(result){
+  const cur = UI_DIALOG_OPEN;
+  if(!cur) return;
+  UI_DIALOG_OPEN = null;
+  if(cur.mask && cur.mask.parentNode) cur.mask.parentNode.removeChild(cur.mask);
+  document.removeEventListener('keydown', cur.onKey, true);
+  try{ cur.resolve(result); }catch(e){ console.error('uiDialog resolve failed:', e); }
+}
+
+function uiDialog(opts){
+  opts = opts || {};
+  const kind = opts.kind || 'confirm';
+  // alert 只给一个「确定」，但 × / Esc / 点遮罩照样能关（关掉就等于确认过了）。
+  const showCancel = kind !== 'alert';
+  const cancelResult = kind === 'prompt' ? null : false;
+  // 上一个还没关就当取消收掉，别让两层遮罩叠在一起。
+  if(UI_DIALOG_OPEN) uiDialogSettle(UI_DIALOG_OPEN.kind === 'prompt' ? null : false);
+
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask ui-dialog';
+  const box = document.createElement('div');
+  box.className = 'modal';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.setAttribute('aria-labelledby', 'uiDialogTitle');
+  box.style.width = 'min(480px,100%)';
+
+  const hd = document.createElement('div');
+  hd.className = 'modal-hd';
+  const title = document.createElement('h2');
+  title.id = 'uiDialogTitle';
+  title.textContent = opts.title
+    || (kind === 'alert' ? '提示' : (kind === 'prompt' ? '请输入' : '请确认'));
+  const closeX = document.createElement('button');
+  closeX.type = 'button';
+  closeX.className = 'modal-x';
+  closeX.setAttribute('aria-label', '关闭');
+  closeX.textContent = '×';
+  hd.appendChild(title);
+  hd.appendChild(closeX);
+
+  const bd = document.createElement('div');
+  bd.className = 'modal-bd';
+  // 第一段是问题本身（正常正文），空行之后的段落按面板里的 .hint 排版，
+  // 和别的弹框「先一句说明再放内容」的观感一致。消息里有账号名 / Key 名这类
+  // 用户数据：只用 textContent，绝不拼 HTML。
+  String(opts.message == null ? '' : opts.message)
+    .split(/\n{2,}/)
+    .forEach(function(par, i){
+      const p = document.createElement('div');
+      p.textContent = par;
+      if(i === 0){
+        p.className = 'ui-dialog-msg';
+      }else{
+        p.className = 'hint';
+        p.style.cssText = 'margin:10px 0 0;white-space:pre-line';
+      }
+      bd.appendChild(p);
+    });
+
+  let input = null;
+  if(kind === 'prompt'){
+    input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'ui-dialog-ipt';
+    input.value = opts.value == null ? '' : String(opts.value);
+    input.spellcheck = false;
+    if(opts.placeholder) input.placeholder = String(opts.placeholder);
+    bd.appendChild(input);
+  }
+
+  const ft = document.createElement('div');
+  ft.className = 'modal-ft';
+  const okBtn = document.createElement('button');
+  okBtn.type = 'button';
+  okBtn.className = opts.danger ? 'danger' : 'primary';
+  okBtn.textContent = opts.okText || '确定';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'sec';
+  cancelBtn.textContent = opts.cancelText || '取消';
+  if(showCancel) ft.appendChild(cancelBtn);
+  ft.appendChild(okBtn);
+
+  box.appendChild(hd);
+  box.appendChild(bd);
+  box.appendChild(ft);
+  mask.appendChild(box);
+  document.body.appendChild(mask);
+  mask.classList.add('show');
+
+  const confirmResult = () => (kind === 'prompt' ? input.value : true);
+  okBtn.addEventListener('click', () => uiDialogSettle(confirmResult()));
+  if(showCancel) cancelBtn.addEventListener('click', () => uiDialogSettle(cancelResult));
+  closeX.addEventListener('click', () => uiDialogSettle(cancelResult));
+  // 点遮罩空白处 = 取消；点框体内部不关。
+  mask.addEventListener('click', (e) => { if(e.target === mask) uiDialogSettle(cancelResult); });
+
+  const onKey = (e) => {
+    if(e.key === 'Escape'){
+      e.preventDefault();
+      e.stopPropagation();
+      uiDialogSettle(cancelResult);
+      return;
+    }
+    if(e.key === 'Enter'){
+      // 焦点在按钮上时回车交给按钮自己（否则「取消」按钮回车会变成确定）。
+      const t = e.target;
+      if(t && t.tagName === 'BUTTON') return;
+      e.preventDefault();
+      e.stopPropagation();
+      uiDialogSettle(confirmResult());
+    }
+  };
+  document.addEventListener('keydown', onKey, true);
+
+  return new Promise((resolve) => {
+    UI_DIALOG_OPEN = {mask: mask, resolve: resolve, onKey: onKey, kind: kind};
+    // 焦点：prompt 落在输入框（全选默认值），其余落在「确定」，回车即可确认。
+    setTimeout(() => {
+      if(input){ input.focus(); try{ input.select(); }catch(e){} }
+      else okBtn.focus();
+    }, 0);
+  });
+}
+
+function uiAlert(message, opts){
+  return uiDialog(Object.assign({kind: 'alert', message: message}, opts || {}))
+    .then(function(){ return undefined; });
+}
+function uiConfirm(message, opts){
+  return uiDialog(Object.assign({kind: 'confirm', message: message}, opts || {}));
+}
+function uiPrompt(message, value, opts){
+  return uiDialog(Object.assign({kind: 'prompt', message: message, value: value}, opts || {}));
 }
 
 /* ------------------------------- accounts ------------------------------- */
@@ -12757,9 +13560,10 @@ function activityStatusChip(a){
 // 今天的事件，按 uid 建表。rows 是最新在前，所以第一次见到的就是最近一次。
 // 读不到历史只是没有状态可显示：绝不能让它把账号区一起带坏。
 async function loadActivityToday(){
-  // 签到/活跃是 WorkBuddy 专属数据：Qoder / Trae 视图不读它，账号行的
+  // 签到/活跃是 WorkBuddy 专属数据：Qoder / Trae / 路由视图不读它，账号行的
   // 「今日活动」一列会显示占位符（见 activityStatusChip）。
-  if(currentProvider() === 'qoder' || currentProvider() === 'trae' || currentProvider() === 'egg'){
+  if(currentProvider() === 'qoder' || currentProvider() === 'trae'
+     || currentProvider() === 'egg' || currentProvider() === 'all'){
     ACTIVITY_TODAY = {byUid: {}, error: '', loaded: true};
     return;
   }
@@ -13496,8 +14300,10 @@ async function loadAccounts(){
     // 昵称刚到位，补画一次积分扣减历史：它和本请求是并行的，先渲染的那次只有 uid。
     if(LAST_CREDIT_DATA) renderCreditHistory();
     // Auto-fetch credits once if not present. Trae 积分改为在 Trae 页按需查询
-    //（或后台定时刷新），避免每次打开网关页都打一轮 Trae 积分接口。
+    //（或后台定时刷新），避免每次打开网关页都打一轮 Trae 积分接口。路由视图
+    // 不显示账号区，也没必要为了看不见的卡片把四个网关的积分接口全打一遍。
     if(currentProvider() !== 'trae' && currentProvider() !== 'egg'
+       && currentProvider() !== 'all'
        && window.ACCOUNTS.length && window.ACCOUNTS.some(a => !a.credits)){
       postJSON('/accounts/credits', {provider: currentProvider()}).then(r => {
         window.ACCOUNTS = r.accounts || ACCOUNTS;
@@ -13554,7 +14360,7 @@ async function setAccountWeight(uid, weight, sel){
 }
 async function editAccountNote(uid){
   const cur = (window.ACCOUNTS || []).find(a => a.uid === uid);
-  const next = prompt('账号备注（留空清除；可用来标记「批量」/「自用」）:', (cur && cur.note) || '');
+  const next = await uiPrompt('账号备注（留空清除；可用来标记「批量」/「自用」）:', (cur && cur.note) || '', {okText: '保存'});
   if(next === null) return;
   try{
     await postJSON('/accounts/set', {uid: uid, note: next, provider: currentProvider()});
@@ -13661,7 +14467,7 @@ async function setAccountProduct(uid, prod, btn){
     'cli': '官方 CodeBuddy CLI (CLI)'
   };
   const label = names[prod] || prod;
-  if(!confirm('将该账号的出站身份切换为 ' + label + '？\n\n不同身分对应不同的出站指纹、端点和配额通道。')) return;
+  if(!(await uiConfirm('将该账号的出站身份切换为 ' + label + '？\n\n不同身分对应不同的出站指纹、端点和配额通道。', {okText: '切换'}))) return;
   if(btn){ btn.disabled = true; }
   try {
     const r = await postJSON('/accounts/product', {uid: uid, product: prod});
@@ -13699,7 +14505,7 @@ async function cycleAllProducts(btn){
   // cur 为 null（各账号身分不一致）时落到第一项，等于「统一成 WB」。
   const next = PRODUCT_ORDER[(PRODUCT_ORDER.indexOf(cur) + 1) % PRODUCT_ORDER.length];
   const label = PRODUCT_SHORT[next];
-  if(!confirm('将把全部账号的出站身份切换为 ' + label + '？（含另一个版本）')) return;
+  if(!(await uiConfirm('将把全部账号的出站身份切换为 ' + label + '？（含另一个版本）', {okText: '切换'}))) return;
   if(btn) btn.disabled = true;
   try{
     await postJSON('/accounts/product', {product: next});
@@ -13893,7 +14699,7 @@ async function setAll(enable, btn){
   }
 }
 async function deleteAccount(uid, name, btn){
-  if(!confirm("确定删除账号 " + name + "？")) return;
+  if(!(await uiConfirm("确定删除账号 " + name + "？", {danger: true, okText: '删除'}))) return;
   if(btn) btn.disabled = true;
   try{
     await postJSON('/accounts/delete', {uid: uid, provider: currentProvider()});
@@ -14062,7 +14868,7 @@ async function commitImport(btn){
   if(!importRows) return;
   const ow = document.getElementById('importOverwrite');
   const overwrite = !!(ow && ow.checked);
-  if(overwrite && !confirm('将覆盖同 UID 的现有账号（含其凭证），确定继续？')) return;
+  if(overwrite && !(await uiConfirm('将覆盖同 UID 的现有账号（含其凭证），确定继续？', {danger: true, okText: '覆盖导入'}))) return;
 
   if(btn){ btn.disabled = true; btn.textContent = '导入中...'; }
   try{
@@ -14827,13 +15633,16 @@ function refreshAllCostViews(){
 }
 async function refreshInner(gen){
   let usage, recent, perf;
+  // 路由视图统计的是整个池子：realm=all 让 /usage* 不按出口过滤（服务端
+  // realm_scope("all") → None），否则只会看到服务端当前出口那一半。
+  const realmParam = (currentProvider() === 'all') ? 'all' : window.VIEW_REALM;
   try{
     [usage, recent, perf] = await Promise.all([
-      getJSON(withProvider('/usage?realm=' + encodeURIComponent(window.VIEW_REALM)), POLL_READ),
+      getJSON(withProvider('/usage?realm=' + encodeURIComponent(realmParam)), POLL_READ),
       // /usage/recent 不在这里改成可校验：它没有服务端缓存，每次新请求都进榜，
       // 响应体每轮都在变，服务端也就没有稳定的校验符可发——照旧整份重取。
-      getJSON(withProvider('/usage/recent?limit=' + RECENT_LIMIT + '&page=' + RECENT_PAGE + '&realm=' + encodeURIComponent(window.VIEW_REALM))),
-      getJSON(withProvider('/usage/perf?realm=' + encodeURIComponent(window.VIEW_REALM)), POLL_READ),
+      getJSON(withProvider('/usage/recent?limit=' + RECENT_LIMIT + '&page=' + RECENT_PAGE + '&realm=' + encodeURIComponent(realmParam))),
+      getJSON(withProvider('/usage/perf?realm=' + encodeURIComponent(realmParam)), POLL_READ),
     ]);
     // 取数期间又发起了更新的一轮（例如刚切了区域），这批结果已经过期，
     // 直接扔掉，交给排队的那一轮渲染，免得把旧区域的数字画上去。
@@ -14890,6 +15699,7 @@ async function refreshInner(gen){
   // 例外：选中鸡蛋（免费白嫖）时它的出口恒为国际版，标题里再挂一个
   // 「（国际版）」纯属重复噪音，直接省掉；其他提供商照旧标出区域。
   const realmTag = (currentProvider() === 'egg') ? ''
+                 : (currentProvider() === 'all') ? '（全池）'
                  : '（' + (currentProvider() === 'qoder' ? 'Qoder · '
                         : currentProvider() === 'trae' ? 'Trae · ' : '')
                    + (window.VIEW_REALM === 'cn' ? '国内版' : '国际版') + '）';
@@ -15227,8 +16037,12 @@ const POLL_TASKS = [
   // 表本来就是 5 秒重画一次，扫描跟同一个节奏走，新加一张表不必在它的 render
   // 函数里再写一行，下一轮自己就接上了。
   {every: 5000, run: function(){ refresh(); applyAllTableSorts(); expireModelTestState(); }},
+  // 「路由」视图的候选排名与最近决策：只在这一页轮询，别的视图不打扰服务端。
+  {every: 5000, run: function(){ if(currentProvider() === 'all') loadRouting(); }},
   {every: 30000, run: function(){ loadSchedulerStatus(); }},
   {every: 15000, run: function(){ loadAccounts(); }},
+  // md 里追加的通知一分钟内同步到图标；内容没变时 loadNotices 自己不重画。
+  {every: 60000, run: function(){ loadNotices(false); }},
 ];
 let POLL_FACTOR = 1;
 let POLL_PAUSED = false;
@@ -15353,9 +16167,12 @@ async function startDashboard(){
   // 免费清单（单源超时就有 45 秒），让账号与最近请求先上屏，表回来后自己重画。
   renderModelsLoading();
   loadModels().catch(function(){});
-  bootLoadingText('正在加载账号与最近请求…', currentProvider() === 'egg'
+  if(currentProvider() === 'all') loadRouting(true).catch(function(){});
+  bootLoadingText('正在加载账号与最近请求…', currentProvider() === 'all'
+    ? '路由视图：正在拼四个网关的模型池子；账号与最近请求先上屏。'
+    : (currentProvider() === 'egg'
     ? '鸡蛋是免费模型聚合：模型清单在后台汇总 Zen / Kilo / 自建池，可能要多等一会儿。'
-    : '账号与最近请求先上屏，模型清单在后台加载。');
+    : '账号与最近请求先上屏，模型清单在后台加载。'));
   await Promise.all([loadAccounts(), loadSchedulerStatus(), refresh(), loadAgentsAvailability()]);
   // 自建供应商池只在鸡蛋视图下有意义：开局就在鸡蛋视图时把池子拉回来。
   if(currentProvider() === 'egg') await loadEggPools();
@@ -15369,6 +16186,8 @@ async function startDashboard(){
   // 首批数据到齐：收掉首屏 loading。之后再慢的接口（成长任务、按需的看板）
   // 各自都有区块内的「加载中」文案，不需要继续盖住整页。
   bootLoadingDone();
+  // 登录后拉一次新功能通知：有未读就自动展开，点「不再显示」后不再打扰。
+  loadNotices(true);
   // Polling only starts after the panel is unlocked, so a locked browser
   // never hammers the server with 401s.
   // 后台标签页不再轮询：浏览器停止绘制后台页，但定时器照跑——实测网关页在后台
@@ -15392,6 +16211,203 @@ async function startDashboard(){
     });
   }
 }
+
+/* ---------------- 新功能通知（右上角图标 + 下拉面板） ----------------
+   正文在 docs/notices.md，服务端 /notices 现读并按 mtime 缓存；这里只负责
+   渲染与「不再显示」。未读数 = 通知总数 - 已隐藏 id（id 存在网关本机，
+   所以换浏览器也记得）。登录成功后 loadNotices(true) 会在有未读时自动展开
+   一次，点「不再显示」后这条就不再出现，图标仍可随时回看剩下的通知。 */
+let NOTICE_ITEMS = [];
+let NOTICE_DISMISSED = new Set();
+let NOTICE_SOURCE = '';
+let NOTICE_SIG = '';
+let NOTICE_AUTO_OPENED = false;
+
+const NOTICE_LEVEL_LABEL = {feature: '新功能', improve: '改进', fix: '修复', notice: '通知'};
+
+function noticeVisible(){
+  return NOTICE_ITEMS.filter(function(item){ return !NOTICE_DISMISSED.has(item.id); });
+}
+
+// 语言：英文优先 *_en，正體中文优先 *_hant，没有就按当前语言转换 / 原文。
+function noticePick(item, field){
+  const lang = window.WB_I18N ? window.WB_I18N.current() : 'zh';
+  if(lang === 'en' && item[field + '_en']) return item[field + '_en'];
+  if(lang === 'zh-Hant'){
+    if(item[field + '_hant']) return item[field + '_hant'];
+    if(window.WB_I18N && window.WB_I18N.translateHant)
+      return window.WB_I18N.translateHant(item[field] || '');
+  }
+  return item[field] || '';
+}
+
+// 行内 markdown：先转义再替换，md 里写 <script> 也只会显示成文字。
+function noticeInline(text){
+  return esc(text)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+}
+
+// 正文按空行分段；整段都是「- / * 」行时画成列表。
+function noticeBodyHtml(text){
+  const blocks = String(text || '').split(/\n{2,}/);
+  return blocks.map(function(block){
+    const lines = block.split('\n').filter(function(line){ return line.trim(); });
+    if(!lines.length) return '';
+    if(lines.every(function(line){ return /^\s*[-*]\s+/.test(line); })){
+      return '<ul>' + lines.map(function(line){
+        return '<li>' + noticeInline(line.replace(/^\s*[-*]\s+/, '')) + '</li>';
+      }).join('') + '</ul>';
+    }
+    return '<p>' + lines.map(noticeInline).join('<br>') + '</p>';
+  }).join('');
+}
+
+function noticeItemHtml(item){
+  const level = NOTICE_LEVEL_LABEL[item.level] ? item.level : 'notice';
+  const body = noticeBodyHtml(noticePick(item, 'body'));
+  return '<div class="notice-item">'
+    + '<div class="notice-meta">'
+    + (item.date ? '<span>' + esc(item.date) + '</span>' : '')
+    + '<span class="notice-level ' + level + '">' + NOTICE_LEVEL_LABEL[level] + '</span>'
+    + '</div>'
+    + '<div class="notice-title" data-no-i18n>' + esc(noticePick(item, 'title')) + '</div>'
+    + (body ? '<div class="notice-body" data-no-i18n>' + body + '</div>' : '')
+    + '<div class="notice-actions"><button type="button" class="notice-dismiss" data-notice-dismiss="'
+    + esc(item.id) + '">不再显示</button></div>'
+    + '</div>';
+}
+
+function renderNotices(){
+  const list = document.getElementById('noticeList');
+  if(!list) return;
+  const visible = noticeVisible();
+  const badge = document.getElementById('noticeBadge');
+  if(badge){
+    badge.textContent = visible.length > 9 ? '9+' : String(visible.length);
+    badge.classList.toggle('on', visible.length > 0);
+  }
+  const btn = document.getElementById('noticeToggleBtn');
+  if(btn) btn.setAttribute('aria-label',
+    '新功能通知' + (visible.length ? '（' + visible.length + '）' : ''));
+  const count = document.getElementById('noticeCount');
+  if(count) count.textContent = visible.length ? '· ' + visible.length : '';
+  const src = document.getElementById('noticeSrc');
+  if(src) src.textContent = NOTICE_SOURCE || '';
+  const allBtn = document.getElementById('noticeDismissAll');
+  if(allBtn) allBtn.style.display = visible.length ? '' : 'none';
+  list.innerHTML = visible.length
+    ? visible.map(noticeItemHtml).join('')
+    : '<div class="notice-empty">暂无新功能通知</div>';
+  // 动态插入的文案交给语言观察器；英文 / 正體中文下补一次，免得等下一轮变更。
+  if(window.WB_I18N && window.WB_I18N.current() !== 'zh' && window.WB_I18N.apply)
+    window.WB_I18N.apply();
+}
+
+async function loadNotices(autoOpen){
+  try{
+    const data = await getJSON('/notices');
+    NOTICE_ITEMS = Array.isArray(data.notices) ? data.notices : [];
+    NOTICE_DISMISSED = new Set(Array.isArray(data.dismissed) ? data.dismissed : []);
+    NOTICE_SOURCE = data.source || '';
+    // 轮询时内容没变就不重画（避免每分钟一次整页 i18n 重走）。
+    const sig = (data.updated_at || 0) + '|'
+      + NOTICE_ITEMS.map(function(item){ return item.id; }).join(',') + '|'
+      + Array.from(NOTICE_DISMISSED).sort().join(',');
+    if(sig !== NOTICE_SIG){
+      NOTICE_SIG = sig;
+      renderNotices();
+    }
+    if(autoOpen && !NOTICE_AUTO_OPENED){
+      NOTICE_AUTO_OPENED = true;
+      if(noticeVisible().length) openNoticeMenu();
+    }
+  }catch(e){
+    // 通知不是面板主数据：拉不到就静默，别为它弹错误。
+    console.warn('[wb] notices load failed', e);
+  }
+}
+
+function openNoticeMenu(){
+  const menu = document.getElementById('noticeDropdown');
+  const btn = document.getElementById('noticeToggleBtn');
+  if(!menu) return;
+  renderNotices();
+  menu.classList.add('open');
+  if(btn) btn.setAttribute('aria-expanded', 'true');
+}
+
+function closeNoticeMenu(evt){
+  if(evt && evt.preventDefault){ evt.preventDefault(); evt.stopPropagation(); }
+  const menu = document.getElementById('noticeDropdown');
+  const btn = document.getElementById('noticeToggleBtn');
+  if(menu) menu.classList.remove('open');
+  if(btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+function toggleNoticeMenu(evt){
+  if(evt && evt.preventDefault){ evt.preventDefault(); evt.stopPropagation(); }
+  const menu = document.getElementById('noticeDropdown');
+  if(!menu) return;
+  if(menu.classList.contains('open')){
+    closeNoticeMenu();
+    return;
+  }
+  openNoticeMenu();
+  // 打开时顺手回源：md 刚追加的通知不用等下次刷新。
+  loadNotices(false);
+}
+
+async function dismissNotice(id){
+  if(!id) return;
+  try{
+    const data = await postJSON('/notices/dismiss', {id: id});
+    NOTICE_DISMISSED = new Set(Array.isArray(data.dismissed) ? data.dismissed : []);
+    renderNotices();
+    if(!noticeVisible().length) closeNoticeMenu();
+  }catch(e){
+    toast('操作失败: ' + e.message, 'bad');
+  }
+}
+
+async function dismissAllNotices(evt){
+  if(evt && evt.preventDefault){ evt.preventDefault(); evt.stopPropagation(); }
+  if(!noticeVisible().length) return;
+  try{
+    const data = await postJSON('/notices/dismiss', {all: true});
+    NOTICE_DISMISSED = new Set(Array.isArray(data.dismissed) ? data.dismissed : []);
+    renderNotices();
+    closeNoticeMenu();
+    toast('已全部标记为不再显示', 'ok');
+  }catch(e){
+    toast('操作失败: ' + e.message, 'bad');
+  }
+}
+
+// 点面板外面 / 按 Esc 收起；按钮与面板自己的点击不触发。
+document.addEventListener('click', function(evt){
+  const wrap = document.getElementById('noticeWrap');
+  if(wrap && wrap.contains(evt.target)) return;
+  closeNoticeMenu();
+});
+document.addEventListener('keydown', function(evt){
+  if(evt.key === 'Escape') closeNoticeMenu();
+});
+// 「不再显示」用事件委托：通知列表每次重画，不必逐个绑处理器。
+(function(){
+  const list = document.getElementById('noticeList');
+  if(!list) return;
+  list.addEventListener('click', function(evt){
+    const btn = evt.target && evt.target.closest
+      ? evt.target.closest('[data-notice-dismiss]') : null;
+    if(!btn) return;
+    evt.preventDefault();
+    evt.stopPropagation();
+    dismissNotice(btn.getAttribute('data-notice-dismiss'));
+  });
+})();
 
 /* ---- 页面区块导航 ----
    导航项完全由页面内的 section 现场生成：标题取该 section 首个 h2 的文本
@@ -17356,7 +18372,7 @@ async function installUpdateNow(btn){
       return;
     }
     if(btn) btn.disabled = true;
-    if(!confirm('安装更新会短暂重启网关。账号与用量数据会保留。继续吗？')) return;
+    if(!(await uiConfirm('安装更新会短暂重启网关。账号与用量数据会保留。继续吗？', {okText: '安装更新'}))) return;
     const accepted = await postJSON('/updates/install', {});
     if(accepted && accepted.ok === false) throw new Error(accepted.msg || '提交更新任务失败');
     toast('已开始安装更新', 'ok');
@@ -17805,7 +18821,7 @@ async function toggleKeyRow(index){
 async function removeKeyRow(index){
   const row = API_KEY_ROWS[index];
   if(!row) return;
-  if(!confirm('确定删除 API Key [' + (row.name || '未命名') + '] 吗？密钥会被抹掉且无法恢复；看板里它已经产生的历史用量仍会保留这个名字。')) return;
+  if(!(await uiConfirm('确定删除 API Key [' + (row.name || '未命名') + '] 吗？密钥会被抹掉且无法恢复；看板里它已经产生的历史用量仍会保留这个名字。', {danger: true, okText: '删除'}))) return;
   if(row.id && DELETED_KEY_IDS.indexOf(row.id) === -1) DELETED_KEY_IDS.push(row.id);
   API_KEY_ROWS.splice(index, 1);
   try {
@@ -18177,10 +19193,10 @@ function addProxySlotRow(){
   renderProxySlots();
 }
 
-function removeProxySlot(index){
+async function removeProxySlot(index){
   const s = PROXY_SLOTS[index];
   if(!s) return;
-  if((s.bound || 0) > 0 && !confirm('该槽位被 ' + s.bound + ' 个账号绑定，删除后它们将回退直连。继续？')) return;
+  if((s.bound || 0) > 0 && !(await uiConfirm('该槽位被 ' + s.bound + ' 个账号绑定，删除后它们将回退直连。继续？', {danger: true, okText: '删除'}))) return;
   SLOTS_DIRTY = true;
   PROXY_SLOTS.splice(index, 1);
   renderProxySlots();
@@ -18340,7 +19356,10 @@ function switchMainTab(tab){
   // ?tab=accounts 的书签与上次停留的页签都退回「网关与账号」页——区块就在那一页里。
   if(tab === 'accounts' && !_accountsSeparateTab) tab = 'gateway';
   // 鸡蛋没有账号可管：账号页的书签/停留页签都退回网关页（入口也由 CSS 收起）。
-  if(tab === 'accounts' && currentProvider() === 'egg') tab = 'gateway';
+  if(tab === 'accounts' && (currentProvider() === 'egg' || currentProvider() === 'all')) tab = 'gateway';
+  // 任务与福利是按网关分开的（签到 / 成长任务 / 积分）：路由视图没有「当前网关」，
+  // 入口也收起了，书签与上次停留的页签退回网关页。
+  if(tab === 'tasks' && currentProvider() === 'all') tab = 'gateway';
   currentMainTab = tab;
   // Remember the page across reloads. The URL is updated so the address bar
   // matches what is on screen and a copied link reopens the same page;
@@ -18619,7 +19638,7 @@ async function applyAgent(id, btn){
   const baseUrl = baseInput ? baseInput.value.trim() : '';
   if(!baseUrl){ toast('请先填写网关地址', 'warn'); return; }
   if(client.applied && client.applied.external_change){
-    if(!confirm('「' + (client.label || id) + '」的配置文件在应用后被外部修改过，重新应用将覆盖这些改动。确定继续吗？')) return;
+    if(!(await uiConfirm('「' + (client.label || id) + '」的配置文件在应用后被外部修改过，重新应用将覆盖这些改动。确定继续吗？', {danger: true, okText: '覆盖并应用'}))) return;
   }
   if(btn){ btn.disabled = true; }
   try {
@@ -18719,7 +19738,7 @@ async function syncAgentModels(btn){
 async function restoreAgent(id, btn){
   const client = agentFindClient(id);
   const label = (client && (client.label || client.name)) || id;
-  if(!confirm('确定还原「' + label + '」的原始配置吗？将恢复成一键配置之前的备份文件。')) return;
+  if(!(await uiConfirm('确定还原「' + label + '」的原始配置吗？将恢复成一键配置之前的备份文件。', {danger: true, okText: '还原'}))) return;
   if(btn){ btn.disabled = true; }
   try {
     const r = await postJSON('/agents/restore', {client: id, client_id: id});
@@ -19116,7 +20135,7 @@ async function exportLogsFile(){
 }
 
 async function clearServerLogs(){
-  if(!confirm('确定要清空网关日志吗？内存缓冲会被清空；若已启用日志落库，数据库里的历史记录也会一并删除。')) return;
+  if(!(await uiConfirm('确定要清空网关日志吗？内存缓冲会被清空；若已启用日志落库，数据库里的历史记录也会一并删除。', {danger: true, okText: '清空'}))) return;
   try {
     await postJSON('/logs/clear', {});
     logEntries = [];
@@ -22469,9 +23488,10 @@ if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TAB
   });
   document.getElementById('tunerExport').addEventListener('click', function(){
     var txt = JSON.stringify(edits, null, 2);
-    function fallback(){ window.prompt('复制以下调色结果：', txt); }
+    // 降级路径：把 JSON 放进弹框的输入框并全选，Ctrl+C 就能复制。
+    function fallback(){ uiPrompt('复制以下调色结果（输入框里已全选）：', txt, {title: '调色结果', okText: '关闭'}); }
     if (navigator.clipboard && navigator.clipboard.writeText){
-      navigator.clipboard.writeText(txt).then(function(){ alert('已复制到剪贴板 ✓'); }, fallback);
+      navigator.clipboard.writeText(txt).then(function(){ uiAlert('已复制到剪贴板 ✓', {title: '调色结果'}); }, fallback);
     } else { fallback(); }
   });
   /* 页面切主题时，调色台的值跟着切 */

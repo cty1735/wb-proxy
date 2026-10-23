@@ -1486,6 +1486,7 @@ def overview(accounts_dir, home=None):
                 "at": record.get("applied_at"),
                 "base_url": record.get("base_url"),
                 "model": record.get("model"),
+                "provider": str(record.get("provider") or "").strip().lower(),
                 "key_id": record.get("key_id") or "",
                 "files": len(record.get("files") or []),
                 "external_change": external,
@@ -1663,6 +1664,9 @@ def integrate(accounts_dir, client_id, base_url, api_key, model=None,
         "applied_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "base_url": built["base_url"],
         "model": built["model"],
+        # 记下这次 apply 用的提供商视图：「路由」池子是 all；只钉某一家的
+        # 客户端（provider=workbuddy …）不该被池子的自动同步改写模型表。
+        "provider": str(provider or "").strip().lower(),
         # 记下用的是哪把面板 Key：切换提供商后自动重应用时沿用同一把，
         # 不会把用户特意选的 Key 换成全局 Key。
         "key_id": str(key_id or ""),

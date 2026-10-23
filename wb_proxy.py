@@ -80,6 +80,7 @@ import wb_webtools
 import wb_identity
 import wb_prompt
 import wb_modelsdev
+import wb_notices
 import wb_qoder
 import wb_qoder_chat
 import wb_trae
@@ -11053,7 +11054,16 @@ def _usage_cache_collect_kind(kind):
         entries = []
         done = 0
         with _usage_snap_state_lock:
-            for realm, state in _usage_snap_state.items():
+            # 状态按 (realm, provider) 分键（见 _usage_snap_state_advance），
+            # 但 checkpoint 只有 realm 维度：带 provider 过滤的折叠不能落盘
+            # （adopt 会把未过滤的 offset 当成已折位置），键也要拆回 realm。
+            for state_key, state in _usage_snap_state.items():
+                if isinstance(state_key, tuple):
+                    realm, provider = state_key
+                else:
+                    realm, provider = state_key, None
+                if provider:
+                    continue
                 entry = _usage_cache_snapshot_entry(realm, state)
                 if entry is not None:
                     entries.append(entry)
@@ -11120,8 +11130,23 @@ def _usage_cache_write_kind(kind, entries):
         live_realms = {entry.get("realm") for entry in entries}
         with _usage_cache_lock:
             old = _usage_cache_read_kind(kind) or []
-        keep = [e for e in old
-                if isinstance(e, dict) and e.get("realm") not in live_realms]
+        keep = []
+        for e in old:
+            if not isinstance(e, dict):
+                continue
+            realm = e.get("realm")
+            if isinstance(realm, list):
+                # 旧版本把 (realm, provider) 键原样写成了 list：provider 为
+                # None 的归一化成 realm 字符串（否则 list 不可哈希，下面的
+                # 成员判断会抛 unhashable type）；带 provider 的条目没有对应
+                # 的 checkpoint 维度，直接丢掉，等它重新折一次。
+                if len(realm) == 2 and realm[1] is None:
+                    realm = realm[0]
+                    e["realm"] = realm
+                else:
+                    continue
+            if realm not in live_realms:
+                keep.append(e)
         if keep:
             entries = list(entries) + keep
     payload = {"schema": _USAGE_CACHE_SCHEMA, "kind": kind,
@@ -11988,6 +12013,521 @@ def fetch_models(realm=None, provider=None):
             _catalog_meta[r] = {"source": source, "fetched_at": time.time(),
                                 "file_mtime": file_mtime}
         return entries
+
+
+def _pool_cached_catalog(provider, realm):
+    """一家 × 一个出口的清单，只读缓存 / 内置快照，不发上游。
+
+    缓存里那份是活的（上游 API / 桌面缓存 / 端点）就优先用它；没有就用
+    内置快照兜底。两者都没有的极端情况返回空，池子少几条也不会卡住。
+    """
+    key = _catalog_cache_key(realm, provider)
+    with _lock:
+        entry = _models_cache.get(key)
+    data = (entry or {}).get("data")
+    if data:
+        return [(mid, meta) for mid, meta in data]
+    if provider == "qoder":
+        return [(m.get("id"), wb_qoder.model_entry_meta(m))
+                for m in wb_qoder.static_models(realm) if isinstance(m, dict)]
+    if provider == "trae":
+        return [(m.get("id"), wb_trae.model_entry_meta(m))
+                for m in wb_trae.static_models(realm) if isinstance(m, dict)]
+    if provider == "egg":
+        try:
+            models = wb_zen.snapshot().get("models") or []
+        except Exception:
+            models = []
+        if not models:
+            models = wb_zen.static_catalog()
+        models = wb_zen.merge_models(
+            [m for m in models if isinstance(m, dict) and m.get("id")])
+        return [(m["id"], wb_zen.model_entry_meta(m)) for m in models]
+    statics = (list(getattr(wb_catalog, "STATIC_CN_MODELS", []))
+               if realm == "cn"
+               else list(getattr(wb_catalog, "STATIC_INTL_MODELS", [])))
+    return [(m.get("id"), m) for m in statics if isinstance(m, dict)]
+
+
+def _build_pool_entries(realm=None):
+    """四个网关 × 国际/国内 合成一个池子，id 带上 ``· 供应商``。"""
+    out = []
+    seen = set()
+
+    def add(mid, meta, provider, entry_realm, label):
+        base = str(mid or "").strip()
+        if not base:
+            return
+        public = pool_public_id(base, provider, entry_realm, label)
+        if not public or public in seen:
+            return
+        seen.add(public)
+        item = dict(meta or {}) if isinstance(meta, dict) else {}
+        item.update({
+            "pool_model": base,
+            "pool_provider": provider,
+            "pool_realm": entry_realm,
+            "pool_label": label,
+        })
+        out.append((public, item))
+
+    for provider in POOL_PROVIDER_ORDER:
+        for r in POOL_REALM_ORDER:
+            label = pool_suffix(provider, r)
+            for mid, meta in _pool_cached_catalog(provider, r):
+                add(mid, meta, provider, r, label)
+    for mid, meta in _pool_cached_catalog("egg", realm or CURRENT_REALM):
+        label = str((meta or {}).get("egg_source_label") or "").strip() or "鸡蛋"
+        add(mid, meta, "egg", None, label)
+    # 顺序必须稳定：order 策略与面板排名都按这个顺序，「刷新后第一条变了」
+    # 会让人以为策略失效。鸡蛋上游的目录顺序本来就不固定，这里按 id 排。
+    rank = {provider: index
+            for index, provider in enumerate(POOL_PROVIDER_ORDER + ("egg",))}
+    out.sort(key=lambda pair: (rank.get(pair[1].get("pool_provider"), 99),
+                               pair[0]))
+    return out
+
+
+def fetch_pool_models(realm=None):
+    """「路由」页 / 客户端的统一模型清单。
+
+    先用现有缓存 + 内置快照拼一份立即返回，再在后台把七份目录各拉一次：
+    客户端探 /v1/models 只有几秒，绝不能等鸡蛋那 40 秒的免费源目录。
+    """
+    now = time.time()
+    with _lock:
+        c = _pool_cache
+        if c["data"] and now - c["at"] < POOL_CACHE_TTL:
+            return c["data"]
+    entries = _build_pool_entries(realm)
+    with _lock:
+        _pool_cache["at"] = time.time()
+        _pool_cache["data"] = entries
+    _kick_pool_refresh()
+    return entries
+
+
+def _kick_pool_refresh():
+    """后台把四个网关 × 两个出口的目录各刷一次（单飞 + 冷却）。"""
+    global _pool_refresh_at, _pool_refresh_busy
+    now = time.time()
+    with _lock:
+        if _pool_refresh_busy or now - _pool_refresh_at < POOL_REFRESH_COOLDOWN:
+            return
+        _pool_refresh_at = now
+        _pool_refresh_busy = True
+
+    def run():
+        global _pool_refresh_busy
+        try:
+            for provider in POOL_PROVIDER_ORDER:
+                for r in POOL_REALM_ORDER:
+                    try:
+                        fetch_models(realm=r, provider=provider)
+                    except Exception as exc:
+                        log("pool catalog: %s/%s failed (%s)"
+                            % (provider, r, exc))
+            try:
+                fetch_models(realm=CURRENT_REALM, provider="egg")
+            except Exception as exc:
+                log("pool catalog: egg failed (%s)" % exc)
+            with _lock:
+                # 下一轮请求用刚拉到的缓存重建清单（不在这里重建：重建很快，
+                # 但让请求线程拿着锁做没必要）。
+                _pool_cache["at"] = 0.0
+            # 目录拉完了：指纹变了就把新清单同步进已接入的 Agent。
+            kick_pool_agent_sync("pool catalog refresh")
+        finally:
+            with _lock:
+                _pool_refresh_busy = False
+
+    threading.Thread(target=run, name="pool-catalog", daemon=True).start()
+
+
+def pool_catalog_summary(data):
+    """「路由」页概览：每个网关 / 出口的条数 + 账号数 + 鸡蛋池子状态。"""
+    providers = {}
+    for provider in POOL_PROVIDER_ORDER:
+        providers[provider] = {
+            "id": provider,
+            "label": POOL_GATEWAY_LABELS[provider],
+            "realms": {"intl": 0, "cn": 0},
+            "total": 0,
+            "accounts": 0,
+            "ready": 0,
+        }
+    egg = {"total": 0, "sources": {}, "pools": []}
+    for item in data or []:
+        provider = item.get("pool_provider")
+        if provider == "routing":
+            continue
+        if provider == "egg":
+            egg["total"] += 1
+            source = str(item.get("egg_source") or "").strip()
+            if source:
+                egg["sources"][source] = egg["sources"].get(source, 0) + 1
+            continue
+        bucket = providers.get(provider)
+        if not bucket:
+            continue
+        realm = item.get("pool_realm")
+        if realm in ("intl", "cn"):
+            bucket["realms"][realm] += 1
+        bucket["total"] += 1
+    try:
+        accts = list(POOL.accounts) if POOL else []
+    except Exception:
+        accts = []
+    for account in accts:
+        bucket = providers.get(getattr(account, "provider", ""))
+        if not bucket:
+            continue
+        bucket["accounts"] += 1
+        try:
+            if account.enabled and account.access_token and account.ready():
+                bucket["ready"] += 1
+        except Exception:
+            pass
+    try:
+        egg["status"] = wb_zen.status()
+    except Exception:
+        egg["status"] = None
+    return {
+        "at": time.time(),
+        "total": len([item for item in (data or [])
+                      if item.get("pool_provider") != "routing"]),
+        "providers": providers,
+        "egg": egg,
+    }
+
+
+def agent_models(provider=None, realm=None, pool=False):
+    """Flat model list for the picker; bundled catalog, deduped.
+
+    Live sources stay out of this path on purpose: the panel must answer
+    even when the upstream is down, so a failure here is simply a shorter
+    list, never an error. provider=qoder 时列 Qoder 目录（内置快照兜底）。
+
+    realm 显式传入时按该版本取：面板看的是「视图版本」，切换国际/国内版
+    后下拉里的模型必须跟着换，不一定等于网关当前出口的 CURRENT_REALM。
+
+    pool=True 时列「路由」池子的统一清单（``模型名 · 供应商``，含国际 /
+    国内），写进客户端的配置就靠这份 —— 客户端不需要再带 X-Provider。
+    """
+    provider = wb_accounts.provider_filter(provider)
+    realm = realm if realm in ("intl", "cn") else CURRENT_REALM
+    # 面板停用的模型不进选择器，也不写进客户端的配置文件——否则「停用了
+    # 却还在下拉里」比不提供开关更让人困惑。池子按每行自己的作用域判。
+    disabled = set() if pool else set(wb_settings.disabled_models(
+        ACCOUNTS_DIR, provider or wb_accounts.DEFAULT_PROVIDER, realm))
+    models = []
+    seen = set()
+    try:
+        try:
+            entries = (fetch_pool_models(realm=realm) if pool
+                       else fetch_models(realm=realm, provider=provider))
+        except Exception:
+            entries = []
+        if entries:
+            sources = ((mid, meta) for mid, meta in entries)
+        elif provider == "qoder":
+            sources = (
+                (item.get("id"), wb_qoder.model_entry_meta(item))
+                for item in wb_qoder.static_models(realm)
+                if isinstance(item, dict)
+            )
+        elif provider == "trae":
+            sources = (
+                (item.get("id"), wb_trae.model_entry_meta(item))
+                for item in wb_trae.static_models(realm)
+                if isinstance(item, dict)
+            )
+        elif provider == "egg":
+            sources = (
+                (item.get("id"), wb_zen.model_entry_meta(item))
+                for item in wb_zen.catalog()
+                if isinstance(item, dict)
+            )
+        else:
+            statics = (list(getattr(wb_catalog, "STATIC_CN_MODELS", []))
+                       if realm == "cn"
+                       else list(getattr(wb_catalog, "STATIC_INTL_MODELS", [])))
+            sources = (
+                (item.get("id"), item)
+                for item in statics
+                if isinstance(item, dict)
+            )
+        for mid, meta in sources:
+            mid = str(mid or "").strip()
+            if not mid or mid in seen:
+                continue
+            meta = meta if isinstance(meta, dict) else {}
+            if pool:
+                try:
+                    if wb_settings.is_model_disabled(
+                            ACCOUNTS_DIR, meta.get("pool_model") or mid,
+                            meta.get("pool_provider"),
+                            meta.get("pool_realm")):
+                        continue
+                except Exception:
+                    pass
+            elif mid in disabled:
+                continue
+            seen.add(mid)
+            lookup_id = meta.get("pool_model") or mid
+            entry = {"id": mid}
+            # 与 /v1/models 走同一条查找链（上游值 > 内建知识表 > 本地缓存 >
+            # 默认）：否则一键配置写进客户端的窗口会和网关自己宣告的对不上
+            # （目录里的 contextWindow.defaultLength 只是桌面端的默认档，
+            # deepseek-v4.1-flash 是 300k，而网关宣告的是 1M）。
+            try:
+                ctx, out, _src = wb_modelsdev.lookup(
+                    lookup_id, meta.get("maxInputTokens"),
+                    meta.get("maxOutputTokens"), directory=ACCOUNTS_DIR)
+            except Exception:
+                ctx = meta.get("maxInputTokens")
+                out = meta.get("maxOutputTokens")
+            if not ctx:
+                window = meta.get("contextWindow")
+                if isinstance(window, dict):
+                    lengths = window.get("supportedLengths") or []
+                    ctx = window.get("defaultLength") or (
+                        lengths[-1] if lengths else None)
+            if ctx:
+                try:
+                    entry["context_window"] = int(ctx)
+                except (TypeError, ValueError):
+                    pass
+            if out:
+                try:
+                    entry["max_output"] = int(out)
+                except (TypeError, ValueError):
+                    pass
+            name = meta.get("name")
+            if name:
+                entry["name"] = name
+            # 来源标记：客户端（OpenCode 等）把模型名后面挂一个短标签，
+            # 搜索时按来源过滤——WorkBuddy / Qoder / Trae 挂提供商名，
+            # 鸡蛋挂免费源（kilo / zen）或自建池的名字（见
+            # wb_agents.model_source_tag）。
+            source = str(meta.get("egg_source") or "").strip()
+            if pool:
+                # 池子里的行：鸡蛋仍按免费源（zen / kilo / 自建池）挂标签，
+                # 其余按网关名 + 出口；客户端按 source_label 分组。
+                entry["source"] = str(meta.get("egg_source")
+                                       or meta.get("pool_provider") or "").strip()
+                entry["source_label"] = str(meta.get("pool_label") or "").strip()
+            elif source:
+                entry["source"] = source
+                entry["source_label"] = (str(meta.get("egg_source_label")
+                                            or source).strip() or source)
+            elif provider:
+                entry["source"] = provider
+                entry["source_label"] = wb_accounts.provider_display_name(
+                    provider)
+            # Vision support flag (DSH and clients use this)
+            vision = bool(meta.get("supportsImages")) and not meta.get("disabledMultimodal")
+            if lookup_id == "glm-5.3-flash":
+                vision = False
+            if vision:
+                entry["supports_vision"] = True
+            # 可选的思考档位交给客户端（DSH 用它生成会话里的档位选择器）。
+            # 只宣告目录明确列出档位的模型：固定档位的模型（只有
+            # reasoning.effort、没有 supportedEfforts）不列，选了也不会改变
+            # 上游实际跑的档位。
+            efforts = (meta.get("reasoning") or {}).get("supportedEfforts")
+            if isinstance(efforts, (list, tuple)):
+                levels = [str(e).strip() for e in efforts
+                          if str(e or "").strip()]
+                if levels:
+                    entry["reasoning_efforts"] = levels
+            models.append(entry)
+    except Exception:
+        pass
+    if pool:
+        # 路由控制模型排在最前：客户端选 route/auto 就按「路由」页的策略
+        # 自动挑成员，也可以钉死 route/smart / route/order / ...
+        prefix = [{"id": entry["id"],
+                   "name": entry.get("name") or entry["id"],
+                   "source": "routing",
+                   "source_label": "路由",
+                   "supports_tool_calls": True}
+                  for entry in routing_model_entries()]
+        models = prefix + models
+    return models
+
+
+def refresh_pool_catalog():
+    """「路由」页的刷新按钮：后台把七份目录各重拉一次，立即回话。"""
+    def run():
+        for provider in POOL_PROVIDER_ORDER:
+            for r in POOL_REALM_ORDER:
+                try:
+                    refresh_catalog(r, provider)
+                except Exception as exc:
+                    log("pool refresh: %s/%s failed (%s)" % (provider, r, exc))
+        try:
+            refresh_catalog(CURRENT_REALM, "egg")
+        except Exception as exc:
+            log("pool refresh: egg failed (%s)" % exc)
+        with _lock:
+            _pool_cache["at"] = 0.0
+        # 七份目录都刷新完了：池子重建，已接入的 Agent 立刻换上新模型表。
+        kick_pool_agent_sync("pool refresh")
+
+    threading.Thread(target=run, name="pool-refresh", daemon=True).start()
+    return {
+        "ok": True,
+        "pool": True,
+        "msg": "已在后台刷新四个网关的模型清单（约 10~60 秒），稍后自动更新",
+    }
+
+
+# ---------------------------------------------------------------------------
+# 池子 → 已接入 Agent 的自动同步
+# ---------------------------------------------------------------------------
+# 任何一家的目录、鸡蛋池子或面板停用表发生变化，最终都会改变「路由」池子的
+# 模型清单。客户端（OpenCode / Crush / DSH …）把模型表写死在自己的配置文件
+# 里，不重写就一直停在旧名单上。这里按固定节奏比一次清单指纹：变了才重写，
+# 没变一个字节都不动；被手工改过（external_change）的客户端一律跳过。
+POOL_AGENT_SYNC_INTERVAL = 30.0
+POOL_AGENT_SYNC_WARMUP = 60.0
+_pool_agent_sig = None
+_pool_agent_lock = threading.Lock()
+
+
+def pool_agent_signature(models=None, realm=None):
+    """池子清单的稳定指纹：id 与顺序都算。"""
+    if models is None:
+        models = agent_models(pool=True, realm=realm or CURRENT_REALM)
+    blob = "\n".join(str(item.get("id") or "")
+                     for item in (models or []) if isinstance(item, dict))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _pool_agent_key(key_id):
+    """同步时用哪把 Key：优先沿用客户端记录下来的那把。"""
+    want = str(key_id or "").strip()
+    if want == "__global":
+        return API_KEY or None
+    try:
+        keys = configured_keys()
+    except Exception:
+        keys = []
+    if want:
+        for entry in keys:
+            if entry.get("id") == want:
+                return entry.get("key") or None
+        return None
+    if API_KEY:
+        return API_KEY
+    for entry in keys:
+        if entry.get("enabled"):
+            return entry.get("key") or None
+    return None
+
+
+def sync_pool_agents(models=None, reason="", force=False):
+    """把「路由」池子的最新清单写进已接入的 Agent 客户端配置。
+
+    只在指纹变化（模型增删 / 停用 / 目录更新）或 force=True 时写盘。返回
+    ``{"ok", "changed", "synced": [...], "skipped": [...]}``；任何单个客户端
+    失败只记日志，不影响其它客户端。
+    """
+    global _pool_agent_sig
+    with _pool_agent_lock:
+        if models is None:
+            models = agent_models(pool=True, realm=CURRENT_REALM)
+        # 与面板 apply 同一个上限：别让失控的选择器把客户端配置写成上兆。
+        models = list(models)[:200]
+        sig = pool_agent_signature(models)
+        if not force and sig == _pool_agent_sig:
+            return {"ok": True, "changed": False, "synced": [], "skipped": []}
+        try:
+            wb_agents = agents_module()
+            state = wb_agents.overview(ACCOUNTS_DIR)
+        except Exception as exc:
+            log("pool agent sync: overview failed (%s)" % exc, tag="agents")
+            return {"ok": False, "changed": False, "synced": [],
+                    "skipped": [], "msg": str(exc)}
+        # 默认模型沿用记录，但只在它还在这次清单里时才沿用（模型被删掉就退回
+        # 「不指定」，否则客户端会拿一条网关已经不认的 id 去发请求）。
+        known = {str(item.get("id") or "") for item in models
+                 if isinstance(item, dict)}
+        synced, skipped = [], []
+        for client_id in sorted(state):
+            info = state.get(client_id) or {}
+            applied = info.get("applied") or {}
+            if not applied:
+                continue
+            if applied.get("external_change"):
+                skipped.append(client_id)
+                continue
+            # provider 记的是当初 apply 时的视图；缺记录的旧客户端按池子处理
+            # （「路由」现在是默认、也是唯一要写进客户端的清单）。
+            provider = str(applied.get("provider") or "").strip().lower()
+            if provider and provider not in ("all", "pool", "routing"):
+                skipped.append(client_id)
+                continue
+            base_url = str(applied.get("base_url") or "").strip()
+            key = _pool_agent_key(applied.get("key_id"))
+            if not key and not auth_required():
+                # 网关没配 Key 又关了鉴权：写占位值，和面板 apply 同一口径。
+                key = "wb-local"
+            if not base_url or not key:
+                skipped.append(client_id)
+                continue
+            prev = str(applied.get("model") or "").strip()
+            try:
+                wb_agents.integrate(
+                    ACCOUNTS_DIR, client_id, base_url, key,
+                    model=(prev if prev in known else None),
+                    models=models,
+                    key_id=str(applied.get("key_id") or ""))
+            except Exception as exc:
+                log("pool agent sync: %s failed (%s)" % (client_id, exc),
+                    tag="agents")
+                skipped.append(client_id)
+                continue
+            synced.append(client_id)
+        _pool_agent_sig = sig
+        if synced:
+            log("pool agent sync (%s): rewrote %d client(s): %s"
+                % (reason or "catalog change", len(synced), ", ".join(synced)),
+                tag="agents")
+        return {"ok": True, "changed": True, "synced": synced,
+                "skipped": skipped}
+
+
+def kick_pool_agent_sync(reason=""):
+    """后台跑一轮同步，不挡正在处理的请求。"""
+    threading.Thread(target=lambda: sync_pool_agents(reason=reason),
+                     name="pool-agent-sync", daemon=True).start()
+
+
+def invalidate_pool_catalog(reason=""):
+    """一家的目录 / 停用表 / 鸡蛋池子变了：池子缓存作废，后台重建并同步 Agent。"""
+    with _lock:
+        _pool_cache["at"] = 0.0
+    kick_pool_agent_sync(reason or "catalog change")
+
+
+def pool_agent_sync_loop():
+    # 先等启动流程（账号池、目录预热）跑完，再按固定节奏比对指纹。
+    time.sleep(POOL_AGENT_SYNC_WARMUP)
+    while True:
+        try:
+            sync_pool_agents(reason="watcher")
+        except Exception as exc:
+            log("pool agent sync: pass failed (%s)" % exc, tag="agents")
+        time.sleep(POOL_AGENT_SYNC_INTERVAL)
+
+
+def start_pool_agent_sync():
+    threading.Thread(target=pool_agent_sync_loop, name="pool-agent-sync-watch",
+                     daemon=True).start()
+
+
 def _model_in_qoder_catalog(model):
     """Qoder 目录（内存缓存或内置快照）里有没有这个 id。
 
@@ -12078,10 +12618,366 @@ def qoder_provider_hint_for_model(model):
     return None
 
 
+#: 「路由」池子的模型 id 分隔符：``模型名 · 供应商``。点后面是网关名
+#: （WorkBuddy-global / Qoder-cn / Trae-global）或鸡蛋的供应商名（OpenRouter）。
+#: 公开 id 里带上来源，跨网关同名的模型才分得清，客户端也不必再带 X-Provider。
+POOL_SEP = " · "
+POOL_GATEWAY_LABELS = {"workbuddy": "WorkBuddy", "qoder": "Qoder", "trae": "Trae"}
+POOL_REALM_LABELS = {"intl": "global", "cn": "cn"}
+POOL_PROVIDER_ORDER = ("workbuddy", "qoder", "trae")
+POOL_REALM_ORDER = ("intl", "cn")
+#: 池子清单的缓存。只从各家已有缓存 + 内置快照拼，绝不在这里发上游请求：
+#: 客户端探 /v1/models 只给 1.5~5 秒，等七份目录拉完必然超时。
+POOL_CACHE_TTL = 20
+POOL_REFRESH_COOLDOWN = 60
+_pool_cache = {"at": 0.0, "data": None}
+_pool_refresh_at = 0.0
+_pool_refresh_busy = False
+
+
+def pool_suffix(provider, realm=None, label=None):
+    """模型 id 里「·」后面那一段。"""
+    p = wb_accounts.provider_filter(provider)
+    if p == "egg":
+        return str(label or "鸡蛋").strip() or "鸡蛋"
+    if p in POOL_GATEWAY_LABELS:
+        r = realm if realm in ("intl", "cn") else "intl"
+        return "%s-%s" % (POOL_GATEWAY_LABELS[p], POOL_REALM_LABELS[r])
+    return str(label or provider or "").strip()
+
+
+def pool_public_id(model, provider, realm=None, label=None):
+    base = str(model or "").strip()
+    if not base:
+        return ""
+    return base + POOL_SEP + pool_suffix(provider, realm, label)
+
+
+def split_pool_model(model):
+    """把 ``模型名 · 供应商`` 拆回 (基础 id, 网关, 出口)。
+
+    返回 None 表示这不是池子里的公开 id（旧客户端仍用不带后缀的 id）。
+    「·」后面不是网关名时按鸡蛋的供应商名处理：鸡蛋的池子名是操作者自己起
+    的，没法预先枚举；基础 id 是否真的属于鸡蛋由 wb_zen.resolve 再判一次。
+    """
+    name = str(model or "").strip()
+    if not name or POOL_SEP not in name:
+        return None
+    base, label = name.rsplit(POOL_SEP, 1)
+    base = base.strip()
+    label = label.strip()
+    if not base or not label:
+        return None
+    for provider in POOL_PROVIDER_ORDER:
+        for realm in POOL_REALM_ORDER:
+            if label == "%s-%s" % (POOL_GATEWAY_LABELS[provider],
+                                   POOL_REALM_LABELS[realm]):
+                return {"model": base, "provider": provider,
+                        "realm": realm, "label": label}
+    return {"model": base, "provider": "egg", "realm": None, "label": label}
+
+
+#: 「路由」的策略（参考 magpie 的路由组）：
+#:   smart  额度快重置的优先（重置时浪费最少）
+#:   order  按池子顺序，先用第一个
+#:   rotate 每轮换一个成员
+#:   usage  优先用得最少的
+#:   pace   优先「距重置前每小时剩余额度」最多的
+ROUTING_STRATEGIES = ("smart", "order", "rotate", "usage", "pace")
+ROUTING_LABELS = {
+    "smart": "智能",
+    "order": "顺序",
+    "rotate": "轮换",
+    "usage": "用量",
+    "pace": "节奏",
+}
+ROUTING_DESCS = {
+    "smart": "在还有额度的网关里，优先用最快重置的那个",
+    "order": "按池子顺序，先用第一个成员",
+    "rotate": "每轮换下一个成员，把负载摊开",
+    "usage": "优先用最近 24 小时请求最少的成员",
+    "pace": "优先距重置前每小时剩余额度最多的成员",
+}
+#: 池子对客户端暴露的路由控制模型：route/auto 用页面选定的策略，其余钉死。
+ROUTING_MODEL_PREFIX = "route/"
+_routing_lock = threading.Lock()
+_routing_decisions = deque(maxlen=200)
+_routing_rotate = {"n": 0}
+_routing_sessions = {}
+ROUTING_SESSION_TTL = 1800
+
+
+def routing_strategy_of(model):
+    """``route/*`` 控制模型 → 策略；不是路由模型时返回 None。"""
+    name = str(model or "").strip().lower()
+    if name in ("route", "route/auto"):
+        return "auto"
+    if name.startswith(ROUTING_MODEL_PREFIX):
+        strategy = name[len(ROUTING_MODEL_PREFIX):].strip()
+        if strategy in ROUTING_STRATEGIES:
+            return strategy
+    return None
+
+
+def routing_model_entries():
+    """``/v1/models`` 里的路由控制模型（排在池子最前面）。"""
+    out = [{
+        "id": "route/auto",
+        "object": "model",
+        "created": int(time.time()),
+        "owned_by": "routing",
+        "name": "自动路由 · 路由",
+        "description": "按「路由」页选定的策略从池子里挑一个成员",
+        "pool_provider": "routing",
+        "pool_label": "路由",
+        "capabilities": {"vision": False, "tool_calls": True, "reasoning": False},
+        "supports_tool_calls": True,
+    }]
+    for strategy in ROUTING_STRATEGIES:
+        out.append({
+            "id": ROUTING_MODEL_PREFIX + strategy,
+            "object": "model",
+            "created": int(time.time()),
+            "owned_by": "routing",
+            "name": "路由 · %s" % ROUTING_LABELS[strategy],
+            "description": ROUTING_DESCS[strategy],
+            "pool_provider": "routing",
+            "pool_label": "路由",
+            "capabilities": {"vision": False, "tool_calls": True, "reasoning": False},
+            "supports_tool_calls": True,
+        })
+    return out
+
+
+def _routing_candidates(realm=None):
+    """池子里可参与路由的成员（去掉面板停用的、没有可用账号的网关）。"""
+    try:
+        entries = fetch_pool_models(realm=realm)
+    except Exception:
+        return []
+    out = []
+    for public, meta in entries:
+        provider = (meta or {}).get("pool_provider")
+        entry_realm = (meta or {}).get("pool_realm")
+        base = (meta or {}).get("pool_model") or public
+        try:
+            if wb_settings.is_model_disabled(ACCOUNTS_DIR, base, provider,
+                                             entry_realm):
+                continue
+        except Exception:
+            pass
+        out.append({
+            "index": len(out),
+            "public": public,
+            "base": base,
+            "provider": provider,
+            "realm": entry_realm,
+            "label": (meta or {}).get("pool_label") or "",
+        })
+    if not out:
+        return out
+    ready = {}
+    for item in out:
+        key = (item["provider"], item["realm"])
+        if key not in ready:
+            if item["provider"] == "egg":
+                ready[key] = True
+            else:
+                try:
+                    ready[key] = POOL.count_ready(
+                        realm=item["realm"], provider=item["provider"]) > 0
+                except Exception:
+                    ready[key] = False
+        item["ready"] = ready[key]
+    usable = [item for item in out if item.get("ready")]
+    return usable or out
+
+
+def _routing_quotas():
+    """每个网关的额度概况（smart / pace 用）：最早重置、剩余量、每小时剩余。"""
+    try:
+        accts = list(POOL.accounts) if POOL else []
+    except Exception:
+        accts = []
+    provider_of = {getattr(a, "uid", ""): getattr(a, "provider", "")
+                   for a in accts}
+    quotas = {}
+    try:
+        rows = (remaining_usage() or {}).get("rows") or []
+    except Exception:
+        rows = []
+    now = time.time()
+    for row in rows:
+        provider = provider_of.get(str(row.get("uid") or ""))
+        if not provider:
+            continue
+        remaining = row.get("remaining")
+        if remaining is None or remaining <= 0:
+            continue
+        bucket = quotas.setdefault(provider, {
+            "available": True, "remaining": 0.0,
+            "reset_at": None, "pace": 0.0,
+        })
+        bucket["remaining"] += remaining
+        reset_at = row.get("reset_at")
+        if reset_at:
+            if bucket["reset_at"] is None or reset_at < bucket["reset_at"]:
+                bucket["reset_at"] = reset_at
+            hours = max(0.25, (reset_at - now) / 3600.0)
+            bucket["pace"] += remaining / hours
+    return quotas
+
+
+def _routing_rank(candidates, strategy, advance=True):
+    """按策略给候选排序；rotate 返回轮换起点后的顺序。"""
+    items = list(candidates)
+    if not items:
+        return items
+    if strategy == "order":
+        return items
+    if strategy == "rotate":
+        if not advance:
+            return items
+        with _routing_lock:
+            n = _routing_rotate["n"]
+            _routing_rotate["n"] = n + 1
+        k = n % len(items)
+        return items[k:] + items[:k]
+    if strategy == "usage":
+        try:
+            # 池子跨四个网关、两个出口：按全量口径统计，别只数服务端当前出口
+            # 那一半（realm="all" 在 realm_scope 里就是不过滤）。
+            by_model = (usage_snapshot(range="24h", realm="all")
+                        or {}).get("by_model") or {}
+        except Exception:
+            by_model = {}
+
+        def used(item):
+            return int(((by_model.get(item["base"]) or {}).get("requests")) or 0)
+
+        return sorted(items, key=lambda item: (used(item), item["index"]))
+    quotas = _routing_quotas()
+
+    def score(item):
+        quota = quotas.get(item["provider"]) or {}
+        available = bool(quota.get("available"))
+        if strategy == "pace":
+            return (not available, -(quota.get("pace") or 0.0), item["index"])
+        # smart：可用 > 最快重置 > 剩余多
+        return (not available,
+                quota.get("reset_at") or float("inf"),
+                -(quota.get("remaining") or 0.0),
+                item["index"])
+
+    return sorted(items, key=score)
+
+
+def resolve_routing_model(strategy, headers=None, payload=None, advance=True):
+    """按策略挑一个池子成员；返回可直接写回 payload 的路由结果。"""
+    chosen = "auto" if strategy in (None, "", "auto") else str(strategy)
+    if chosen == "auto":
+        try:
+            chosen = wb_settings.routing_config(ACCOUNTS_DIR)["strategy"]
+        except Exception:
+            chosen = wb_settings.ROUTING_DEFAULT_STRATEGY
+    candidates = _routing_candidates()
+    ranked = _routing_rank(candidates, chosen, advance=advance)
+    if not ranked:
+        return None
+    session = None
+    try:
+        session = extract_session_key(headers or {}, payload or {})
+    except Exception:
+        session = None
+    reason = "strategy:%s" % chosen
+    selected = ranked[0]
+    # 对话粘性（magpie 同款）：同一会话上一轮用过的成员还在候选里就继续用它，
+    # 厂商的提示词缓存才保得住。轮换策略例外——它要的就是每轮换一个。
+    if session and chosen != "rotate":
+        now = time.time()
+        with _routing_lock:
+            sticky = _routing_sessions.get(session)
+        if sticky and now - sticky.get("at", 0) < ROUTING_SESSION_TTL:
+            for item in ranked:
+                if item["public"] == sticky.get("model"):
+                    selected = item
+                    reason = "session-sticky"
+                    break
+        with _routing_lock:
+            _routing_sessions[session] = {"model": selected["public"],
+                                          "at": now}
+            if len(_routing_sessions) > 2000:
+                for key in [k for k, v in _routing_sessions.items()
+                            if now - v.get("at", 0) > ROUTING_SESSION_TTL]:
+                    _routing_sessions.pop(key, None)
+    return {
+        "strategy": chosen,
+        "reason": reason,
+        "public": selected["public"],
+        "model": selected["base"],
+        "provider": selected["provider"],
+        "realm": selected["realm"],
+        "label": selected["label"],
+        "session": session,
+    }
+
+
+def record_routing_decision(requested, route):
+    """把一次路由决策放进环形缓冲，路由页实时展示。"""
+    if not route:
+        return
+    with _routing_lock:
+        _routing_decisions.appendleft({
+            "at": time.time(),
+            "requested": str(requested or ""),
+            "strategy": route.get("strategy"),
+            "reason": route.get("reason"),
+            "model": route.get("public"),
+            "base": route.get("model"),
+            "provider": route.get("provider"),
+            "realm": route.get("realm"),
+            "label": route.get("label"),
+        })
+
+
+def routing_status():
+    """路由页数据：策略、候选排名（预览，不推进轮换）、最近的决策。"""
+    try:
+        config = wb_settings.routing_config(ACCOUNTS_DIR)
+    except Exception:
+        config = {"strategy": wb_settings.ROUTING_DEFAULT_STRATEGY}
+    candidates = _routing_candidates()
+    ranked = _routing_rank(candidates, config["strategy"], advance=False)
+    preview = [{
+        "model": item["public"],
+        "base": item["base"],
+        "provider": item["provider"],
+        "realm": item["realm"],
+        "label": item["label"],
+        "ready": item.get("ready"),
+    } for item in ranked[:40]]
+    with _routing_lock:
+        decisions = list(_routing_decisions)[:40]
+    return {
+        "config": config,
+        "strategies": [{
+            "id": strategy,
+            "label": ROUTING_LABELS[strategy],
+            "desc": ROUTING_DESCS[strategy],
+        } for strategy in ROUTING_STRATEGIES],
+        "models": preview,
+        "candidates": len(candidates),
+        "decisions": decisions,
+    }
+
+
 def resolve_chat_provider(model, explicit=None):
     """这个聊天请求归哪个提供商。
 
-    显式提示（?provider= / X-Provider）最高优先：客户端配了哪家就直走哪家。
+    池子的公开 id（``模型名 · 供应商``）自带归属，优先级最高 —— 它就是给
+    统一池子用的地址，点哪家视图都不该改变它的去向。
+
+    显式提示（?provider= / X-Provider）次之：客户端配了哪家就直走哪家。
 
     没有提示时按**归属**判定，顺序固定：WorkBuddy -> Qoder -> Trae -> 鸡蛋。
     一个模型 id 只属于一家，谁也不许抢别人的 id —— 四个网关之间必须互不影响：
@@ -12096,6 +12992,9 @@ def resolve_chat_provider(model, explicit=None):
 
     只查内存缓存与内置快照，不发上游。
     """
+    route = split_pool_model(model)
+    if route:
+        return route["provider"]
     explicit = wb_accounts.provider_filter(explicit)
     if explicit:
         return explicit
@@ -12122,11 +13021,13 @@ def model_entry(mid, meta):
     what they look for.
     """
     meta = meta or {}
+    # 池子里的公开 id 带着「· 供应商」后缀，规格表 / 实测钳制仍按基础 id 查。
+    lookup_id = meta.get("pool_model") or mid
     item = {
         "id": mid,
         "object": "model",
         "created": int(time.time()),
-        "owned_by": meta.get("ownedBy") or "workbuddy",
+        "owned_by": meta.get("pool_provider") or meta.get("ownedBy") or "workbuddy",
     }
     name = meta.get("name")
     if name:
@@ -12185,7 +13086,7 @@ def model_entry(mid, meta):
     # always has a value (1M when unknown - a high estimate is safer than a
     # low one); max_output_tokens is omitted when unknown.
     ctx_value, out_value, _limit_source = wb_modelsdev.lookup(
-        mid, meta.get("maxInputTokens"), meta.get("maxOutputTokens"),
+        lookup_id, meta.get("maxInputTokens"), meta.get("maxOutputTokens"),
         directory=ACCOUNTS_DIR)
     item["context_length"] = ctx_value
     item["max_input_tokens"] = ctx_value
@@ -12194,7 +13095,7 @@ def model_entry(mid, meta):
         item["max_completion_tokens"] = out_value
     # Annotate the measured upstream clamp (from output_probes.json) without
     # overriding the model's spec value; the panel shows "钳制 N×" beside it.
-    clamp = wb_probes.clamp_for(ACCOUNTS_DIR, mid)
+    clamp = wb_probes.clamp_for(ACCOUNTS_DIR, lookup_id)
     if clamp:
         item["output_clamp"] = clamp
         item["max_output_tokens_clamped"] = clamp
@@ -12249,6 +13150,13 @@ def model_entry(mid, meta):
     tags = [t for t in (meta.get("tags") or []) if isinstance(t, str) and not t.startswith("badge:")]
     if tags:
         item["tags"] = tags
+    # 「路由」池子的来源：公开 id 是 `模型名 · 供应商`。面板按行取正确的
+    # (provider, realm) 做启用 / 停用与可用性测试；客户端也能反查真实来源。
+    if meta.get("pool_model"):
+        item["pool_model"] = meta["pool_model"]
+        item["pool_provider"] = meta.get("pool_provider")
+        item["pool_realm"] = meta.get("pool_realm")
+        item["pool_label"] = meta.get("pool_label")
     return item
 def read_product_config_models(realm=None):
     """Read the desktop app's cached catalog: [(id, meta), ...].
@@ -12621,6 +13529,8 @@ def invalidate_egg_catalog_cache():
         for r in ("intl", "cn", "all"):
             _models_cache.pop(_catalog_cache_key(r, "egg"), None)
             _catalog_meta.pop(_catalog_cache_key(r, "egg"), None)
+    # 鸡蛋的模型是池子的一部分：这边的缓存一清，总路由也要重建并同步 Agent。
+    invalidate_pool_catalog("egg pools changed")
 
 
 def _egg_pool_view(pool):
@@ -19764,14 +20674,26 @@ class Handler(BaseHTTPRequestHandler):
             return ""
         if wb_settings.key_allows_model(entry, model):
             return ""
+        # 池子的 Key 限制可能写的是公开 id（``模型名 · 供应商``）：聊天入口在
+        # 选路后已经把 payload 的 model 换成了基础 id，这里再按公开 id 认一次，
+        # 否则「Key 只允许这个池子模型」会被自己刚改写的 id 挡住。
+        public = str(getattr(self, "_pool_public_model", "") or "")
+        if public and public != model and wb_settings.key_allows_model(entry, public):
+            return ""
         return key_model_message(entry, model)
     def _request_realm(self, explicit=None):
         """Pick the upstream exit for this request.
-        Priority: an explicit ?realm= argument, then the realm bound to the
-        API key, then the X-Realm header / ?realm= query, and finally the
+
+        Priority: the pool id's own suffix, then an explicit argument, then the
+        realm bound to the API key, then X-Realm / ?realm=, and finally the
         global switch. Returning None lets open_upstream() fall back to
         model-based detection.
         """
+        # 池子的公开 id 自带出口（WorkBuddy-global / Qoder-cn / ...）：它比 Key
+        # 绑定、?realm= 和显式参数都更具体，客户端选的是哪一版就送哪一版。
+        forced = getattr(self, "_pool_realm", None)
+        if forced in ("intl", "cn"):
+            return forced
         if explicit:
             return explicit
         bound = self._key_realm()
@@ -19830,12 +20752,38 @@ class Handler(BaseHTTPRequestHandler):
     def _chat_provider(self, payload):
         """这个聊天请求该走哪个提供商。
 
-        显式提示（?provider= / X-Provider）优先；没有提示时按模型归属兜底
-        （见 resolve_chat_provider）：一个 id 只属于一家，四个网关之间不许
-        抢对方的模型。
+        池子的公开 id（``模型名 · 供应商``）自带归属，优先级最高；``route/*``
+        控制模型先按路由策略挑一个池子成员，再按成员的后缀走。没有提示时按
+        模型归属兜底（见 resolve_chat_provider）：一个 id 只属于一家，四个网关
+        之间不许抢对方的模型。
+
+        一次请求里这个方法会被调用两次（/v1/messages 入口 + 分发），第一次就
+        把 payload 的 model 改写成了基础 id，所以结果按请求缓存，第二次直接
+        返回，避免把已经拆掉的 (provider, realm) 又当成「没有后缀」。
         """
+        cached = getattr(self, "_chat_provider_cache", None)
+        if cached is not None:
+            return cached
         model = payload.get("model") if isinstance(payload, dict) else None
-        return resolve_chat_provider(model, self._request_provider())
+        strategy = routing_strategy_of(model)
+        if strategy:
+            route = resolve_routing_model(strategy, self.headers, payload)
+            if route:
+                record_routing_decision(model, route)
+                payload["model"] = route["public"]
+                model = route["public"]
+        pool = split_pool_model(model)
+        if pool:
+            payload["model"] = pool["model"]
+            self._pool_realm = pool.get("realm")
+            self._pool_public_model = model
+            provider = pool["provider"]
+        else:
+            self._pool_realm = None
+            self._pool_public_model = ""
+            provider = resolve_chat_provider(model, self._request_provider())
+        self._chat_provider_cache = provider
+        return provider
 
     def _authorized(self):
         if self._key_ok():
@@ -19883,6 +20831,9 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/token-saver"):
             return True
         if path.startswith("/updates"):
+            return True
+        # 新功能通知：正文来自 docs/notices.md，只有面板会话该看到。
+        if path.startswith("/notices"):
             return True
         if path.startswith("/logs"):
             return True
@@ -19951,6 +20902,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
     def do_GET(self):
+        self._chat_provider_cache = None
+        self._pool_realm = None
+        self._pool_public_model = ""
         if not self._apply_pinned_route():
             return
         parsed = urlparse(self.path)
@@ -20021,6 +20975,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._get_pricing()
         if path == "/settings":
             return self._get_settings()
+        if path == "/notices":
+            # 新功能通知：读 docs/notices.md + 本机的「不再显示」清单。
+            return self._get_notices()
         if path == "/token-saver/stats":
             # 省 token 的节省统计：只读本机落盘的字节计数，面板轮询这里。
             return self._json(200, wb_tokensaver.stats(ACCOUNTS_DIR))
@@ -20071,6 +21028,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._get_logs_export()
         if path == "/settings/reveal":
             return self._get_settings_reveal(query)
+        if path == "/routing":
+            return self._get_routing()
         if path == "/agents":
             return self._get_agents(query)
         if path == "/agents/available":
@@ -20171,33 +21130,41 @@ class Handler(BaseHTTPRequestHandler):
     def _get_v1_models(self, query=None):
         if not self._authorized():
             return
-        # 模型清单跟着网关当前提供商走：显式 ?provider=（或 X-Provider）优先；
-        # 没有提示时用 CURRENT_PROVIDER —— 面板顶部切到 Qoder / Trae 后，外部
-        # 客户端重新拉 /v1/models 就应该看到那家的目录，而不是永远停在
-        # WorkBuddy（以前固定回落到 DEFAULT_PROVIDER，切换后客户端还是旧模型）。
-        # provider="all" 没有可合并的清单，仍按缺省处理。
-        req_provider = (wb_accounts.provider_filter(self._request_provider(query))
-                        or CURRENT_PROVIDER)
-        req_realm = provider_realm(req_provider, self._request_realm())
+        # 没有 ?provider= / X-Provider 时返回**路由池子**：四个网关（含国际 /
+        # 国内）的全部模型，id 形如 `模型名 · 供应商`。这是客户端默认看到、
+        # 也是唯一需要配进 Agent 的清单 —— 顶部视图怎么切都不影响它。
+        # 面板自己取单家清单时会显式带 provider=workbuddy / qoder / trae / egg。
+        raw_provider = self._request_provider(query)
+        pool_mode = wb_accounts.provider_filter(raw_provider) is None
+        req_provider = wb_accounts.provider_filter(raw_provider)
+        req_realm = (self._request_realm() or CURRENT_REALM
+                     if pool_mode
+                     else provider_realm(req_provider, self._request_realm()))
         pinned = pinned_account()
         if pinned is not None:
             # 定址路由以账号为准：即使调用方没带 ?provider=，模型清单也应该
             # 跟着这个账号的提供商/区域走，而不是全局当前选择。
+            pool_mode = False
             req_provider = (wb_accounts.provider_filter(pinned.provider)
-                            or req_provider)
+                            or req_provider or CURRENT_PROVIDER)
             req_realm = pinned.realm or req_realm
         try:
-            entries = fetch_models(realm=req_realm, provider=req_provider)
+            entries = (fetch_pool_models(realm=req_realm) if pool_mode
+                       else fetch_models(realm=req_realm, provider=req_provider))
         except Exception as exc:
             return self._error(502, str(exc))
         # Level 4 is best effort: warm the local cache in the background at
         # most once per cooldown; offline deployments just keep the fallback.
-        if req_provider == wb_accounts.DEFAULT_PROVIDER:
+        if pool_mode or req_provider == wb_accounts.DEFAULT_PROVIDER:
             try:
                 wb_modelsdev.refresh_async(ACCOUNTS_DIR, log=log)
             except Exception:
                 pass
         data = [model_entry(mid, meta) for mid, meta in entries]
+        if pool_mode:
+            # 路由控制模型排在最前：客户端选 route/auto 就用页面选定的策略，
+            # 也可以钉死 route/smart / route/order / ...
+            data = routing_model_entries() + data
         if pinned is not None:
             # 定址路由宣告的是「这个账号实际能接的模型」：该账号禁用的模型
             # 不出现在清单里，客户端按账号拆 provider 时才不会选到必失败的项。
@@ -20205,23 +21172,63 @@ class Handler(BaseHTTPRequestHandler):
         # 面板停用的模型：默认整行从清单里摘掉（agent / 客户端选择器里看不到）。
         # 面板自己要看见它们才能再启用，所以允许带 include_disabled=1 取回，
         # 但那只对面板会话开放 —— 普通 API Key 拿不到「已停用却还能选」的清单。
-        disabled = set(wb_settings.disabled_models(
-            ACCOUNTS_DIR, req_provider, req_realm))
-        if disabled:
-            include_disabled = (
-                self._panel_ok()
-                and str((query or {}).get("include_disabled", [""])[0]).lower()
-                in ("1", "true", "yes"))
+        # 池子里每一行按自己的 (provider, realm) 作用域判停用：WorkBuddy 国际版
+        # 关掉的 id 不该连带把国内版那条也藏了。
+        include_disabled = (
+            self._panel_ok()
+            and str((query or {}).get("include_disabled", [""])[0]).lower()
+            in ("1", "true", "yes"))
+        if pool_mode:
+            off_cache = {}
+
+            def _off(provider, realm):
+                key = (provider, realm)
+                if key not in off_cache:
+                    try:
+                        off_cache[key] = set(wb_settings.disabled_models(
+                            ACCOUNTS_DIR, provider, realm))
+                    except Exception:
+                        off_cache[key] = set()
+                return off_cache[key]
+
+            # 停用表里存的是基础 id（面板 /models/toggle 会先拆掉后缀），
+            # 池子行的 id 是「模型名 · 供应商」，所以要拿 pool_model 去比。
             if include_disabled:
                 for m in data:
-                    if m.get("id") in disabled:
+                    base = m.get("pool_model")
+                    if base and base in _off(m.get("pool_provider"),
+                                             m.get("pool_realm")):
                         m["disabled"] = True
             else:
-                data = [m for m in data if m.get("id") not in disabled]
+                data = [m for m in data
+                        if not (m.get("pool_model")
+                                and m.get("pool_model") in _off(
+                                    m.get("pool_provider"),
+                                    m.get("pool_realm")))]
+        else:
+            disabled = set(wb_settings.disabled_models(
+                ACCOUNTS_DIR, req_provider, req_realm))
+            if disabled:
+                if include_disabled:
+                    for m in data:
+                        if m.get("id") in disabled:
+                            m["disabled"] = True
+                else:
+                    data = [m for m in data if m.get("id") not in disabled]
         payload = {"object": "list", "data": data,
                    "realm": req_realm or CURRENT_REALM,
-                   "provider": req_provider}
-        if req_provider == "egg":
+                   "provider": "all" if pool_mode else req_provider}
+        if pool_mode:
+            try:
+                payload["pool"] = pool_catalog_summary(data)
+            except Exception as exc:
+                log("pool summary failed: %s" % exc)
+                payload["pool"] = None
+            try:
+                payload["egg"] = wb_zen.status()
+            except Exception:
+                payload["egg"] = None
+        elif req_provider == "egg":
             # 面板的鸡蛋卡片要用：每个免费源的条数、最近刷新时间与源状态。
             try:
                 payload["egg"] = wb_zen.status()
@@ -20230,7 +21237,7 @@ class Handler(BaseHTTPRequestHandler):
         # 来源说明（面板展示用）：这批清单是上游 API 实时取的，还是读的
         # 本机桌面缓存文件/内置快照，以及各自的时间戳。
         meta = catalog_meta(req_realm, req_provider)
-        if meta:
+        if meta and not pool_mode:
             payload["catalog"] = meta
         return self._json(200, payload)
 
@@ -20725,6 +21732,46 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorized():
             return
         return self._json(200, runtime_settings_view())
+
+    def _get_notices(self):
+        """新功能通知 + 本机已选「不再显示」的 id。
+
+        正文只从 docs/notices.md 现读（按 mtime 缓存），改 md 不需要重启；
+        「不再显示」是按 id 存进 settings.json 的，所以换浏览器也记得。
+        """
+        path = wb_notices.notices_path()
+        notices = wb_notices.load_notices(path)
+        dismissed = wb_settings.dismissed_notices(ACCOUNTS_DIR)
+        dismissed_set = set(dismissed)
+        unread = sum(1 for item in notices if item.get("id") not in dismissed_set)
+        try:
+            updated_at = int(os.stat(path).st_mtime)
+        except OSError:
+            updated_at = 0
+        return self._json(200, {
+            "notices": notices,
+            "dismissed": dismissed,
+            "unread": unread,
+            "source": wb_notices.source_label(path),
+            "updated_at": updated_at,
+        })
+
+    def _route_notices_dismiss(self):
+        """把一条 / 多条 / 全部通知标成「不再显示」。"""
+        payload = self._payload_or_error()
+        if payload is None:
+            return
+        if payload.get("all") is True:
+            ids = [item.get("id") for item in wb_notices.load_notices()]
+        elif isinstance(payload.get("ids"), list):
+            ids = payload.get("ids")
+        elif payload.get("id"):
+            ids = [payload.get("id")]
+        else:
+            return self._error(400, "id, ids or all is required",
+                               "invalid_request_error")
+        dismissed = wb_settings.dismiss_notices(ACCOUNTS_DIR, ids)
+        return self._json(200, {"dismissed": dismissed})
 
     def _get_updates(self):
         """What the running build is, and whether a newer stable release exists.
@@ -21626,128 +22673,9 @@ class Handler(BaseHTTPRequestHandler):
             host = "127.0.0.1"
         return "http://%s:%d/v1" % (host, int(port or 0))
 
-    def _agents_models(self, provider=None, realm=None):
-        """Flat model list for the picker; bundled catalog, deduped.
-
-        Live sources stay out of this path on purpose: the panel must answer
-        even when the upstream is down, so a failure here is simply a shorter
-        list, never an error. provider=qoder 时列 Qoder 目录（内置快照兜底）。
-
-        realm 显式传入时按该版本取：面板看的是「视图版本」，切换国际/国内版
-        后下拉里的模型必须跟着换，不一定等于网关当前出口的 CURRENT_REALM。
-        """
-        provider = wb_accounts.provider_filter(provider)
-        realm = realm if realm in ("intl", "cn") else CURRENT_REALM
-        # 面板停用的模型不进选择器，也不写进客户端的配置文件——否则「停用了
-        # 却还在下拉里」比不提供开关更让人困惑。
-        disabled = set(wb_settings.disabled_models(
-            ACCOUNTS_DIR, provider or wb_accounts.DEFAULT_PROVIDER, realm))
-        models = []
-        seen = set()
-        try:
-            try:
-                entries = fetch_models(realm=realm, provider=provider)
-            except Exception:
-                entries = []
-            if entries:
-                sources = ((mid, meta) for mid, meta in entries)
-            elif provider == "qoder":
-                sources = (
-                    (item.get("id"), wb_qoder.model_entry_meta(item))
-                    for item in wb_qoder.static_models(realm)
-                    if isinstance(item, dict)
-                )
-            elif provider == "trae":
-                sources = (
-                    (item.get("id"), wb_trae.model_entry_meta(item))
-                    for item in wb_trae.static_models(realm)
-                    if isinstance(item, dict)
-                )
-            elif provider == "egg":
-                sources = (
-                    (item.get("id"), wb_zen.model_entry_meta(item))
-                    for item in wb_zen.catalog()
-                    if isinstance(item, dict)
-                )
-            else:
-                statics = (list(getattr(wb_catalog, "STATIC_CN_MODELS", []))
-                           if realm == "cn"
-                           else list(getattr(wb_catalog, "STATIC_INTL_MODELS", [])))
-                sources = (
-                    (item.get("id"), item)
-                    for item in statics
-                    if isinstance(item, dict)
-                )
-            for mid, meta in sources:
-                mid = str(mid or "").strip()
-                if not mid or mid in seen or mid in disabled:
-                    continue
-                seen.add(mid)
-                meta = meta if isinstance(meta, dict) else {}
-                entry = {"id": mid}
-                # 与 /v1/models 走同一条查找链（上游值 > 内建知识表 > 本地缓存 >
-                # 默认）：否则一键配置写进客户端的窗口会和网关自己宣告的对不上
-                # （目录里的 contextWindow.defaultLength 只是桌面端的默认档，
-                # deepseek-v4.1-flash 是 300k，而网关宣告的是 1M）。
-                try:
-                    ctx, out, _src = wb_modelsdev.lookup(
-                        mid, meta.get("maxInputTokens"),
-                        meta.get("maxOutputTokens"), directory=ACCOUNTS_DIR)
-                except Exception:
-                    ctx = meta.get("maxInputTokens")
-                    out = meta.get("maxOutputTokens")
-                if not ctx:
-                    window = meta.get("contextWindow")
-                    if isinstance(window, dict):
-                        lengths = window.get("supportedLengths") or []
-                        ctx = window.get("defaultLength") or (
-                            lengths[-1] if lengths else None)
-                if ctx:
-                    try:
-                        entry["context_window"] = int(ctx)
-                    except (TypeError, ValueError):
-                        pass
-                if out:
-                    try:
-                        entry["max_output"] = int(out)
-                    except (TypeError, ValueError):
-                        pass
-                name = meta.get("name")
-                if name:
-                    entry["name"] = name
-                # 来源标记：客户端（OpenCode 等）把模型名后面挂一个短标签，
-                # 搜索时按来源过滤——WorkBuddy / Qoder / Trae 挂提供商名，
-                # 鸡蛋挂免费源（kilo / zen）或自建池的名字（见
-                # wb_agents.model_source_tag）。
-                source = str(meta.get("egg_source") or "").strip()
-                if source:
-                    entry["source"] = source
-                    entry["source_label"] = (str(meta.get("egg_source_label")
-                                                or source).strip() or source)
-                elif provider:
-                    entry["source"] = provider
-                    entry["source_label"] = wb_accounts.provider_display_name(
-                        provider)
-                # Vision support flag (DSH and clients use this)
-                vision = bool(meta.get("supportsImages")) and not meta.get("disabledMultimodal")
-                if mid == "glm-5.3-flash":
-                    vision = False
-                if vision:
-                    entry["supports_vision"] = True
-                # 可选的思考档位交给客户端（DSH 用它生成会话里的档位选择器）。
-                # 只宣告目录明确列出档位的模型：固定档位的模型（只有
-                # reasoning.effort、没有 supportedEfforts）不列，选了也不会改变
-                # 上游实际跑的档位。
-                efforts = (meta.get("reasoning") or {}).get("supportedEfforts")
-                if isinstance(efforts, (list, tuple)):
-                    levels = [str(e).strip() for e in efforts
-                              if str(e or "").strip()]
-                    if levels:
-                        entry["reasoning_efforts"] = levels
-                models.append(entry)
-        except Exception:
-            pass
-        return models
+    def _agents_models(self, provider=None, realm=None, pool=False):
+        """面板 / apply 的模型清单入口，实现在模块级 agent_models()。"""
+        return agent_models(provider=provider, realm=realm, pool=pool)
 
     def _get_agents_cli(self):
         """Serve wb_agents.py so a remote machine can fetch the configurator.
@@ -21795,13 +22723,18 @@ class Handler(BaseHTTPRequestHandler):
                     })
         except Exception:
             keys = []
+        raw_provider = str(self._request_provider(query) or "").strip().lower()
+        # 面板的「路由」视图显式传 provider=all：给它池子的统一清单（含路由
+        # 控制模型）。没带提示的老调用仍按 CURRENT_PROVIDER，行为不变。
+        pool = raw_provider in ("all", "pool", "routing")
         return self._json(200, {
             "enabled": True,
             "clients": list(wb_agents.overview(ACCOUNTS_DIR).values()),
             "models": self._agents_models(
-                provider=(wb_accounts.provider_filter(
-                    self._request_provider(query)) or CURRENT_PROVIDER),
-                realm=(query.get("realm", [None])[0] if query else None)),
+                provider=(wb_accounts.provider_filter(raw_provider)
+                          or CURRENT_PROVIDER),
+                realm=(query.get("realm", [None])[0] if query else None),
+                pool=pool),
             "keys": keys,
             "global_key_set": bool(API_KEY),
             "auth_required": auth_required(),
@@ -21848,8 +22781,11 @@ class Handler(BaseHTTPRequestHandler):
         key_id = str(payload.get("key_id") or "").strip()
         # 这次 apply 属于哪个提供商：既决定模型表，也决定写进客户端配置的
         # X-Provider 头（模型 id 可能跨提供商重名，网关只认显式提示）。
-        prov = wb_accounts.provider_filter(
-            payload.get("provider") or self._request_provider())
+        # provider=all 是「路由」池子：不写 X-Provider，靠模型 id 后缀路由。
+        raw_prov = str(payload.get("provider")
+                       or self._request_provider() or "").strip().lower()
+        pool = raw_prov in ("all", "pool", "routing")
+        prov = wb_accounts.provider_filter(raw_prov)
         models = payload.get("models")
         if not models:
             # Fall back to the gateway's discovered catalog so clients that embed
@@ -21859,12 +22795,13 @@ class Handler(BaseHTTPRequestHandler):
             # 配置会被写成上一家的模型表。
             models = self._agents_models(
                 provider=prov,
-                realm=payload.get("realm") or None)
+                realm=payload.get("realm") or None,
+                pool=pool)
         if not isinstance(models, list):
             return self._error(400, "models must be a list",
                                "invalid_request_error")
         # A runaway picker must not turn into a megabyte config file.
-        models = models[:80]
+        models = models[:200 if pool else 80]
         cleaned_models = []
         for item in models:
             if isinstance(item, dict) and item.get("id"):
@@ -21873,19 +22810,42 @@ class Handler(BaseHTTPRequestHandler):
                 cleaned_models.append({"id": item.strip()})
         # 面板停用的模型不写进客户端配置：面板的模型表已经不带它们了，但手写
         # / 旧前端送来的列表里可能还留着——写进去等于「停用了却还能在 agent
-        # 的选择器里选到」。
+        # 的选择器里选到」。池子按每行自己的 (provider, realm) 判。
         apply_realm = payload.get("realm") or None
-        try:
-            off = set(wb_settings.disabled_models(
-                ACCOUNTS_DIR, prov or wb_accounts.DEFAULT_PROVIDER,
-                apply_realm if apply_realm in ("intl", "cn") else CURRENT_REALM))
-        except Exception:
-            off = set()
-        if off:
-            cleaned_models = [item for item in cleaned_models
-                              if str(item.get("id") or "") not in off]
-        if model and str(model) in off:
-            model = None
+        if pool:
+            kept = []
+            for item in cleaned_models:
+                route = split_pool_model(item.get("id"))
+                try:
+                    off = bool(route and wb_settings.is_model_disabled(
+                        ACCOUNTS_DIR, route["model"], route["provider"],
+                        route["realm"]))
+                except Exception:
+                    off = False
+                if not off:
+                    kept.append(item)
+            cleaned_models = kept
+            if model and split_pool_model(model):
+                route = split_pool_model(model)
+                try:
+                    if wb_settings.is_model_disabled(
+                            ACCOUNTS_DIR, route["model"], route["provider"],
+                            route["realm"]):
+                        model = None
+                except Exception:
+                    pass
+        else:
+            try:
+                off = set(wb_settings.disabled_models(
+                    ACCOUNTS_DIR, prov or wb_accounts.DEFAULT_PROVIDER,
+                    apply_realm if apply_realm in ("intl", "cn") else CURRENT_REALM))
+            except Exception:
+                off = set()
+            if off:
+                cleaned_models = [item for item in cleaned_models
+                                  if str(item.get("id") or "") not in off]
+            if model and str(model) in off:
+                model = None
         # 看板只送模型 id，而 DSH / Crush 这类客户端要求把规格写进自己的配置
         # （上下文窗口、输出上限、思考档位）。这里按 id 把网关自己的目录规格
         # 补上（见 enrich_agent_models），显式带来的字段优先——否则一键配置
@@ -21896,7 +22856,8 @@ class Handler(BaseHTTPRequestHandler):
             specs = {}
             for spec in self._agents_models(
                     provider=prov,
-                    realm=payload.get("realm") or None):
+                    realm=payload.get("realm") or None,
+                    pool=pool):
                 if isinstance(spec, dict) and spec.get("id"):
                     specs[str(spec["id"])] = spec
         except Exception:
@@ -22391,7 +23352,15 @@ class Handler(BaseHTTPRequestHandler):
         realm = str((payload or {}).get("realm") or "").strip().lower()
         provider = wb_accounts.provider_filter(
             self._request_provider((payload or {}).get("provider")))
-        return self._json(200, refresh_catalog(realm, provider))
+        if provider is None:
+            # 「路由」页的刷新按钮：四个网关 × 国际/国内 + 鸡蛋一起刷。同步
+            # 跑七份目录会拖几分钟，改后台执行、立即回话（面板稍后自动重拉）。
+            return self._json(200, refresh_pool_catalog())
+        result = refresh_catalog(realm, provider)
+        if result.get("ok"):
+            # 目录变了：池子重建，已接入的 Agent 也跟着换模型表。
+            invalidate_pool_catalog("catalog refresh %s/%s" % (provider, realm))
+        return self._json(200, result)
 
     def _route_models_toggle(self, payload):
         """面板「网关模型清单」的启用 / 停用。
@@ -22400,8 +23369,21 @@ class Handler(BaseHTTPRequestHandler):
         鸡蛋不分版本。停用的模型立刻从 /v1/models 消失（那是 agent / 客户端
         取模型列表的地方），点名调用也会在 _disabled_model_error 那一道门被
         拒绝。返回该作用域停用后的完整列表，面板据此刷新。
+
+        「路由」页的行 id 是 ``模型名 · 供应商``：先拆回基础 id，再按行上的
+        (provider, realm) 写设置 —— 同一个 id 在国际版 / 国内版各有一条。
         """
         payload = payload or {}
+        # 面板「一键启用 / 停用」：一次带上当前清单里的所有行（每行自带
+        # provider / realm），服务端按作用域合并成几次写盘。逐个发上百条
+        # /models/toggle 会把 settings.json 读写上百遍，还可能写一半。
+        batch = payload.get("models")
+        if isinstance(batch, list):
+            disabled = payload.get("disabled")
+            if not isinstance(disabled, bool):
+                return self._error(400, "disabled must be true or false",
+                                   "invalid_request_error")
+            return self._route_models_toggle_batch(batch, disabled)
         model = str(payload.get("model") or "").strip()
         if not model:
             return self._error(400, "model is required", "invalid_request_error")
@@ -22409,9 +23391,15 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(disabled, bool):
             return self._error(400, "disabled must be true or false",
                                "invalid_request_error")
-        provider = (wb_accounts.provider_filter(
-            self._request_provider(payload)) or CURRENT_PROVIDER)
-        realm = str(payload.get("realm") or "").strip().lower()
+        route = split_pool_model(model)
+        if route:
+            model = route["model"]
+            provider = route["provider"]
+            realm = route["realm"] or ""
+        else:
+            provider = (wb_accounts.provider_filter(
+                self._request_provider(payload)) or CURRENT_PROVIDER)
+            realm = str(payload.get("realm") or "").strip().lower()
         if realm not in ("intl", "cn"):
             realm = CURRENT_REALM
         try:
@@ -22422,9 +23410,88 @@ class Handler(BaseHTTPRequestHandler):
         log("model %s: %s for provider=%s realm=%s"
             % (model, "disabled" if disabled else "enabled", provider, realm),
             tag="models")
+        # 停用表变了，客户端能选到的清单也跟着变：同步已接入的 Agent。
+        kick_pool_agent_sync("models toggle")
         return self._json(200, {"ok": True, "model": model,
                                 "disabled": disabled, "provider": provider,
                                 "realm": realm, "disabled_models": ids})
+
+    def _route_models_toggle_batch(self, items, disabled):
+        """批量开 / 关：按 (provider, realm) 分组，每组只写一次 settings.json。
+
+        items 每项可以是公开 id（``模型名 · 供应商``）或 ``{model, provider,
+        realm}``。作用域解析与单条那条完全一致（有后缀以后缀为准，没后缀用
+        行上带的 provider / realm，再退回当前视图）。返回实际改动的行数：
+        面板据此把本地那份清单打上 disabled 标记，不用再整表重拉。
+        """
+        grouped = {}
+        for raw in items:
+            if isinstance(raw, dict):
+                name = str(raw.get("model") or "").strip()
+                hint = raw
+            else:
+                name = str(raw or "").strip()
+                hint = {}
+            if not name:
+                continue
+            route = split_pool_model(name)
+            if route:
+                name = route["model"]
+                provider = route["provider"]
+                realm = route["realm"] or ""
+            else:
+                # 行上带的是普通字符串（面板 POST 的 JSON 里 provider 不是
+                # query 那种列表），别塞给 _request_provider 当查询字典解析。
+                hint_provider = hint.get("provider") if hint else None
+                if isinstance(hint_provider, (list, tuple)):
+                    hint_provider = hint_provider[0] if hint_provider else None
+                provider = (wb_accounts.provider_filter(hint_provider)
+                            or CURRENT_PROVIDER)
+                realm = str(hint.get("realm") or "").strip().lower()
+            if realm not in ("intl", "cn"):
+                realm = CURRENT_REALM
+            grouped.setdefault((provider, realm), []).append(name)
+        if not grouped:
+            return self._error(400, "models is required", "invalid_request_error")
+        changed = 0
+        scopes = []
+        for (provider, realm), names in grouped.items():
+            try:
+                ids = wb_settings.set_models_disabled(
+                    ACCOUNTS_DIR, names, disabled, provider, realm)
+            except ValueError as exc:
+                return self._error(400, str(exc), "invalid_request_error")
+            changed += len(names)
+            scopes.append({"provider": provider, "realm": realm,
+                           "count": len(names), "disabled_models": ids})
+            log("models batch: %s %d model(s) for provider=%s realm=%s"
+                % ("disabled" if disabled else "enabled", len(names),
+                   provider, realm), tag="models")
+        kick_pool_agent_sync("models batch toggle")
+        return self._json(200, {"ok": True, "disabled": disabled,
+                                "count": changed, "scopes": scopes})
+
+    def _get_routing(self):
+        """「路由」页：策略、候选排名、最近的决策。"""
+        if not self._panel_ok():
+            return self._error(401, "panel password required",
+                               "invalid_request_error")
+        return self._json(200, routing_status())
+
+    def _route_routing_config(self, payload):
+        strategy = str((payload or {}).get("strategy") or "").strip().lower()
+        if strategy not in wb_settings.ROUTING_STRATEGIES:
+            return self._error(
+                400, "strategy must be one of: %s"
+                % ", ".join(wb_settings.ROUTING_STRATEGIES),
+                "invalid_request_error")
+        try:
+            config = wb_settings.set_routing_config(
+                ACCOUNTS_DIR, {"strategy": strategy})
+        except Exception as exc:
+            return self._error(500, "save routing config failed: %s" % exc)
+        log("routing strategy: %s" % strategy, tag="routing")
+        return self._json(200, {"ok": True, "config": config})
 
     def _route_logs_clear(self, payload):
         clear_logs()
@@ -24210,6 +25277,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         # 单条请求的省 token 逃生口要先落地：body builder 看不到 headers。
         wb_tokensaver.begin_request(self.headers)
+        # 池子 / 路由的每请求状态：keep-alive 会复用 handler 实例，必须清掉上一
+        # 个请求留下的提供商、出口与 memo。
+        self._chat_provider_cache = None
+        self._pool_realm = None
+        self._pool_public_model = ""
         if not self._apply_pinned_route():
             return
         path = self.path.split("?")[0]
@@ -24230,6 +25302,11 @@ class Handler(BaseHTTPRequestHandler):
             if not self._panel_ok():
                 return self._error(401, "panel password required", "invalid_request_error")
             return self._handle_settings_save()
+        if path == "/notices/dismiss":
+            # 通知中心的「不再显示」：只认面板会话，写的是 settings.json。
+            if not self._panel_ok():
+                return self._error(401, "panel password required", "invalid_request_error")
+            return self._route_notices_dismiss()
         if path == "/updates/check":
             # Panel-only management write, like the pricing ones. No body to
             # read: the action takes no parameters, so a button that posts
@@ -24279,6 +25356,15 @@ class Handler(BaseHTTPRequestHandler):
             if payload is None:
                 return
             return self._route_models_toggle(payload)
+        if path == "/routing/config":
+            # 「路由」页的策略：只认面板会话。
+            if not self._panel_ok():
+                return self._error(401, "panel password required",
+                                   "invalid_request_error")
+            payload = self._payload_or_error()
+            if payload is None:
+                return
+            return self._route_routing_config(payload)
         if path == "/quota-scan/run":
             if not self._panel_ok():
                 return self._error(401, "panel password required", "invalid_request_error")
@@ -25154,6 +26240,9 @@ def _bootstrap_runtime(args):
     # 目录兜底：每天至少从上游 API 取一次（活跃使用的部署里 300s 缓存早就
     # 刷得更新，这个线程只兜长时间没人访问 / 一直吃缓存文件或内置快照）。
     start_catalog_daily()
+    # 池子 → 客户端配置：目录 / 停用表 / 鸡蛋池子一变，30 秒内把最新的
+    # 「模型名 · 供应商」清单写回已接入的 Agent（没变化不碰文件）。
+    start_pool_agent_sync()
     global PRICING
     # The policy table and its timeline live beside the usage log, so one
     # volume carries both and the request references resolve locally.

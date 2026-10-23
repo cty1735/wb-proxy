@@ -939,6 +939,15 @@ def catalog(directory=None):
     return merge_models(models)
 
 
+def static_catalog():
+    """内置兜底目录 + 自建池，**不触发任何网络请求**。
+
+    「路由」池子要在几毫秒内拼出统一清单，不能等鸡蛋那 40 秒的免费源目录；
+    冷启动时先用这份，后台再拉真实目录。
+    """
+    return merge_models(_static_models())
+
+
 def merge_models(builtin_models):
     """把自建供应商池的模型并进清单：**自建池优先**。
 

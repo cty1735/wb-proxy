@@ -98,7 +98,7 @@ const want = [
   'copyModelTestError', 'retestFromModelDetail',
 ];
 const setters = [
-  'MODELS_DATA', 'EGG_POOL_FILTER', 'currentProvider', 'esc', 'toast',
+  'MODELS_DATA', 'POOL_MODELS_DATA', 'EGG_POOL_FILTER', 'currentProvider', 'esc', 'toast',
   'postJSON', 'getJSON', 'MODEL_TEST_MODE',
 ].map(n => "  try{ if(o." + n + " !== undefined) " + n + " = o." + n + "; }catch(e){}");
 const exportSrc = want.map(n => n + ': ' + n).join(',');
@@ -160,6 +160,7 @@ api.__set({
   postJSON: function () { return Promise.resolve({ok: true}); },
   getJSON: function () { return Promise.resolve({}); },
   MODELS_DATA: sampleModels(),
+  POOL_MODELS_DATA: sampleModels(),
   EGG_POOL_FILTER: '',
 });
 api.__testState({});
@@ -185,9 +186,9 @@ check('停用行灰显', htmlOut.indexOf('style="opacity:.55"') >= 0);
 check('计数提到已停用', (els.availModelCount.innerHTML || els.availModelCount.textContent || '')
       .indexOf('1 个已停用') >= 0, els.availModelCount.innerHTML);
 check('测试按钮接上函数',
-      htmlOut.indexOf('onclick="testGatewayModel(&quot;hy4-preview&quot;, this)"') >= 0);
+      htmlOut.indexOf('onclick="testGatewayModel(&quot;hy4-preview&quot;, this, &quot;workbuddy&quot;)"') >= 0);
 check('启停开关接上函数',
-      htmlOut.indexOf('onchange="toggleModelEnabled(&quot;deepseek-v4.1-flash&quot;, this.checked, this)"') >= 0);
+      htmlOut.indexOf('onchange="toggleModelEnabled(&quot;deepseek-v4.1-flash&quot;, this.checked, this, &quot;&quot;, &quot;&quot;)"') >= 0);
 check('停用行的测试按钮禁用',
       /data-label="测试"[^>]*><button class="sec mini" disabled/.test(htmlOut)
       || /class="test-cell"[^>]*data-label="测试"><button class="sec mini" disabled/.test(htmlOut));
@@ -249,7 +250,7 @@ check('表头计数里可用是绿的、不可用是红的',
       && countHtml.indexOf('color:var(--bad)') >= 0, countHtml);
 
 // --- 可用性详情弹框：点徽标看「为什么不可用」 -------------------------
-api.__set({MODELS_DATA: sampleModels()});
+api.__set({MODELS_DATA: sampleModels(), POOL_MODELS_DATA: sampleModels()});
 api.__testState({
   'workbuddy|intl|hy4-preview': {
     status: 'bad', at: Date.now(), ms: 800, http: 400,
@@ -294,7 +295,7 @@ check('可用的详情摘出模型回复', okDetail.indexOf('正常') >= 0 && ok
 check('可用的详情写明工具调用情况', okDetail.indexOf('已调用工具') >= 0);
 
 // --- 空态 -------------------------------------------------------------
-api.__set({MODELS_DATA: []});
+api.__set({MODELS_DATA: [], POOL_MODELS_DATA: []});
 api.renderAvailableModels();
 check('空态跨满 12 列', MODELS_TBODY.innerHTML.indexOf('colspan="12"') >= 0,
       MODELS_TBODY.innerHTML);
@@ -424,11 +425,12 @@ function okResponse() {
     getJSON: function () { return Promise.resolve({}); },
     EGG_POOL_FILTER: '',
   });
-  apiBatch.__set({MODELS_DATA: [
-    {id: 'm-ok', name: 'OK', available: true},
-    {id: 'm-bad', name: 'Bad', available: true},
-    {id: 'm-off', name: 'Off', available: true, disabled: true},
-  ]});
+  const batchModels = [
+    {id: 'm-ok', name: 'OK', available: true, pool_provider: 'workbuddy', pool_realm: 'intl'},
+    {id: 'm-bad', name: 'Bad', available: true, pool_provider: 'workbuddy', pool_realm: 'intl'},
+    {id: 'm-off', name: 'Off', available: true, disabled: true, pool_provider: 'workbuddy', pool_realm: 'intl'},
+  ];
+  apiBatch.__set({MODELS_DATA: batchModels, POOL_MODELS_DATA: batchModels});
   apiBatch.__testState({});
   const btn = {textContent: '一键测试模型', disabled: false};
   await apiBatch.testAllGatewayModels(btn);
@@ -460,7 +462,8 @@ function okResponse() {
     esc: function (s) { return String(s == null ? '' : s); },
     toast: function () {},
     EGG_POOL_FILTER: '',
-    MODELS_DATA: [1, 2, 3, 4, 5].map(n => ({id: 'c' + n, name: 'C' + n, available: true})),
+    MODELS_DATA: [1, 2, 3, 4, 5].map(n => ({id: 'c' + n, name: 'C' + n, available: true, pool_provider: 'workbuddy', pool_realm: 'intl'})),
+    POOL_MODELS_DATA: [1, 2, 3, 4, 5].map(n => ({id: 'c' + n, name: 'C' + n, available: true, pool_provider: 'workbuddy', pool_realm: 'intl'})),
   });
   apiConc.__testState({});
   await apiConc.testAllGatewayModels(btnConc);
@@ -522,7 +525,8 @@ function okResponse() {
     esc: function (s) { return String(s == null ? '' : s); },
     toast: function () {},
     EGG_POOL_FILTER: '',
-    MODELS_DATA: [1, 2, 3, 4, 5, 6].map(n => ({id: 's' + n, name: 'S' + n, available: true})),
+    MODELS_DATA: [1, 2, 3, 4, 5, 6].map(n => ({id: 's' + n, name: 'S' + n, available: true, pool_provider: 'workbuddy', pool_realm: 'intl'})),
+    POOL_MODELS_DATA: [1, 2, 3, 4, 5, 6].map(n => ({id: 's' + n, name: 'S' + n, available: true, pool_provider: 'workbuddy', pool_realm: 'intl'})),
   });
   apiStop.__testState({});
   const btnStop = {textContent: '一键测试模型', disabled: false};
@@ -577,7 +581,7 @@ function okResponse() {
 
   // 过期（24h）的结论画表时也要当作没有 —— 页面开着不动也可能跨过有效期，
   // 不能只在读盘那一刻查一次。
-  api.__set({MODELS_DATA: sampleModels()});
+  api.__set({MODELS_DATA: sampleModels(), POOL_MODELS_DATA: sampleModels()});
   api.__testState({
     'workbuddy|intl|hy4-preview': {status: 'ok', at: Date.now() - 25 * 3600 * 1000, ms: 10},
     'workbuddy|intl|deepseek-v4.1-flash': {status: 'ok', at: Date.now() - 3600 * 1000, ms: 10},
