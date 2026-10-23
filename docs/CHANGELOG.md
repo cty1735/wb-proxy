@@ -4,6 +4,7 @@
 
 | 日期 | 功能 |
 | --- | --- |
+| 2026-10-23 | 修复**再次「一键配置」写坏 Hermes / DSH 的 YAML**：`yaml_upsert_inline` 把已有的块式条目（`wb-proxy:` 下面缩进的 `api:` / `models:` …）换成单行 flow 时没有删掉旧子行，结果 `wb-proxy: {...}` 后面还挂着更深缩进的行——YAML 解析直接失败（客户端表现为配置损坏、模型表不生效）。现在整段替换：只删到该条目的最后一个内容行，文件尾部的空行和下一节的注释保持原位。新增 `tests/_test_agent_fresh_install.py`：七个客户端（Claude Code / Codex / OpenCode / DSH / Crush / ZCode / Hermes）× 全新安装（缺文件、空文件、`{}`、`refs: {}`、`providers: {}`）× 已有块式与 flow 条目，逐个验证写入落盘、二次 apply 幂等、JSON 可解析、YAML 无「inline 值 + 孤儿缩进行」、restore 字节还原；另外拿本机真实的 DSH `settings.yaml` + 四个 profile patch、`opencode.json`、Hermes `config.yaml` 做 plan diff，确认只改网关管理的那几条、其它 provider 与注释原样保留。 |
 | 2026-10-23 | 修复**新装 DSH「一键配置」必失败**：DSH 新建的 `~/.dsh/.credentials.yaml` 默认是 `refs: {}`（flow 空 mapping），旧实现只认块式 `refs:`，直接抛 `cannot upsert into refs: {} - only a block-style refs: mapping is supported`。现在把 flow mapping 原地展开成块式（`refs: {}` → `refs:` + 缩进条目，行尾注释保留，已有条目如 `refs: {OTHER: x}` 一并保留）再写入，非 flow 的 inline 值（如 `refs: null`）仍然报错不静默改坏；顺带修掉空 `refs:` 块把第一条插到文件末尾空行之后的问题。自检 `tests/_test_dsh_credentials.py`。 |
 | 2026-10-23 | 免费模型预设新增 **Agnes AI**（`https://api.agnes-ai.cn/v1`，OpenAI 兼容，如 `agnes-2.5-flash`）：点预设只填名称 / 协议 / Base URL，Key 自己填；保存后总路由池子与已接入 Agent 立即更新，不用重启。 |
 | 2026-10-23 | 免费模型预设新增 **商汤 SenseNova**（`https://token.sensenova.cn/v1`，OpenAI 兼容，如 `sensenova-6.8-flash-lite`）：点一下只填名称 / 协议 / Base URL，Key 仍由操作者自己申请填入；保存后照原路径 `invalidate_egg_catalog_cache()` → 总路由池子重建 + 已接入 Agent 同步，模型以「模型名 · 池子名」进入路由页，不需要重启网关（实测：保存后 `/v1/models?provider=all` 立刻出现该条，删除后立刻消失、总数回到 149）。 |

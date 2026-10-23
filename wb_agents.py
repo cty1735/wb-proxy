@@ -339,8 +339,17 @@ def _yaml_upsert_at(lines, start, end, indent, keys, value_json):
             after = line.split(":", 1)[1].strip()
             child_end = _yaml_block_end(lines, idx, indent)
             if len(keys) == 1:
-                # Replace this leaf line, keeping its indentation.
+                # Replace this leaf line, keeping its indentation. A block body
+                # under it is dropped: leaving the old children behind would
+                # produce `key: {...}` followed by deeper-indented lines, which
+                # no YAML parser accepts. Trailing blank lines stay where they
+                # are (they belong to the next section, not to this key).
                 lines[idx] = " " * indent + key + ": " + value_json
+                last = idx
+                for pos in range(idx + 1, child_end):
+                    if lines[pos].strip():
+                        last = pos
+                del lines[idx + 1:last + 1]
                 return lines
             if after:
                 # Parent currently holds an inline value: expand `{..}` into
