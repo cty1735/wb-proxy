@@ -1782,6 +1782,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
   top:var(--page-nav-top,84px);z-index:7;background:var(--panel);border:1px solid var(--line);
   border-radius:14px;padding:11px;box-shadow:var(--shadow);
   max-height:calc(100vh - var(--page-nav-top,84px) - 20px);overflow:auto}
+/* 眼睛按钮弹出的独立日志窗口（?chromeless=1）：顶栏和导航都不画，日志从窗口顶部
+   开始。主面板仍是完整布局，只有这个专门看日志的窗口是「纯净」的。 */
+html.chromeless body>header,
+html.chromeless .app-sidebar{display:none!important}
+html.chromeless .app-body{padding-top:14px}
 /* 侧栏里的控件一律整栏宽：页签竖排拉满，仓库入口铺一行——沿用原来的类名与
    样式，只补布局，视觉语言不变。 */
 .app-sidebar .main-nav{display:flex;flex-direction:column;width:100%;gap:2px;
@@ -1805,6 +1810,17 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
 }
 
 </style>
+<script>
+/* 独立日志窗口（顶栏眼睛按钮打开的 ?chromeless=1）在 <body> 之前就把标记打上，
+   免得顶栏和导航先闪一下再消失。 */
+(function(){
+  try{
+    if(new URLSearchParams(location.search).get('chromeless') === '1'){
+      document.documentElement.classList.add('chromeless');
+    }
+  }catch(e){}
+})();
+</script>
 <script>
 /* Runs before <body> is parsed, so the page the user last had is the
    first one painted. Kept inline and dependency-free on purpose: an
@@ -4966,6 +4982,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
   opacity:0;transition:opacity .3s ease}
 .gate-card:hover::after{opacity:1}
 .gate-title{font-size:16px;font-weight:700;margin-bottom:6px;letter-spacing:-.2px}
+/* 登录卡片的标题行：和面板顶栏同一个 logo，一眼认出是同一个程序。 */
+.gate-brand{display:flex;align-items:center;gap:9px;margin-bottom:6px}
+.gate-brand .brand-logo{width:26px;height:26px;display:block;flex:none}
+.gate-brand .gate-title{margin-bottom:0}
 @supports ((background-clip:text) or (-webkit-background-clip:text)){
   .gate-title{background:linear-gradient(92deg,var(--fg,#f5f5f5),var(--accent,#2cb044));
     -webkit-background-clip:text;background-clip:text;color:transparent}
@@ -4997,7 +5017,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
   <div id="gateCursor" class="gate-cursor" aria-hidden="true"></div>
   <div class="gate-card-wrap" id="gateCardWrap">
     <div class="gate-card" id="gateCard">
-      <div class="gate-title">wb-proxy 网关</div>
+      <div class="gate-brand"><svg class="brand-logo" viewBox="0 0 28 28" aria-hidden="true" focusable="false"><rect x="1" y="1" width="26" height="26" rx="8" fill="var(--accent)"/><path d="M8.6 14h5.2M13.8 14c3.2 0 4.3-5 7.6-5M13.8 14h7.6M13.8 14c3.2 0 4.3 5 7.6 5" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/><circle cx="7.6" cy="14" r="2.1" fill="#fff"/></svg><div class="gate-title">wb-proxy 网关</div></div>
       <div style="font-size:12px;color:var(--dim);margin-bottom:18px">请输入面板访问密码</div>
       <input id="panelPwdInput" type="password" placeholder="面板密码" autocomplete="current-password"
              onkeydown="if(event.key==='Enter') submitPanelLogin()"
@@ -13533,7 +13553,7 @@ let GATEWAY_DOWN = false;
 
 function toggleConsoleWindow(){
   let win = null;
-  try{ win = window.open('/dashboard?tab=logs', 'wb-logs', 'width=1000,height=640'); }catch(e){}
+  try{ win = window.open('/dashboard?tab=logs&chromeless=1', 'wb-logs', 'width=1000,height=760'); }catch(e){}
   if(!win){ toast('浏览器拦截了新窗口，请允许弹窗后重试', 'bad'); return; }
   try{ win.focus(); }catch(e){}
   toast('已在新窗口打开运行日志', 'ok');
