@@ -12512,6 +12512,9 @@ _catalog_refresh_at = {}
 def _refresh_egg_catalog():
     """鸡蛋的手动刷新：强制重拉两个免费源（不需要任何账号）。
 
+    自建供应商池也一起重拉（只更新目录、摘掉上游已下线的 id，不自动加新
+    模型），否则免费期结束 / 模型退役的条目会一直挂在 /v1/models 里。
+
     与另外几家共用冷却表（冷却键带 provider 前缀）与 _catalog_lock；拉不到就
     保留旧清单，并把每个源的真实状态回给面板。
     """
@@ -12526,11 +12529,38 @@ def _refresh_egg_catalog():
                     "msg": "刷新太频繁：约 %d 秒后可再试" % max(1, int(wait + 0.5))}
         _catalog_refresh_at[key] = now
     with _catalog_lock:
+        # 自建供应商池跟着一起重拉：免费名单会轮换，自建池的上游同样会下线模型
+        # （免费期结束 / 模型退役），只刷内置两源的话面板里会留着点不动的 id。
+        # 跟 zen/kilo 并发跑，按钮的总等待不被池子数量拖长。
+        pools_box = {}
+        pools_thread = None
+        try:
+            pools_thread = threading.Thread(
+                target=lambda: pools_box.setdefault(
+                    "result", wb_egg_pools.refresh_all_pools()),
+                name="egg-pool-refresh-all")
+            pools_thread.daemon = True
+            pools_thread.start()
+        except Exception as exc:
+            log("catalog refresh: pool refresh skipped (%s)" % exc)
+            pools_thread = None
         try:
             snap = wb_zen.refresh(force=True)
         except Exception as exc:
             log("catalog refresh: egg failed (%s)" % exc)
             snap = wb_zen.snapshot()
+        if pools_thread is not None:
+            pools_thread.join(90)
+            if pools_thread.is_alive():
+                log("catalog refresh: pools still running after 90s")
+        pool_result = pools_box.get("result") or {}
+        pool_note = ""
+        if pool_result.get("pools"):
+            pool_note = ("；自建池 %d 个已重拉" % (pool_result.get("ok") or 0))
+            if pool_result.get("failed"):
+                pool_note += "（%d 个失败）" % pool_result["failed"]
+            if pool_result.get("removed"):
+                pool_note += "，下线 %d 个过期模型" % pool_result["removed"]
         models = wb_zen.merge_models(
             [m for m in snap.get("models") or [] if m.get("id")])
         entries = [(m["id"], wb_zen.model_entry_meta(m)) for m in models]
@@ -12551,9 +12581,9 @@ def _refresh_egg_catalog():
     counts = {name: (val.get("count") or 0)
               for name, val in sources.items() if isinstance(val, dict)}
     if live and entries:
-        msg = ("已刷新鸡蛋免费模型：共 %d 个（Zen %d / Kilo %d / 自建池 %d）"
+        msg = ("已刷新鸡蛋免费模型：共 %d 个（Zen %d / Kilo %d / 自建池 %d）%s"
                % (len(entries), counts.get("zen", 0), counts.get("kilo", 0),
-                  pool_count))
+                  pool_count, pool_note))
         log("catalog refresh: egg updated %d free models (zen=%d kilo=%d pool=%d)"
             % (len(entries), counts.get("zen", 0), counts.get("kilo", 0),
                pool_count))
@@ -12563,6 +12593,7 @@ def _refresh_egg_catalog():
     msg = "免费源暂时不可达，已保留现有清单"
     if note:
         msg += "（%s）" % note[:160]
+    msg += pool_note
     log("catalog refresh: egg kept the previous list (%s)" % (note or "no source"))
     return {"ok": False, "realm": realm, "source": None,
             "count": len(entries), "sources": sources, "msg": msg}

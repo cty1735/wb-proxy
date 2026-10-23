@@ -109,8 +109,10 @@ class EggError(Exception):
 
 _FREE_RE = re.compile(r"(?:^|[-_])free(?:$|[-_.])")
 
-#: 永远免费、但 id 里不带 free 的模型。
-_ALWAYS_FREE = {"union-alpha": True, "space-bunny-free": True}
+#: 免费、但 id 里不带 free 的模型（限时免费期同样算）。清单天天变，只收
+#: 「上游正在挂、id 又没有标记」的那几个；带上 free 后缀的靠 _FREE_RE 自动认。
+_ALWAYS_FREE = {"union-alpha": True, "space-bunny-free": True,
+                "big-pickle": True}
 
 #: 免费车道的本地能力表（实测值，来自 zen-gate 的 catalog.go）。
 _ZEN_CAPS = [

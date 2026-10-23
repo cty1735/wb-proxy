@@ -8694,6 +8694,8 @@ async function refreshEggCatalog(btn){
       toast('鸡蛋免费模型刷新失败：' + ((r && r.msg) || '未知原因'), 'warn');
     }
     await loadModels();
+    // 池子的模型清单也跟着重拉了：卡片上的条数与「已挑模型」要一起更新。
+    await loadEggPools();
   }catch(e){
     toast('鸡蛋免费模型刷新失败：' + e.message, 'bad');
   }finally{

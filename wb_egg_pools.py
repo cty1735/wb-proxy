@@ -1224,7 +1224,7 @@ def fetch_models(base_url, api_key, protocol, timeout=LIST_TIMEOUT_SECONDS):
     return models, ""
 
 
-def refresh_pool(pool_id, timeout=LIST_TIMEOUT_SECONDS):
+def refresh_pool(pool_id, timeout=LIST_TIMEOUT_SECONDS, adopt_new=True):
     """重拉一个已存池子的模型清单。"""
     pool = get(pool_id)
     if pool is None:
@@ -1247,19 +1247,99 @@ def refresh_pool(pool_id, timeout=LIST_TIMEOUT_SECONDS):
         except Exception as exc:
             _log("egg pools: 刷新平台余额失败：%s" % exc)
         return get(pool["id"]) or updated
+    # 自建供应商（OpenAI / Anthropic 兼容）：真打一次上游的 /models。
+    models, error = fetch_models(pool["base_url"], pool["api_key"],
+                                 pool["protocol"], timeout)
+    if error:
+        raise PoolError(502, error)
     with _lock:
         for item in _state["pools"]:
             if item["id"] == pool["id"]:
+                # 上游下线（免费期结束 / 模型退役）的 id 要从「对外提供」里摘掉：
+                # 只摘「上一次目录里有过」的那些，手填的自定义 id 不动。
+                previous = set(m.get("id") for m in item.get("catalog") or []
+                               if isinstance(m, dict))
+                fresh = set(m["id"] for m in models)
+                expired = [mid for mid in item["models"]
+                           if mid in previous and mid not in fresh]
                 item["catalog"] = models
                 item["catalog_at"] = time.time()
                 # 拉回来的清单要能被挑：还没挑过就全给（操作者可以再删）。
-                known = set(item["models"])
-                for model in models:
-                    if model["id"] not in known:
-                        item["models"].append(model["id"])
+                # adopt_new=False（「刷新免费模型」的连带刷新）只更新目录，
+                # 不把上游新模型全塞进对外清单 —— 那会一下子放出几百个。
+                if adopt_new:
+                    known = set(item["models"])
+                    for model in models:
+                        if model["id"] not in known:
+                            item["models"].append(model["id"])
+                if expired:
+                    gone = set(expired)
+                    item["models"] = [mid for mid in item["models"]
+                                      if mid not in gone]
                 _save()
                 return dict(item)
     raise PoolError(404, "供应商不存在")
+
+
+def refresh_all_pools(timeout=LIST_TIMEOUT_SECONDS, join_timeout=90):
+    """重拉所有启用池子的上游清单（面板「刷新免费模型」用）。
+
+    每个池子一条线程：自建上游大多在公网，串行拉会让按钮等上一分钟。返回
+    ``{"ok", "failed", "removed", "pools"}``，``removed`` 是这轮被上游下线、
+    从「对外提供」里摘掉的模型数。
+
+    只碰自建供应商池（kind=api）：平台账号池的刷新会按 select_all 把新模型
+    全部选上，那是它自己「刷新模型」按钮的语义，不该被「刷新免费模型」顺手
+    触发。同样地，这里用 adopt_new=False：只更新上游目录、摘掉已下线的 id，
+    不把上游新模型全塞进「对外提供」。
+    """
+    targets = [p for p in pools()
+               if p.get("enabled") and p.get("kind") != KIND_PLATFORM]
+    if not targets:
+        return {"ok": 0, "failed": 0, "removed": 0, "pools": []}
+    results = {}
+    lock = threading.Lock()
+
+    def work(pool):
+        before = set(pool.get("models") or [])
+        try:
+            updated = refresh_pool(pool["id"], timeout=timeout, adopt_new=False)
+            after = set(updated.get("models") or [])
+            row = {"id": pool["id"], "name": pool["name"], "ok": True,
+                   "count": len(after),
+                   "catalog": len(updated.get("catalog") or []),
+                   "removed": len(before - after), "error": ""}
+        except Exception as exc:
+            row = {"id": pool["id"], "name": pool["name"], "ok": False,
+                   "count": len(before), "catalog": 0, "removed": 0,
+                   "error": str(exc)[:200]}
+        with lock:
+            results[pool["id"]] = row
+
+    threads = []
+    for pool in targets:
+        thread = threading.Thread(target=work, args=(pool,),
+                                  name="egg-pool-refresh-%s" % pool["id"])
+        thread.daemon = True
+        thread.start()
+        threads.append(thread)
+    deadline = time.time() + join_timeout
+    for thread in threads:
+        thread.join(max(0.0, deadline - time.time()))
+    rows = []
+    for pool in targets:
+        row = results.get(pool["id"])
+        if row is None:
+            row = {"id": pool["id"], "name": pool["name"], "ok": False,
+                   "count": len(pool.get("models") or []), "catalog": 0,
+                   "removed": 0, "error": "刷新超时"}
+        rows.append(row)
+    return {
+        "ok": sum(1 for row in rows if row["ok"]),
+        "failed": sum(1 for row in rows if not row["ok"]),
+        "removed": sum(row.get("removed") or 0 for row in rows),
+        "pools": rows,
+    }
 
 
 def _pool_error_detail(status, raw, pool, model=""):
