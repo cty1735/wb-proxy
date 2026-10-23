@@ -1664,7 +1664,11 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 .stat-card[data-stat-detail]:hover .det-hint,
 .stat-card[data-stat-detail]:focus-visible .det-hint{opacity:1}
 
-/* 明细弹窗里的表：粘性表头 + 数字右对齐，几十上百行也能滚着看。 */
+/* 明细弹窗里的表：粘性表头 + 数字右对齐，几十上百行也能滚着看。
+   滚动容器的上内边距（.modal-bd 的 18px）会露在粘性表头上面，滚起来就是一条
+   被切掉的残行；把上间距交给第一块内容自己，表头贴住滚动容器顶边。 */
+#statDetailBody{padding-top:0}
+#statDetailBody>.kpi-bd-tiles{padding-top:18px}
 .sd-table{width:100%;border-collapse:collapse;font-size:12px}
 .sd-table th{position:sticky;top:0;z-index:1;background:var(--panel);text-align:left;
   font-size:10.5px;font-weight:650;letter-spacing:.04em;color:var(--dim);
@@ -8530,6 +8534,9 @@ async function endSwitch(minMs){
 async function switchProvider(p){
   if(p === currentProvider()){ syncProviderChrome(); return; }
   if(p !== 'workbuddy' && p !== 'qoder' && p !== 'trae' && p !== 'egg' && p !== 'all') p = 'all';
+  // 统计卡明细弹窗说的是当前视图的口径：切走就关掉，别让「路由页的池子明细」
+  // 停在 WorkBuddy 视图上。
+  if(STAT_DETAIL_OPEN) closeStatDetail();
   // 目标出口取该提供商自己记住的那版；「路由」是全池视图，没有单一出口。
   const targetRealm = (window.PROVIDER_REALMS && (window.PROVIDER_REALMS[p] === "intl" || window.PROVIDER_REALMS[p] === "cn"))
                       ? window.PROVIDER_REALMS[p] : window.ACTIVE_GATEWAY_REALM;
@@ -9214,9 +9221,9 @@ function statRateSpan(v){
 }
 
 function statTiles(pairs){
-  return '<div class="kpi-bd-tiles">' + pairs.map((p, i) =>
-    '<div class="kpi-bd-tile' + (i === 0 ? ' primary' : '') + '">'
-    + '<div class="l">' + p[0] + '</div><div class="v">' + p[1] + '</div></div>').join('') + '</div>';
+  // 磁贴只是读数，不是入口：不加 .primary 高亮，免得看着像被选中的可点卡片。
+  return '<div class="kpi-bd-tiles">' + pairs.map(p =>
+    '<div class="kpi-bd-tile"><div class="l">' + p[0] + '</div><div class="v">' + p[1] + '</div></div>').join('') + '</div>';
 }
 
 function statTable(cols, rows){
@@ -9237,7 +9244,8 @@ function statSection(title, count, html){
 function statRealmTag(realm){
   if(realm === 'intl') return '<span class="kpi-bd-tag intl">国际</span>';
   if(realm === 'cn') return '<span class="kpi-bd-tag cn">国内</span>';
-  return '<span class="kpi-bd-tag rate">免费</span>';
+  // 鸡蛋没有「版本」这一维：不编一个「免费」塞进版本列，免费由倍率列说。
+  return '<span class="dim">—</span>';
 }
 
 function statProviderBadge(m){
@@ -9297,26 +9305,33 @@ function statModelsHTML(kind){
     const capText = [caps.vision ? '视觉' : '', caps.tool_calls ? '工具' : '',
                      caps.reasoning ? '推理' : ''].filter(Boolean).join(' · ') || '—';
     const credits = String(m.credits == null ? '' : m.credits).trim();
+    const credNum = Number(credits.replace(/^x/i, ''));
+    const credCell = !credits ? '—'
+      : (isFinite(credNum) && credNum === 0)
+        ? '<span class="kpi-bd-tag free">免费</span>'
+        : esc(credits);
+    // 不设「状态」列：这里只有目录里的停用标记，没做过真机测试，写「可用」
+    // 会让人当成实测结论。只在确实被停用时挂个标记。
     return [
-      '<div class="mono" title="' + esc(id) + '">' + esc(name) + '</div>'
+      '<div class="mono" title="' + esc(id) + '">' + esc(name)
+        + (m.disabled ? ' <span class="kpi-bd-tag rate">已停用</span>' : '') + '</div>'
         + '<div class="muted">' + esc(id) + '</div>',
       esc(String(m.pool_label || '—')),
       statRealmTag(m.pool_realm),
-      credits ? esc(credits) : '—',
+      credCell,
       m.context_length ? fmtCompact(m.context_length) : '—',
       capText,
-      m.disabled ? '<span class="kpi-bd-tag rate">已停用</span>' : '<span class="kpi-bd-ok">可用</span>',
     ];
   });
   const cols = [
     {label: '模型'}, {label: '供应商'}, {label: '版本'}, {label: '倍率', num: true},
-    {label: '上下文', num: true}, {label: '能力'}, {label: '状态'},
+    {label: '上下文', num: true}, {label: '能力'},
   ];
   return statTiles(tiles) + statTable(cols, rows)
     + '<div class="sd-note">模型 id 就是客户端看到的「模型名 · 供应商」：请求它时按后缀走对应网关，不需要 X-Provider。'
     + (kind === 'egg' ? '鸡蛋全部免费、免账号、免密钥，来源列是喂给鸡蛋的免费源。' : '')
-    + '倍率取自目录（x0.00 为限时免费）；已停用的模型不出现在普通客户端的清单里，'
-    + '但这里仍列出来，方便重新启用。</div>';
+    + '倍率取自目录（x0.00 为限时免费）；标「已停用」的模型不出现在普通客户端的清单里，'
+    + '这里仍列出来，方便重新启用。这里不写「可用 / 不可用」：目录里的状态不等于实测结果。</div>';
 }
 
 /* ---- 路由候选：完整排名（按需拉一次 /routing?all=1） ---- */
@@ -9330,20 +9345,21 @@ function statCandidatesHTML(){
   const label = ((rt.strategies || []).find(s => s.id === active) || {}).label || active;
   const tiles = [
     ['候选总数', fmt(models.length)],
-    ['有可用账号', fmt(ready)],
-    ['无可用账号', fmt(models.length - ready)],
+    ['有账号', fmt(ready)],
+    ['无账号', fmt(models.length - ready)],
     ['当前策略', esc(label)],
   ];
   const rows = models.map((m, i) => [
     String(i + 1),
     '<div class="mono">' + esc(String(m.model || '—')) + '</div>',
     statProviderBadge(m),
-    m.ready === false ? '<span class="kpi-bd-tag rate">无可用账号</span>' : '<span class="kpi-bd-ok">可用</span>',
+    m.ready === false ? '<span class="kpi-bd-tag rate">无账号</span>' : '<span class="dim">有账号</span>',
   ]);
-  const cols = [{label: '#', num: true}, {label: '模型'}, {label: '供应商'}, {label: '状态'}];
+  const cols = [{label: '#', num: true}, {label: '模型'}, {label: '供应商'}, {label: '账号'}];
   return statTiles(tiles) + statTable(cols, rows)
-    + '<div class="sd-note">顺序就是当前策略（' + esc(label) + '）排出来的结果：客户端请求 route/auto 时从这份排名里挑第一个可用成员，'
-    + '同一会话在成员仍可用时保持粘性。这里只是预览，打开弹窗不会推进轮换；面板停用的模型不参与路由。</div>';
+    + '<div class="sd-note">顺序就是当前策略（' + esc(label) + '）排出来的结果：客户端请求 route/auto 时从这份排名里挑第一个成员，'
+    + '同一会话在成员还能用时保持粘性。「账号」列只表示有没有接入账号 / 密钥，不是实测可用性。'
+    + '这里只是预览，打开弹窗不会推进轮换；面板停用的模型不参与路由。</div>';
 }
 
 /* ---- 用量：网关调用量 / 积分消耗（同一份 /usage 载荷） ---- */

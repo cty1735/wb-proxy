@@ -135,6 +135,17 @@ check("五种策略", [s["id"] for s in status.get("strategies") or []]
       == list(P.ROUTING_STRATEGIES))
 check("有候选预览", isinstance(status.get("models"), list))
 check("有决策列表", isinstance(status.get("decisions"), list))
+# 明细弹窗要看完整排名：full=True 回全部候选，默认预览仍是前 40 条且顺序一致。
+full = P.routing_status(full=True)
+check("预览最多 40 条", len(status.get("models") or []) <= 40,
+      len(status.get("models") or []))
+check("full 给完整排名",
+      len(full.get("models") or []) == full.get("candidates"),
+      (len(full.get("models") or []), full.get("candidates")))
+check("full 与预览前 40 条一致",
+      [m["model"] for m in (full.get("models") or [])[:40]]
+      == [m["model"] for m in (status.get("models") or [])],
+      "")
 
 route = P.resolve_routing_model("order")
 check("order 能选出成员", bool(route and route.get("public")), route)
