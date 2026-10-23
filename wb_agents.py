@@ -1330,8 +1330,15 @@ def dsh_patch_projection(text):
     if body:
         for match in re.finditer(
                 r"(?m)(?:^|[{,])\s*-?\s*[\"']?id[\"']?\s*:\s*"
-                r"(?:'([^']*)'|\"((?:[^\"\\]|\\.)*)\"|([^,\s}]+))", body):
+                r"(?:'([^']*)'|\"((?:[^\"\\]|\\.)*)\"|([^\n,}]+))", body):
             raw = next((g for g in match.groups() if g is not None), "")
+            if match.group(3) is not None:
+                # 未加引号的 id 可以带空格（`deepseek-v4-pro · WorkBuddy-cn`）。
+                # 第三组以前停在第一个空白，投影就把 id 截成 `deepseek-v4-pro`；
+                # DSH 自己重写 patch 时会去掉引号，于是记录里的全名和重算结果
+                # 对不上，这个客户端被误判成「用户手改过我们那段」，池子的同
+                # 步就再也不碰它。这里取到行尾/逗号/右括号为止，并去掉注释。
+                raw = raw.split(" #", 1)[0].strip()
             ids.append(raw.replace('\\"', '"'))
     default = None
     span = _dsh_find_entry(text, DSH_DEFAULT_ENTRY)

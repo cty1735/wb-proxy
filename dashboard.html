@@ -5149,7 +5149,7 @@ html.chromeless .app-body{padding-top:14px}
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="primary" id="btnPoolRefresh" onclick="refreshModelCatalog(this)">刷新全部模型清单</button>
-        <button class="sec" id="btnPoolSync" onclick="syncPoolToClients(this)" title="把池子的统一模型清单写进已接入的客户端配置（不写 X-Provider，靠 id 后缀路由）">同步到客户端</button>
+        <button class="sec" id="btnPoolSync" onclick="syncPoolToClients(this)" title="立即把「路由」池子最新的全量模型清单写进已接入的客户端（不写 X-Provider，靠 id 后缀路由）">同步到客户端</button>
         <button class="sec" id="btnRoutingRefresh" onclick="loadRouting(true)" title="重新读取策略、候选排名与最近决策">刷新状态</button>
       </div>
     </div>
@@ -6951,7 +6951,7 @@ html.chromeless .app-body{padding-top:14px}
           <div style="font-size:12px;color:var(--dim);margin-top:4px">检测到以下客户端安装在本机；点击「一键配置」即可让它改走本网关，原配置自动备份，可随时还原。</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="sec mini" onclick="syncAgentModels(this)" title="把当前网关的模型清单重新写进已配置的客户端（OpenCode 等把模型写死在配置文件里）">同步模型清单</button>
+          <button class="sec mini" onclick="syncAgentModels(this)" title="立即把「路由」池子最新的全量模型清单写进已接入的客户端（OpenCode 等把模型写死在配置文件里）">同步模型清单</button>
         </div>
       </div>
       <div id="agentCardGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px"></div>
@@ -9618,19 +9618,40 @@ window.closeStatDetail = closeStatDetail;
   });
 })();
 
+/* 手动「同步模型」：永远把「路由」池子最新的全量模型写进已接入的 Agent。
+   以前这里按当前顶部网关视图、用页面缓存的模型清单逐客户端 /agents/apply：
+   不在「路由」标签下时同步的是单家目录（还可能是旧缓存）。现在直接让网关
+   服务端按最新池子重写一遍并带回同步/跳过结果，点一下就是实时生效的。 */
 async function syncPoolToClients(btn){
   if(btn) btn.disabled = true;
   const prev = btn ? btn.textContent : '';
   if(btn) btn.textContent = '同步中...';
   try{
+    const r = await postJSON('/agents/sync', {});
+    if(r && r.ok === false){
+      throw new Error((r.msg || r.message
+                       || (r.error && r.error.message)) || '同步失败');
+    }
     await loadAgents();
-    const synced = await syncAppliedAgents();
-    toast(synced
-      ? '已把池子的统一模型清单同步到 ' + synced + ' 个客户端（重启客户端后生效）'
-      : '没有已接入的客户端需要同步：先在「接入」页接入一个客户端',
-      synced ? 'ok' : 'warn');
+    const synced = (r && r.synced) || [];
+    const skipped = (r && r.skipped) || [];
+    if(synced.length){
+      toast('已把路由池子的最新模型清单同步到 ' + synced.length
+            + ' 个客户端（重启客户端后生效）', 'ok');
+      if(skipped.length){
+        toast('另外跳过 ' + skipped.length + ' 个（手工改过或钉死单家）：'
+              + skipped.join('、'), 'warn');
+      }
+    }else if(skipped.length){
+      toast('没有可同步的客户端，跳过 ' + skipped.length
+            + ' 个（手工改过或钉死单家）：' + skipped.join('、'), 'warn');
+    }else{
+      toast('没有可同步的客户端：还没有客户端接入本网关', 'warn');
+    }
+    return synced.length;
   }catch(e){
-    toast('同步到客户端失败：' + e.message, 'bad');
+    if(!isAuthError(e)) toast('同步失败: ' + e.message, 'bad');
+    return 0;
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = prev; }
   }
@@ -20198,32 +20219,11 @@ async function syncAppliedAgents(){
   return synced;
 }
 
-/* 手动把当前网关的模型清单同步进已配置的客户端（不用切网关）。
-   OpenCode / Crush / ZCode / DSH 把模型写死在各自的配置文件里，模型表不刷新，
-   选择器里就一直停在上一个提供商的目录——「切了网关，模型却没变」。
-   客户端多数只在启动时读一次配置：同步完要重启客户端（或让它重载配置）。 */
+/* 智能体配置页的「同步模型清单」：和路由页的「同步到客户端」是同一个动作——
+   把路由池子最新的全量模型写进已接入的客户端（不看当前停在哪个网关标签）。
+   直接复用 syncPoolToClients，避免两处行为再次分叉。 */
 async function syncAgentModels(btn){
-  if(btn){ btn.disabled = true; }
-  try{
-    await loadAgents();
-    const synced = await syncAppliedAgents();
-    const skipped = agentClients().filter(c =>
-      c.applied && c.applied.external_change);
-    await loadAgents();
-    if(synced){
-      toast('已把当前网关的模型清单同步到 ' + synced + ' 个客户端（重启客户端后生效）', 'ok');
-    }else{
-      toast('没有可同步的客户端：还没有客户端指向本网关', 'warn');
-    }
-    if(skipped.length){
-      toast('跳过 ' + skipped.length + ' 个被手工改过的客户端：'
-            + skipped.map(c => (c.label || c.id)).join('、'), 'warn');
-    }
-  }catch(e){
-    if(!isAuthError(e)) toast('同步失败: ' + e.message, 'bad');
-  }finally{
-    if(btn){ btn.disabled = false; }
-  }
+  return syncPoolToClients(btn);
 }
 
 async function restoreAgent(id, btn){

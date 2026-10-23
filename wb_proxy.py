@@ -23003,6 +23003,29 @@ class Handler(BaseHTTPRequestHandler):
             tag="agents")
         return self._json(200, result)
 
+    def _handle_agents_sync(self, payload):
+        """手动「同步模型」：把**路由池子**最新的全量模型写进已接入的 Agent。
+
+        和后台自动同步（sync_pool_agents）同一份实现，区别只有 force=True：
+        用户点了就一定重写一遍，不因为指纹没变而跳过；也不看面板当前停在哪个
+        网关标签（以前前端按当前视图的 /agents?provider=... 逐客户端 apply，
+        不在「路由」页时同步的是单家目录、还可能是旧缓存）。返回面板的
+        synced / skipped 两个列表，供按钮给出明确结果。
+        """
+        with _lock:
+            # 让这次同步用最新池子重建，而不是 20 秒内的旧缓存。
+            _pool_cache["at"] = 0.0
+        try:
+            out = sync_pool_agents(reason="manual", force=True)
+        except Exception as exc:
+            return self._error(500, "agents sync failed: %s" % exc)
+        if not out.get("ok"):
+            return self._error(500, out.get("msg") or "agents sync failed")
+        log("agents manual sync: synced=%d skipped=%d"
+            % (len(out.get("synced") or []), len(out.get("skipped") or [])),
+            tag="agents")
+        return self._json(200, out)
+
     def _handle_agents_restore(self, payload):
         wb_agents = agents_module()
         client_id = str(payload.get("client") or payload.get("client_id") or "").strip()
@@ -25545,7 +25568,7 @@ class Handler(BaseHTTPRequestHandler):
             if payload is None:
                 return
             return self._handle_proxy_slots(path, payload)
-        if path in ("/agents/apply", "/agents/restore"):
+        if path in ("/agents/apply", "/agents/restore", "/agents/sync"):
             if not self._panel_ok():
                 return self._error(
                     401, "panel password required", "invalid_request_error"
@@ -25561,6 +25584,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/agents/apply":
                 return self._handle_agents_apply(payload)
+            if path == "/agents/sync":
+                return self._handle_agents_sync(payload)
             return self._handle_agents_restore(payload)
         if path in ("/panel/login", "/panel/logout", "/panel/password"):
             return self._handle_panel(path)

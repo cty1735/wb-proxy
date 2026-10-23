@@ -19,6 +19,7 @@ DSH 界面里就一直停着旧模型表（重新应用 + 重启也没用）。�
 
 import io
 import os
+import re
 import sys
 import tempfile
 
@@ -140,6 +141,14 @@ def test_projection_formatting():
     check("缩进变化不影响投影",
           wb_agents.dsh_patch_projection(reindented)
           == wb_agents.dsh_patch_projection(out))
+    # DSH 的 YAML 写出器会去掉不必要的引号（`id: "a · B"` → `id: a · B`）。
+    # 投影必须拿到全名，不能在第一个空白处截断 —— 截断后和记录对不上，这个
+    # 客户端会被一直判成「用户手改过」，池子的同步再也不碰它。
+    unquoted = re.sub(r'id: "([^"]*)"', r"id: \1", out)
+    check("去引号不影响投影",
+          wb_agents.dsh_patch_projection(unquoted)
+          == wb_agents.dsh_patch_projection(out),
+          wb_agents.dsh_patch_projection(unquoted)["ids"][:3])
 
 
 def test_reasoning_levels():

@@ -128,6 +128,11 @@ try:
     check("指纹没变不写盘", out.get("changed") is False and
           not out.get("synced"), out)
 
+    # 手动「同步模型」走的是 force=True：指纹没变也要立即重写一遍。
+    out = P.sync_pool_agents(models=models_a(), reason="manual", force=True)
+    check("手动 force=True 立即重写", out.get("changed") is True and
+          "opencode" in (out.get("synced") or []), out)
+
     print("同步：清单变化 → 客户端跟着换")
     out = P.sync_pool_agents(models=models_b(), reason="test")
     cfg = read_json(CONFIG)
