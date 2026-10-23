@@ -4,6 +4,7 @@
 
 | 日期 | 功能 |
 | --- | --- |
+| 2026-10-23 | 修复**新装 DSH「一键配置」必失败**：DSH 新建的 `~/.dsh/.credentials.yaml` 默认是 `refs: {}`（flow 空 mapping），旧实现只认块式 `refs:`，直接抛 `cannot upsert into refs: {} - only a block-style refs: mapping is supported`。现在把 flow mapping 原地展开成块式（`refs: {}` → `refs:` + 缩进条目，行尾注释保留，已有条目如 `refs: {OTHER: x}` 一并保留）再写入，非 flow 的 inline 值（如 `refs: null`）仍然报错不静默改坏；顺带修掉空 `refs:` 块把第一条插到文件末尾空行之后的问题。自检 `tests/_test_dsh_credentials.py`。 |
 | 2026-10-23 | 免费模型预设新增 **Agnes AI**（`https://api.agnes-ai.cn/v1`，OpenAI 兼容，如 `agnes-2.5-flash`）：点预设只填名称 / 协议 / Base URL，Key 自己填；保存后总路由池子与已接入 Agent 立即更新，不用重启。 |
 | 2026-10-23 | 免费模型预设新增 **商汤 SenseNova**（`https://token.sensenova.cn/v1`，OpenAI 兼容，如 `sensenova-6.8-flash-lite`）：点一下只填名称 / 协议 / Base URL，Key 仍由操作者自己申请填入；保存后照原路径 `invalidate_egg_catalog_cache()` → 总路由池子重建 + 已接入 Agent 同步，模型以「模型名 · 池子名」进入路由页，不需要重启网关（实测：保存后 `/v1/models?provider=all` 立刻出现该条，删除后立刻消失、总数回到 149）。 |
 | 2026-10-23 | 修复**同一个模型 id 被多个供应商池挑走**时的两处问题：①「路由」清单只出现先登记的那条，后加的池子挑了也不显示；②客户端明明选的是 `模型名 · Dup B`，请求仍发给先登记的池子（只按 id 找池）。现在鸡蛋视图（`?provider=egg`）照旧按纯 id 去重（一个 id 一个去处），路由统一清单按「· 池名」各列一条，请求按后缀定位池子（`find_by_model(..., pool_label)` → `wb_zen.resolve/build_request/open_stream`）；被停用的池子后缀不再接流量，回落先登记那家。自检 `tests/_test_egg_duplicate_models.py`（两条公开 id、各自 URL 与 Key、停用回落），并用两个本地假上游实测 `· Dup B` 只打到 B。 |

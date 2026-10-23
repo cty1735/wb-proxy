@@ -370,7 +370,8 @@ def yaml_refs_upsert(text, key, value):
     """Upsert `key: value` inside the top-level `refs:` block.
 
     When the document has no `refs:` block yet, one is appended at the end.
-    A `refs:` line that already holds an inline value (e.g. `refs: {}`) is
+    A `refs:` line holding an inline flow mapping (DSH 新装默认就是
+    `refs: {}`) is expanded into a block first; any other inline value is
     outside the supported subset and raises AgentConfigError instead of
     being silently mangled.
     """
@@ -382,9 +383,18 @@ def yaml_refs_upsert(text, key, value):
                 and _yaml_indent(line) == 0 and _yaml_key(line) == "refs":
             after = line.split(":", 1)[1].strip()
             if after:
-                raise AgentConfigError(
-                    "cannot upsert into `refs: %s` - only a block-style "
-                    "refs: mapping is supported" % after)
+                flow, comment = after, ""
+                m = re.search(r"\s+#", after)
+                if m:
+                    flow = after[:m.start()].strip()
+                    comment = after[m.start():].rstrip()
+                if not (flow.startswith("{") and flow.endswith("}")):
+                    raise AgentConfigError(
+                        "cannot upsert into `refs: %s` - only a block-style "
+                        "refs: mapping is supported" % after)
+                _yaml_inline_to_block(lines, idx, "refs", flow)
+                if comment:
+                    lines[idx] += comment
             end = _yaml_block_end(lines, idx, 0)
             j = idx + 1
             while j < end:
@@ -394,6 +404,10 @@ def yaml_refs_upsert(text, key, value):
                     return "\n".join(lines)
                 j += 1
             insert = _yaml_insert_point(lines, idx + 1, end, 2)
+            if not any(lines[k].strip() for k in range(idx + 1, end)):
+                # 空块（刚由 `refs: {}` 展开）：紧跟 `refs:` 插入，别让文件末尾
+                # 的空行把第一条塞到空行后面。
+                insert = idx + 1
             lines[insert:insert] = ["  %s: %s" % (key, value)]
             return "\n".join(lines)
         idx += 1
