@@ -688,6 +688,34 @@ def _managed_projection(client, paths, contents):
     return str(projection)
 
 
+def _managed_values_match(recorded, current):
+    """True when the managed slice still matches what we wrote.
+
+    记录里值为 null 的字段按「没记录」处理：旧版本的 DSH 投影把 credential
+    恒写成 null（它用 dotenv 读取器去读 YAML），修复后第一次重算必然与记录
+    不同。若照直比对，所有已接入的 DSH 会一次性被读成 external_change，
+    池子的自动同步之后就再也不碰它们了。真正的改动（记录有值、现值不同）
+    仍然算 external_change。
+    """
+    if recorded == current:
+        return True
+    try:
+        old = json.loads(recorded)
+        new = json.loads(current)
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return False
+    if set(old) != set(new):
+        return False
+    for key, value in old.items():
+        if value is None:
+            continue
+        if new.get(key) != value:
+            return False
+    return True
+
+
 def _managed_fingerprint(client, paths, contents):
     """Hash of the slice of the client's files the gateway owns.
 
@@ -1441,6 +1469,22 @@ def _apply_dsh(paths, ctx):
     return out
 
 
+def _dsh_credential(text):
+    """The gateway key recorded in DSH's `.credentials.yaml`.
+
+    DSH stores it as a YAML entry under the top-level `refs:` mapping
+    (`WB_PROXY_API_KEY: wb-xxx`), which `_env_value` (a dotenv `KEY=VALUE`
+    reader) can never see - that made the managed slice compare `null` against
+    the real key and turned a working integration into an "external change".
+    Quotes are spelling, so the value is normalised like every other leaf;
+    a dotenv-shaped file is still accepted as a fallback.
+    """
+    value = _yaml_leaf(text, "refs." + CREDENTIAL_REF)
+    if value is None:
+        value = _env_value(text, CREDENTIAL_REF)
+    return None if value is None else _yaml_value(value)
+
+
 def _managed_dsh(paths, contents):
     """The provider entry, the default model and the credential reference."""
     text = contents.get(paths["settings"]) or ""
@@ -1450,7 +1494,7 @@ def _managed_dsh(paths, contents):
         if key.startswith("patch:"):
             patches[key] = dsh_patch_projection(contents.get(path) or "")
     payload = {
-        "credential": _env_value(cred, CREDENTIAL_REF),
+        "credential": _dsh_credential(cred),
         "patches": patches,
     }
     if not patches:
@@ -1882,7 +1926,8 @@ def overview(accounts_dir, home=None):
                 # 比就会读成「用户改了我们那段」，面板重刷模型清单时跳过这个
                 # 客户端 —— 它的模型表就一直停在上一家提供商的目录上。
                 current = _managed_projection(client, paths, contents)
-                external = (current is None or current != managed_values)
+                external = (current is None
+                            or not _managed_values_match(managed_values, current))
             else:
                 # 旧记录只存了指纹、没有可比对的取值：无从判断我们那段有没有
                 # 被改过。先当作没被改——切网关时我们要做的正是「把我们那段
