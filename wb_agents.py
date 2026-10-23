@@ -947,6 +947,353 @@ def _managed_opencode(paths, contents):
                       sort_keys=True, ensure_ascii=False)
 
 
+# ---------------------------------------------------------------------------
+# DSH profile patches ($DSH_HOME[/profiles/<name>]/cordis.patch.yml)
+# ---------------------------------------------------------------------------
+# 新版 DSH 带 Settings 服务：启动后把 `$DSH_HOME/settings.yaml` **一次性导入
+# 当前 profile 的 cordis.patch.yml**，再把原文件改名成 `settings.yaml.imported`。
+# 之后它只读 patch —— patch 里的 `- id: llm-pi-ai` 是整段替换该插件的 config，
+# 只要那里写着 wb-proxy，settings.yaml 里再写一份也不会生效，客户端的模型
+# 选择器就一直停在旧模型表上（面板「重新应用」+ 重启 DSH 都没用的原因）。
+# 所以模型表要直接写进 patch：块式 patch（GUI 的 desktop profile）写块式
+# YAML，flow 式 patch（TUI 的 `[{id: llm-pi-ai, ...}]`）写 JSON 式子串，
+# 同一份 patch 里的其它 provider（zen-gate 等）原样保留。
+DSH_PATCH_ENTRY = "llm-pi-ai"
+DSH_DEFAULT_ENTRY = "agent-default-model"
+
+#: DSH 只认这几个思考档位键（llm-pi-ai 的 config schema 就是这一组）。
+#: 上游的档位名不在其中时整条 `llm-pi-ai` 会 ValidationError **整个不激活**，
+#: 结果是选择器里只剩插件自带的免费模型、默认模型显示「请选择模型」。
+DSH_EFFORT_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
+#: 上游档位名 → DSH 档位键。值（真正发给上游的拼写）保持原样。
+DSH_EFFORT_ALIASES = {
+    "light": "low",
+    "extra_high": "xhigh",
+    "extra-high": "xhigh",
+    "very_high": "xhigh",
+}
+
+
+def _dsh_root(home):
+    return os.path.join(home, ".dsh")
+
+
+def _dsh_patch_paths(home):
+    """Existing patch files that already configure `llm-pi-ai`."""
+    root = _dsh_root(home)
+    candidates = [os.path.join(root, "cordis.patch.yml")]
+    profiles = os.path.join(root, "profiles")
+    try:
+        names = sorted(os.listdir(profiles))
+    except OSError:
+        names = []
+    for name in names:
+        if os.path.isdir(os.path.join(profiles, name)):
+            candidates.append(os.path.join(profiles, name,
+                                           "cordis.patch.yml"))
+    out = []
+    for path in candidates:
+        if not os.path.isfile(path):
+            continue
+        try:
+            text = _read_text(path)
+        except AgentConfigError:
+            continue
+        # 只有已经声明了本插件、并且已经有一个 providers 映射的 patch 才能
+        # 安全地合并；缺 `llm-pi-ai` 条目的 patch 得整段新建，那会连带替换
+        # 掉 base bundle 里的 provider 表，所以宁可不碰。
+        if DSH_PATCH_ENTRY in text and "providers" in text:
+            out.append(path)
+    return out
+
+
+def _flow_end(text, start):
+    """Index one past the flow collection (`{`/`[`) opening at `start`."""
+    opener = text[start]
+    closer = "}" if opener == "{" else "]"
+    depth = 0
+    quote = None
+    i = start
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if quote == '"' and ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch == opener:
+            depth += 1
+        elif ch == closer:
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return len(text)
+
+
+def _flow_items(text, start, end):
+    """(start, end) of every top-level item of the flow collection."""
+    items = []
+    depth = 0
+    quote = None
+    item_start = start + 1
+    i = start + 1
+    while i < end - 1:
+        ch = text[i]
+        if quote:
+            if quote == '"' and ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            items.append((item_start, i))
+            item_start = i + 1
+        i += 1
+    items.append((item_start, end - 1))
+    out = []
+    for a, b in items:
+        while a < b and text[a] in " \t\r\n":
+            a += 1
+        while b > a and text[b - 1] in " \t\r\n":
+            b -= 1
+        if b > a:
+            out.append((a, b))
+    return out
+
+
+def _dsh_entry_spans(text):
+    """(start, end) of every top-level entry of a Cordis patch document."""
+    # 文档开头可能是一段注释（profile patch 的模板头），跳过它再判断形态。
+    content_at = 0
+    for line in text.split("\n"):
+        if line.strip() and not line.strip().startswith("#"):
+            break
+        content_at += len(line) + 1
+    if content_at < len(text) and text[content_at] == "[":
+        end = _flow_end(text, content_at)
+        return _flow_items(text, content_at, end)
+    spans = []
+    offset = 0
+    current = None
+    for line in text.split("\n"):
+        if line[:1] == "-" and line[1:2] in (" ", "\t"):
+            if current is not None:
+                spans.append((current, offset))
+            current = offset
+        offset += len(line) + 1
+    if current is not None:
+        spans.append((current, min(offset, len(text))))
+    return spans
+
+
+def _dsh_find_entry(text, entry_id):
+    """(start, end) of the patch entry whose `id` is `entry_id`."""
+    pattern = re.compile(
+        r"(?<![A-Za-z0-9_.])id:\s*['\"]?%s['\"]?(?=\s*[,}\n])"
+        % re.escape(entry_id))
+    for start, end in _dsh_entry_spans(text):
+        if pattern.search(text[start:end]):
+            return (start, end)
+    return None
+
+
+def _yaml_scalar(value):
+    """A YAML-safe scalar for the subset we emit (JSON quoting when unsure)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    text = str(value)
+    if re.match(r"^[A-Za-z][A-Za-z0-9_.\-/ ]*$", text) \
+            and text.lower() not in ("true", "false", "null", "yes", "no",
+                                     "on", "off") \
+            and not text.endswith(" "):
+        return text
+    return json.dumps(text, ensure_ascii=False)
+
+
+def _yaml_emit(value, indent):
+    """Block-style YAML lines for dicts / lists of scalars."""
+    pad = " " * indent
+    lines = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            head = pad + _yaml_scalar(key) + ":"
+            if isinstance(item, dict) and item:
+                lines.append(head)
+                lines.extend(_yaml_emit(item, indent + 2))
+            elif isinstance(item, list) and item:
+                lines.append(head)
+                lines.extend(_yaml_emit(item, indent + 2))
+            elif isinstance(item, dict):
+                lines.append(head + " {}")
+            elif isinstance(item, list):
+                lines.append(head + " []")
+            else:
+                lines.append(head + " " + _yaml_scalar(item))
+        return lines
+    for item in value:
+        if isinstance(item, dict) and item:
+            sub = _yaml_emit(item, indent + 2)
+            lines.append(pad + "- " + sub[0][indent + 2:])
+            lines.extend(sub[1:])
+        elif isinstance(item, list) and item:
+            lines.append(pad + "-")
+            lines.extend(_yaml_emit(item, indent + 2))
+        else:
+            lines.append(pad + "- " + _yaml_scalar(item))
+    return lines
+
+
+def _dsh_patch_set_provider(text, span, provider):
+    """Put `providers.wb-proxy` of one patch entry in, replacing the old one."""
+    start, end = span
+    entry = text[start:end]
+    lines = entry.split("\n")
+    for idx, line in enumerate(lines):
+        if line.strip() != "providers:":
+            continue
+        base = _yaml_indent(line)
+        block_end = _yaml_block_end(lines, idx, base)
+        child = None
+        probe = idx + 1
+        while probe < block_end:
+            if lines[probe].strip() and _yaml_indent(lines[probe]) > base:
+                if child is None:
+                    child = _yaml_indent(lines[probe])
+                if child == _yaml_indent(lines[probe]) \
+                        and _yaml_key(lines[probe]) == PROVIDER_ID:
+                    old_end = _yaml_block_end(lines, probe, child)
+                    lines[probe:old_end] = _yaml_emit(
+                        {PROVIDER_ID: provider}, child)
+                    return text[:start] + "\n".join(lines) + text[end:]
+            probe += 1
+        if child is None:
+            child = base + 2
+        insert = _yaml_insert_point(lines, idx + 1, block_end, child)
+        lines[insert:insert] = _yaml_emit({PROVIDER_ID: provider}, child)
+        return text[:start] + "\n".join(lines) + text[end:]
+    # flow 式（`config: {providers: {...}}`）：换掉/插入一个 JSON 子串。
+    match = re.search(r"(?<![\w.-])providers:\s*(\{)", entry)
+    if not match:
+        return text
+    open_at = match.start(1)
+    close_at = _flow_end(entry, open_at)
+    pair = "%s: %s" % (PROVIDER_ID, json.dumps(
+        provider, ensure_ascii=False, separators=(",", ":")))
+    for item_start, item_end in _flow_items(entry, open_at, close_at):
+        body = entry[item_start:item_end]
+        if re.match(r"^['\"]?%s['\"]?\s*:" % re.escape(PROVIDER_ID), body):
+            entry = entry[:item_start] + pair + entry[item_end:]
+            return text[:start] + entry + text[end:]
+    insert_at = open_at + 1
+    body = entry[insert_at:close_at - 1].strip()
+    entry = entry[:insert_at] + (" " if body else "") + pair + \
+        (", " if body else "") + entry[insert_at:]
+    return text[:start] + entry + text[end:]
+
+
+def _dsh_patch_set_default(text, span, model):
+    """Point an `agent-default-model` entry that already routes to us at `model`."""
+    start, end = span
+    entry = text[start:end]
+    if PROVIDER_ID not in entry:
+        return text
+    for key, value in (("provider", PROVIDER_ID), ("model", model)):
+        pattern = re.compile(r"(?m)^( +%s:\s*).*$" % key)
+
+        def repl(match, value=value):
+            return match.group(1) + _yaml_scalar(value)
+
+        if pattern.search(entry):
+            entry = pattern.sub(repl, entry, count=1)
+        else:
+            flow = re.compile(r"(?<![\w.-])%s:\s*([^,}\n]+)" % key)
+            if flow.search(entry):
+                entry = flow.sub(
+                    lambda m, k=key, v=value: "%s: %s" % (k, _yaml_scalar(v)),
+                    entry, count=1)
+    return text[:start] + entry + text[end:]
+
+
+def dsh_patch_apply(text, provider, model=None):
+    """Merge our provider (and default model) into a Cordis patch document."""
+    span = _dsh_find_entry(text, DSH_PATCH_ENTRY)
+    if not span:
+        return text
+    text = _dsh_patch_set_provider(text, span, provider)
+    if model:
+        span = _dsh_find_entry(text, DSH_DEFAULT_ENTRY)
+        if span:
+            text = _dsh_patch_set_default(text, span, model)
+    return text
+
+
+def _dsh_patch_region(text):
+    """The `wb-proxy` provider body of a patch, or None when absent."""
+    span = _dsh_find_entry(text, DSH_PATCH_ENTRY)
+    if not span:
+        return None
+    entry = text[span[0]:span[1]]
+    lines = entry.split("\n")
+    for idx, line in enumerate(lines):
+        if line.strip() == "providers:":
+            block_end = _yaml_block_end(lines, idx, _yaml_indent(line))
+            for probe in range(idx + 1, block_end):
+                if lines[probe].strip() \
+                        and _yaml_key(lines[probe]) == PROVIDER_ID:
+                    child = _yaml_indent(lines[probe])
+                    stop = _yaml_block_end(lines, probe, child)
+                    return "\n".join(lines[probe:stop])
+            return ""
+    match = re.search(r"(?<![\w.-])providers:\s*\{", entry)
+    if not match:
+        return None
+    open_at = match.start() + match.group(0).rindex("{")
+    close_at = _flow_end(entry, open_at)
+    for item_start, item_end in _flow_items(entry, open_at, close_at):
+        body = entry[item_start:item_end]
+        if re.match(r"^['\"]?%s['\"]?\s*:" % re.escape(PROVIDER_ID), body):
+            return body
+    return ""
+
+
+def dsh_patch_projection(text):
+    """Formatting-insensitive view of the slice we own in a patch.
+
+    DSH 自己（Settings 表单、`update()`）也会重写 patch，格式会变；只比模型
+    id 顺序与默认模型，重排/缩进不被误判成「用户手改过我们那段」。
+    """
+    body = _dsh_patch_region(text)
+    ids = []
+    if body:
+        for match in re.finditer(
+                r"(?m)(?:^|[{,])\s*-?\s*[\"']?id[\"']?\s*:\s*"
+                r"(?:'([^']*)'|\"((?:[^\"\\]|\\.)*)\"|([^,\s}]+))", body):
+            raw = next((g for g in match.groups() if g is not None), "")
+            ids.append(raw.replace('\\"', '"'))
+    default = None
+    span = _dsh_find_entry(text, DSH_DEFAULT_ENTRY)
+    if span and PROVIDER_ID in text[span[0]:span[1]]:
+        entry = text[span[0]:span[1]]
+        model = re.search(r"(?<![A-Za-z0-9_.])model:\s*"
+                          r"(?:'([^']*)'|\"([^\"]*)\"|([^,\n}]+))", entry)
+        if model:
+            value = next((g for g in model.groups() if g is not None), "")
+            default = "%s/%s" % (PROVIDER_ID, value.strip())
+    return {"ids": ids, "default": default}
+
+
 def dsh_reasoning_levels(raw):
     """{档位: 线上拼写} for DSH, from the gateway's `reasoning_efforts` list.
 
@@ -956,6 +1303,12 @@ def dsh_reasoning_levels(raw):
     contextWindow / maxTokens。网关宣告的档位名就是上游认的拼写，一一照抄即可；
     固定档位的模型（网关只给 reasoning_fixed_effort）没有列表，就不声明：给了
     选择器也不会改变上游实际跑的档位。
+
+    键必须是 DSH 认得的那七个（DSH_EFFORT_LEVELS）：它按 schema 校验，出现
+    一个不认识的档位名（Trae 的 light / extra_high 就是）整条 `llm-pi-ai`
+    配置直接不激活，选择器里连 wb-proxy 这个 provider 都不会出现。所以先按
+    DSH_EFFORT_ALIASES 换成近似档位，换不出来又不在白名单里的就丢掉；丢剩
+    空的就不写这段。
     """
     if isinstance(raw, dict):
         pairs = list(raw.items())
@@ -968,7 +1321,10 @@ def dsh_reasoning_levels(raw):
         name = str(level or "").strip()
         if not name:
             continue
-        levels[name] = str(wire or "").strip() or name
+        key = DSH_EFFORT_ALIASES.get(name.lower(), name.lower())
+        if key not in DSH_EFFORT_LEVELS:
+            continue
+        levels[key] = str(wire or "").strip() or name
     return levels or None
 
 
@@ -1047,20 +1403,43 @@ def _apply_dsh(paths, ctx):
     credentials_path = paths["credentials"]
     cred_text = _read_text(credentials_path)
     cred_text = yaml_refs_upsert(cred_text, CREDENTIAL_REF, ctx["api_key"])
-    return {settings_path: text, credentials_path: cred_text}
+    out = {settings_path: text, credentials_path: cred_text}
+    # settings.yaml 只对旧版 DSH 有效：新版启动时会把它导入当前 profile 的
+    # cordis.patch.yml 再改名。真正被读取的是 patch，所以两份都写。
+    for key, path in paths.items():
+        if not key.startswith("patch:"):
+            continue
+        current = _read_text(path)
+        updated = dsh_patch_apply(current, provider, ctx.get("model") or None)
+        # 原样返回：即使没改动也要进 plan/integrate 的文件表，否则 state 里
+        # 记不到这份 patch，overview() 会把「文件里有、记录里没有」读成
+        # external_change，之后池子的自动同步就再也不碰它了。
+        out[path] = updated
+    return out
 
 
 def _managed_dsh(paths, contents):
     """The provider entry, the default model and the credential reference."""
     text = contents.get(paths["settings"]) or ""
     cred = contents.get(paths["credentials"]) or ""
-    return json.dumps({
-        "provider": _yaml_json_value(
-            _yaml_leaf(text, "llm-pi-ai.providers." + PROVIDER_ID)),
-        "default_model": _yaml_value(
-            _yaml_leaf(text, "agent-default-model")),
+    patches = {}
+    for key, path in paths.items():
+        if key.startswith("patch:"):
+            patches[key] = dsh_patch_projection(contents.get(path) or "")
+    payload = {
         "credential": _env_value(cred, CREDENTIAL_REF),
-    }, sort_keys=True, ensure_ascii=False)
+        "patches": patches,
+    }
+    if not patches:
+        # 旧版 DSH 只读 settings.yaml：它才是唯一真源。新版会把 settings.yaml
+        # 导入 patch 后改名成 .imported，文件本身随时可能消失——那时再拿它
+        # 参与比对，就会把「DSH 自己改名了」读成「用户手改过我们那段」，
+        # 之后池子的自动同步再也不碰这个客户端。
+        payload["provider"] = _yaml_json_value(
+            _yaml_leaf(text, "llm-pi-ai.providers." + PROVIDER_ID))
+        payload["default_model"] = _yaml_value(
+            _yaml_leaf(text, "agent-default-model"))
+    return json.dumps(payload, sort_keys=True, ensure_ascii=False)
 
 
 def _apply_crush(paths, ctx):
@@ -1322,12 +1701,17 @@ CLIENTS = {
     "dsh": {
         "id": "dsh",
         "label": "DeepSeek Harness",
-        "desc": "DSH; adds a wb-proxy provider to settings.yaml.",
+        "desc": "DSH; adds a wb-proxy provider to settings.yaml and to the "
+                "profile cordis.patch.yml that current releases actually read.",
         "protocol": "openai",
-        "files": lambda home: {
-            "settings": os.path.join(home, ".dsh", "settings.yaml"),
-            "credentials": os.path.join(home, ".dsh", ".credentials.yaml"),
-        },
+        "files": lambda home: dict(
+            {
+                "settings": os.path.join(home, ".dsh", "settings.yaml"),
+                "credentials": os.path.join(home, ".dsh", ".credentials.yaml"),
+            },
+            **{"patch:" + os.path.basename(os.path.dirname(path)): path
+               for path in _dsh_patch_paths(home)},
+        ),
         "probe": lambda home: (
             os.path.isdir(os.path.join(home, ".dsh"))
             or os.path.isfile(os.path.join(home, ".dsh", "settings.yaml"))
@@ -1820,8 +2204,9 @@ def fetch_models_from_gateway(base_url, api_key, timeout=10):
                 entry["source_label"] = str(source_label)
         models.append(entry)
     # Same cap as the panel's apply: a runaway catalog must not turn into a
-    # megabyte config file.
-    return models[:80]
+    # megabyte config file. 面板在「路由」池子视图下放行 200 条（池子是四家
+    # 网关合成的，149 条是常态），命令行也只有这一条清单可拿，所以同样按 200。
+    return models[:200]
 
 
 def _default_state_dir():
