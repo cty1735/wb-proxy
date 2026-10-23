@@ -3506,7 +3506,7 @@ _FREE_MODELS_TTL = 60.0
 
 # 目录里读得到的消耗倍率，按出口缓存。免费模型判定、KPI 明细的「倍率」列和
 # 「积分 / 费用排除免费模型」都读这一份（见 _catalog_rates_by_realm）。
-_catalog_rates_cache = {"at": 0.0, "data": None}
+_catalog_rates_cache = {"at": 0.0, "data": None, "digest": None}
 _CATALOG_RATES_TTL = 60.0
 
 
@@ -3548,6 +3548,64 @@ def _static_catalog_sources(realm):
     return out
 
 
+def read_persisted_catalog(realm):
+    """(ids, meta) from the gateway's own copy of its last /v3/config response.
+
+    persist_remote_catalog() writes that file on every successful fetch, so its
+    mtime is how old the rates the gateway itself has seen are. Parsed exactly
+    like the desktop cache file: both are the same upstream payload.
+    """
+    try:
+        with open(catalog_cache_path(realm), encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except Exception:
+        return None
+    return parse_remote_catalog(payload)
+
+
+def _fresh_catalog_rates(realm):
+    """model id -> credits from the newest local copy of the realm catalogue.
+
+    两份本地副本描述同一件事：网关自己最近一次成功拉取的 /v3/config
+    （catalog/product-config-<realm>.json，见 persist_remote_catalog）和桌面
+    客户端的缓存文件（product_config_path）。桌面那份要等客户端自己再拉一次
+    才更新，可能停在旧价上；网关那份每次成功取数都重写。所以按文件 mtime 只
+    用较新的那一份，**不把两份混起来**——合并会让旧值盖掉新值。历史上正是
+    cn 桌面缓存里的 deepseek-v4.1-flash x0.00 盖住了价格表里的 x0.11，把一个
+    国内版按积分计费的模型显示成「限时免费」、积分也被抹成 0。
+
+    读不到任何一份时返回空：调用方保留内置快照的倍率，宁可少改也不瞎猜。
+    只收 meta 自己点名的那批 id（parse_remote_catalog 的 walk 会顺带收下
+    agents[].models 之类的中间节点）。
+    """
+    candidates = []
+    for path, reader in ((catalog_cache_path(realm), read_persisted_catalog),
+                         (product_config_path(realm), read_cached_remote_catalog)):
+        try:
+            candidates.append((os.path.getmtime(path), reader))
+        except OSError:
+            continue
+    if not candidates:
+        return {}
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    for _at, reader in candidates:
+        parsed = reader(realm)
+        if not parsed:
+            continue
+        ids, meta = parsed
+        out = {}
+        for mid in ids or []:
+            item = (meta or {}).get(mid)
+            if not isinstance(item, dict):
+                continue
+            raw = str(item.get("credits") or "").strip()
+            if raw:
+                out[str(mid)] = raw
+        if out:
+            return out
+    return {}
+
+
 def _catalog_rates_by_realm():
     """realm -> {model id: credits string} for every locally known catalogue.
 
@@ -3560,6 +3618,12 @@ def _catalog_rates_by_realm():
 
     Qoder's ids are display names ("Efficient"), because that is what its
     catalogue advertises and what the usage rows record.
+
+    Remote-era WorkBuddy rates come from whichever local copy of the realm
+    catalogue is newer (the gateway's own /v3/config copy vs the desktop cache,
+    see _fresh_catalog_rates): a desktop cache that still says x0.00 for a model
+    the upstream now bills is the one way this table can disagree with what the
+    account was actually charged.
     """
     now = time.time()
     data = _catalog_rates_cache.get("data")
@@ -3576,32 +3640,34 @@ def _catalog_rates_by_realm():
                 raw = str(item.get("credits") or "").strip()
                 if mid and raw:
                     rates[mid] = raw
-        cached = read_cached_remote_catalog(realm)
-        if cached:
-            ids, meta = cached
-            # 只收 meta 自己点名的那批：parse_remote_catalog 的 walk 会顺带
-            # 收下 agents[].models 之类的中间节点（它们的 id 是 "credits" 这种
-            # 字段名），不能当模型倍率用。
-            for mid in ids or []:
-                item = (meta or {}).get(mid)
-                if not isinstance(item, dict):
-                    continue
-                raw = str(item.get("credits") or "").strip()
-                if raw:
-                    rates[str(mid)] = raw
+        for mid, raw in _fresh_catalog_rates(realm).items():
+            rates[str(mid)] = raw
         out[realm] = rates
-    _catalog_rates_cache.update({"at": now, "data": out})
+    _catalog_rates_cache.update({"at": now, "data": out,
+                                 "digest": _object_digest(out)})
     return out
+
+
+def _catalog_rates_digest():
+    """当前这份倍率表的摘要（算不出来给空串，让指纹仍然可比）。
+
+    折叠按它判「限时免费」，并据此把积分与金额归零，所以它也是聚合缓存的
+    指纹之一（见 _realm_inputs）：目录价格一变，旧 checkpoint 必须重折，
+    否则详情里会一直挂着一份与现在价表不符的积分。
+    """
+    _catalog_rates_by_realm()
+    return _catalog_rates_cache.get("digest") or ""
 
 
 def free_models_by_realm():
     """realm -> set of model ids the catalogue marks free ("x0.00").
 
-    Built from the bundled snapshot and the desktop cache file - both local
-    reads, no network - and cached for a minute so the request path pays
-    nothing. The daily credit guard uses it to tell paid models from free
-    ones, per realm: the same id can be free on one exit and paid on the
-    other.
+    Built from the bundled snapshot and the newest local copy of the realm
+    catalogue (see _fresh_catalog_rates) - both local reads, no network - and
+    cached for a minute so the request path pays nothing. The daily credit
+    guard uses it to tell paid models from free ones, per realm: the same id
+    can be free on one exit and paid on the other, and a stale desktop cache
+    must not keep a now-billed model out of the guard.
     """
     now = time.time()
     data = _free_models_cache.get("data")
@@ -3617,11 +3683,9 @@ def free_models_by_realm():
             mid = str(item.get("id") or "").strip()
             if mid and credits_is_free(item.get("credits")):
                 free.add(mid)
-        cached = read_cached_remote_catalog(realm)
-        if cached:
-            for mid, item in (cached[1] or {}).items():
-                if isinstance(item, dict) and credits_is_free(item.get("credits")):
-                    free.add(str(mid))
+        for mid, raw in _fresh_catalog_rates(realm).items():
+            if credits_is_free(raw):
+                free.add(str(mid))
         out[realm] = free
     _free_models_cache.update({"at": now, "data": out})
     return out
@@ -4106,12 +4170,12 @@ def _pricing_used_unchanged(record, pricing):
 
 
 def _realm_inputs():
-    """What row_realm() consults for a row that carries no realm field.
+    """What the folds read besides the log rows: realm attribution + rates.
 
-    Rows written before the field existed - an error row with no account - are
-    attributed to the account that served them, or to the model's home realm.
-    Importing or dropping an account can therefore move such a row from one
-    exit to the other, and a cached aggregate must not outlive that.
+    Rows written before the realm field existed - an error row with no account -
+    are attributed to the account that served them, or to the model's home
+    realm. Importing or dropping an account can therefore move such a row from
+    one exit to the other, and a cached aggregate must not outlive that.
 
     这两样（当前出口 + uid→realm 归属）从**磁盘**同步读，而不是从活账号池的
     内存映射读。池是启动时从同一份磁盘加载的快照，但「它什么时候加载完」会让
@@ -4119,13 +4183,17 @@ def _realm_inputs():
     一份，于是刚写下的 checkpoint 反而被判无效——而那正是它存在的意义（重启
     后免冷扫）。从磁盘读，任何时刻、任何进程算出来都一样。
 
+    第三个成员是目录倍率表的摘要：折叠按它判「限时免费」（row_free_model），
+    而那个判断会把积分与金额归零——价表变了（促销结束、桌面缓存过时被更新的
+    上游副本取代），旧聚合就不再成立，必须跟着重折。
+
     池仍然要查，但只作为「这次折叠能不能被冷进程复现」的判据（见
     _realm_fold_reproducible），不再进指纹的值。
     """
     disk = _account_realm_map()
     if disk is None:
         return None
-    return (CURRENT_REALM, disk)
+    return (CURRENT_REALM, disk, _catalog_rates_digest())
 
 
 _realm_disk_cache = {"key": None, "map": None}
@@ -7409,6 +7477,10 @@ def _fold_usage_analytics(row, realm, maps, half, pricing_on=None, also=None,
                 "uid": acct_uid,
                 "nickname": acct_uid,
                 "realm": row.get("realm", ""),
+                # 账号归属哪个网关：弹窗的账号行要标出「WorkBuddy 国内版」这种
+                # 完整身份，同名账号可能分属不同网关。行里没写 provider 的
+                # （WorkBuddy 的老行）按 row_provider 回落。
+                "provider": row_provider(row),
                 "domain": "",
                 stat_key: _new_analytics_stat(),
                 models_key: {},
@@ -9312,6 +9384,7 @@ def _enrich_accounts_from_pool(acct_map, realm=None, provider=None,
             if a.uid in acct_map:
                 acct_map[a.uid]["nickname"] = a.nickname
                 acct_map[a.uid]["realm"] = a.realm
+                acct_map[a.uid]["provider"] = a.provider
                 acct_map[a.uid]["domain"] = a.domain
                 acct_map[a.uid]["credits"] = getattr(a, "credits", None) or {}
             elif add_missing:
@@ -9319,6 +9392,7 @@ def _enrich_accounts_from_pool(acct_map, realm=None, provider=None,
                     "uid": a.uid,
                     "nickname": a.nickname,
                     "realm": a.realm,
+                    "provider": a.provider,
                     "domain": a.domain,
                     "credits": getattr(a, "credits", None) or {},
                     "window": _new_analytics_stat(),
@@ -9741,8 +9815,9 @@ def _payload_model_rates(model_map, acct_map):
 
     - 目录里两个版本都列了、且倍率一致 → 给这个倍率；
     - 两个版本倍率不一致，或这个模型只在流量出现过的某个版本上是免费的 →
-      留空。宁可没有徽章，也不把「这个版本免费」写成「这个模型免费」——那
-      正是这条改动要消除的展示与汇总打架。
+      不给单一倍率，改给「分版本倍率」（rates: intl/cn → 倍率），面板据此写成
+      「国际免费 · 国内 0.11x」。一个版本一句话，也不把「这个版本免费」写成
+      「这个模型免费」——那正是这条改动要消除的展示与汇总打架。
 
     流量出现过哪些版本，从账号表的 realm + window_models 推：折叠时每行都
     按 row_realm(row) 判过一遍免费（见 row_free_model），这里必须得出同一
@@ -9775,12 +9850,15 @@ def _payload_model_rates(model_map, acct_map):
             continue
         uniq = set(listed.values())
         free_any = any(credits_is_free(v) for v in uniq)
-        # 流量覆盖到的每个版本都得是免费、且目录里列出的倍率一致，这一个徽章
-        # 才敢写「限时免费」；否则只标「部分流量限时免费」，把口径说清但不给
-        # 可能误导的单一倍率。
+        # 流量覆盖到的每个版本都免费、且目录里列出的倍率一致，这一个徽章
+        # 才敢写「限时免费」；否则把各版本的倍率分开交出去，让面板一个版本
+        # 一句话，不给可能误导的单一倍率。
         if len(uniq) != 1 or any(realm not in listed for realm in realms):
             if free_any:
-                out[mid] = {"rate": None, "free": False, "split": True}
+                entry = {"rate": None, "free": False, "split": True}
+                if listed:
+                    entry["rates"] = {realm: listed[realm] for realm in sorted(listed)}
+                out[mid] = entry
             continue
         raw = uniq.pop()
         out[mid] = {"rate": raw, "free": credits_is_free(raw)}
@@ -10059,8 +10137,8 @@ def _realm_inputs_key(inputs):
     """realm 指纹本来就是值比较（不是身份），JSON 化后原样可比。"""
     if inputs is None:
         return None
-    realm, accounts = inputs
-    return [realm, [[uid, r] for uid, r in accounts]]
+    realm, accounts, rates = inputs
+    return [realm, [[uid, r] for uid, r in accounts], rates]
 
 
 # 折叠会就地累加/读取的字段集合直接从构造函数推导：上游往 _empty_stats() 或

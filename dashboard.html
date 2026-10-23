@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>WorkBuddy 用量看板</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Crect x='1' y='1' width='26' height='26' rx='8' fill='%232cb044'/%3E%3Cpath d='M8.6 14h5.2M13.8 14c3.2 0 4.3-5 7.6-5M13.8 14h7.6M13.8 14c3.2 0 4.3 5 7.6 5' fill='none' stroke='%23fff' stroke-width='1.9' stroke-linecap='round'/%3E%3Ccircle cx='7.6' cy='14' r='2.1' fill='%23fff'/%3E%3C/svg%3E">
 <style>
 :root{
   --bg:#ffffff; --panel:#ffffff; --panel2:#f5f5f5; --panel3:#ededed;
@@ -705,13 +706,12 @@ body.provider-trae #btnFetchCredits{display:none !important}
   border-color:var(--accent);background:var(--accent-selected-bg);
   box-shadow:0 0 0 1px var(--accent), var(--shadow-md);
 }
-/* 顶栏品牌位＝「当前网关真实状态」：提供商名 + 网关真实默认出口版本，随切提供商
-   与点 ⇄ 切出口同步变化（两者都是网关真实开关）。
-   h1 span 那条通用规则是给副标题准备的（13px、灰、左留 8px），这里显式覆盖回来，
-   并把分隔号与版本各归各的节点——版本节点整体就是一个词典条目，i18n 照常命中。 */
-#brandTitle{margin-left:0;color:var(--fg);font-size:15px;font-weight:700;letter-spacing:-.2px}
-.brand-sep{margin:0 5px;color:var(--line-hover);font-size:13px;font-weight:400}
-#brandRealm{margin-left:0;color:var(--accent);font-size:12.5px;font-weight:700;letter-spacing:0}
+/* 顶栏品牌位：固定写项目名 wb proxy + 专属 logo（入口节点扇形分发到多个出口，
+   即「一个网关聚合多家上游」的意象），不随顶部视图标签变化。 */
+h1.brand{display:inline-flex;align-items:center;gap:7px}
+h1.brand span{margin-left:0;color:var(--dim);font-size:13px;font-weight:400}
+h1.brand .brand-logo{width:22px;height:22px;display:block;flex:none}
+#brandTitle{color:var(--fg);font-size:15px;font-weight:700;letter-spacing:-.2px}
 .realm-endpoint-info{font-size:12px;color:var(--dim)}
 
 .main-nav{display:inline-flex;gap:4px;background:var(--panel2);padding:4px;border-radius:10px;border:1px solid var(--line)}
@@ -1585,8 +1585,8 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 .kpi-bd-clear:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .kpi-bd-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(122px,1fr));gap:8px;margin-bottom:16px}
 .kpi-bd-tile{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:8px 10px;min-width:0}
-/* 第一格是指标本体：用主题自己的强调色（浅色 / 深色各自解析），不写死绿色。 */
-.kpi-bd-tile.primary{border-color:var(--accent);background:var(--accent-soft)}
+/* 第一格是指标本体：只把字号提一档，不换边框 / 底色——整格染成强调色会被
+   读成「这一格被选中了」，而磁贴只是读数，不是可选中的控件。 */
 .kpi-bd-tile.primary .v{font-size:17px}
 .kpi-bd-tile .l{font-size:10.5px;color:var(--dim)}
 .kpi-bd-tile .v{font-size:15px;font-weight:650;margin-top:2px;letter-spacing:-.01em;font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -1634,6 +1634,10 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 .kpi-bd-tag{font-size:9.5px;font-weight:650;border-radius:5px;padding:1px 5px;line-height:14px;white-space:nowrap}
 .kpi-bd-tag.cn{color:#1f6b31;background:#dcf5e2;border:1px solid #b7e6c3}
 .kpi-bd-tag.intl{color:#17527e;background:#d9e9f7;border:1px solid #b3d0e8}
+/* 账号属于哪个网关：同名账号可能分属 WorkBuddy / Qoder / Trae，光有版本
+   标签（国内版 / 国际版）说不清是谁家的号。中性色，不抢版本标签。 */
+.kpi-bd-tag.gw{color:var(--dim);background:var(--panel2);border:1px solid var(--line)}
+
 /* 计费类型：限时免费（与「模型清单」的免费徽章同色）与目录倍率。两态都用
    文字 / 数字说话，不靠颜色单独承载信息。 */
 .kpi-bd-tag.free{color:#0b6b57;background:var(--accent2-soft);border:1px solid rgba(11,107,87,.28)}
@@ -3342,6 +3346,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     ' 部分流量为限时免费，未计入积分与金额': ' has some limited-time free traffic, which is excluded from the credit and cost figures',
     '部分免费': 'Partly free',
     '该模型在国际版 / 国内版的目录倍率不同，其中一部分流量为限时免费（不耗积分），已从积分与金额里排除': 'This model is priced differently on the international and domestic exits; the part that is limited-time free consumes no credits and is excluded from the credit and cost figures',
+    '该模型在国际版 / 国内版的目录倍率不同：标「免费」的那一版不耗积分，另一版按倍率扣积分（已计入「积分消耗」）': 'This model is priced differently on the global and China exits: the version marked free consumes no credits, the other is billed at its catalog rate and counted in Credits',
+    '（免费的那一版不耗积分，收费的那一版已计入积分）': ' (the free version consumes no credits, the billed one is included in Credits)',
     '免费': 'Free',
     '目录消耗倍率': 'Catalog consumption rate',
     '随时可出发旅行': 'Ready to travel any time',
@@ -4429,6 +4435,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     [/含失败共 ([\d,]+) 次/, function(m, n){ return n + ' calls including failures'; }],
     [/失败 ([\d,]+) 次/, function(m, n){ return n + ' failed'; }],
     [/其他 (\d+) 项/, function(m, n){ return '+' + n + ' more'; }],
+    // 分版本倍率徽章：「国际免费 · 国内 0.11x」。两段各是「版本 + 值」，
+    // 值要么是「免费」要么是倍率；锚定整串，免得吃掉别处的「国际 … 国内」。
+    [/^(国际|国内)(免费| ?[\d.]+x)(?: · (国际|国内)(免费| ?[\d.]+x))?$/,
+     function(m, r1, v1, r2, v2){
+       var realm = function(r){ return r === '国际' ? 'Global' : 'China'; };
+       var val = function(v){ return v === '免费' ? 'free' : v.trim(); };
+       return realm(r1) + ' ' + val(v1) + (r2 ? ' · ' + realm(r2) + ' ' + val(v2) : '');
+     }],
     [/^(\d+) 项 · ([\d,]+) 笔$/, function(m, a, b){ return a + ' sources · ' + b + ' grants'; }],
     // 设计系统缺口 ⑤：图表 aria 摘要与键盘读数（KPI 卡的 spark 摘要 / 时序图摘要 /
     // 逐点播报）。都写成锚定整串的规则，避免误伤别的长句。
@@ -4712,9 +4726,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
 </div>
 <header>
   <div class="header-left" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-    <!-- 品牌位＝「当前视图」：路由（四个网关的池子）或某一家的名称 + 该家记住的
-         出口版本。顶部这四个标签只切**视图**，不再改网关真实上游。 -->
-    <h1><span class="dot" id="statusDot"></span><span id="brandTitle" data-no-i18n>路由</span><span class="brand-sep" data-no-i18n aria-hidden="true">·</span><span id="brandRealm" title="当前视图的出口版本；点顶部标签只切视图，不改网关上游">全池</span></h1>
+    <!-- 品牌位固定为本项目名 wb proxy（含专属 logo），不随顶部视图标签变化。 -->
+    <h1 class="brand"><svg class="brand-logo" viewBox="0 0 28 28" aria-hidden="true" focusable="false"><rect x="1" y="1" width="26" height="26" rx="8" fill="var(--accent)"/><path d="M8.6 14h5.2M13.8 14c3.2 0 4.3-5 7.6-5M13.8 14h7.6M13.8 14c3.2 0 4.3 5 7.6 5" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/><circle cx="7.6" cy="14" r="2.1" fill="#fff"/></svg><span id="brandTitle" data-no-i18n>wb proxy</span></h1>
     <!-- 提供商切换：只切看板视图（localStorage 记住），不再 POST /realm。
          四个网关的模型现在合成一个池子，客户端拿到的 /v1/models 是统一的
          「模型名 · 供应商」，点哪家标签都只影响面板看到的内容。 -->
@@ -4726,8 +4739,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
       <button type="button" id="providerBtnEgg" onclick="switchProvider('egg')" aria-pressed="false" title="鸡蛋：免账号、免密钥的免费模型聚合">鸡蛋</button>
     </div>
     <!-- 网关默认出口控件已移除：总路由池子同时包含国际版与国内版的全部模型，
-         客户端按「模型名 · 供应商」后缀就能走对出口，顶栏不再需要这个全局开关。
-         品牌的版本/出口仍显示在左上角（brandRealm）。 -->
+         客户端按「模型名 · 供应商」后缀就能走对出口，顶栏不再需要这个全局开关。 -->
 <button type="button" class="hdr-icon-btn" id="btnConsoleToggle" data-no-i18n onclick="toggleConsoleWindow()"
             title="在新窗口打开运行日志" aria-label="在新窗口打开运行日志">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -5114,10 +5126,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px">
       <div>
         <h2 style="margin:0">路由 · 总网关</h2>
-        <div style="font-size:12px;color:var(--dim);margin-top:4px">
-          WorkBuddy / Qoder / Trae（各含国际与国内）+ 鸡蛋的全部模型合成一个池子；
-          模型 id 是「模型名 · 供应商」，客户端不需要再带 X-Provider。顶部四个标签只切视图，不改网关上游。
-        </div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="primary" id="btnPoolRefresh" onclick="refreshModelCatalog(this)">刷新全部模型清单</button>
@@ -8589,8 +8597,6 @@ async function switchProvider(p){
         if(!changed) loadAnalytics();
         loadAnalyticsMatrix();
       }
-      toast('已切换到「路由」视图：四个网关的模型合成一个池子；网关上游不变。'
-            + ' 客户端用 route/auto 可按策略自动选路。', 'ok');
     } else {
       await Promise.all([loadAccounts(), loadModels(), loadSchedulerStatus(), refresh()]);
       // 自建供应商池只在鸡蛋视图下有意义：切过去就把池子与预设拉回来。
@@ -8611,9 +8617,6 @@ async function switchProvider(p){
       // 接入页的模型下拉要换成当前视图的目录（不自动改写客户端配置：那由
       // 「同步到客户端」或接入页的按钮显式触发）。
       await loadAgents();
-      toast('已切换到 ' + providerName(p) + ' 视图（只切视图，网关上游仍是原来的设置）'
-            + (p === 'egg' ? '，免费清单正在后台刷新' : '')
-            + '。', 'ok');
     }
   }catch(e){
     toast('切换视图失败: ' + e.message, 'bad');
@@ -8686,14 +8689,7 @@ function updateUI(){
   const dbCn = document.getElementById("tabCnDefaultBadge");
   if(dbCn) dbCn.style.display = !isIntlGw ? "inline-block" : "none";
 
-  // 品牌位＝「当前视图的网关 + 它的真实默认出口版本」，如 Qoder · 国内版
-  // (China)。切视图会换提供商名。
-  const brandTitle = document.getElementById("brandTitle");
-  if(brandTitle) brandTitle.textContent = providerName();
-  const brandRealm = document.getElementById("brandRealm");
-  if(brandRealm) brandRealm.textContent = currentProvider() === 'all'
-    ? "全池" : (currentProvider() === 'egg'
-    ? "免费白嫖" : (isIntlGw ? "国际版 (Global)" : "国内版 (China)"));
+  // 品牌位固定写项目名 wb proxy（见顶栏 HTML），不再随视图换名。
 
   const btnCheckin = document.getElementById("btnCheckin");
   if(btnCheckin) btnCheckin.style.display = (window.VIEW_REALM === "cn" ? "inline-block" : "none");
@@ -13573,8 +13569,6 @@ async function shutdownGateway(opts){
   }
   GATEWAY_DOWN = true;
   toast('网关服务已关闭，需重新运行启动脚本才能恢复', 'warn');
-  const dot = document.getElementById('statusDot');
-  if(dot) dot.style.background = 'var(--bad)';
   const t = document.getElementById('btnConsoleToggle');
   if(t) t.disabled = true;
   const s = document.getElementById('btnGatewayShutdown');
@@ -16110,11 +16104,10 @@ async function refreshInner(gen){
     // 取数期间又发起了更新的一轮（例如刚切了区域），这批结果已经过期，
     // 直接扔掉，交给排队的那一轮渲染，免得把旧区域的数字画上去。
     if(gen !== REFRESH_GEN) return;
-    document.getElementById('statusDot').className = 'dot';
+    // 品牌位不再放状态圆点（右上角的「实时 · 刚刚更新」已经承担这个信息）。
     markDataFresh(true);
   }catch(e){
     if(gen === REFRESH_GEN){
-      document.getElementById('statusDot').className = 'dot err';
       markDataFresh(false);
       if(String(e.message) !== 'unauthorized'){
         document.getElementById('meta').innerHTML = '<b>无法连接反代</b>';
@@ -22405,17 +22398,28 @@ function kpiRateText(rate){
   return raw.replace(/^x/i, '') + 'x';
 }
 /* 一个模型的计费徽章：倍率 0 的标「限时免费」，其余标真实倍率，目录没给的
-   模型不给徽章（别把「不知道」画成免费）。 */
-/* 一个模型的计费徽章：倍率 0 的标「限时免费」，其余标真实倍率，目录没给的
    模型不给徽章（别把「不知道」画成免费）。两个版本倍率不一致时（split）
-   也不给单一倍率，只标「部分免费」——具体哪部分免费见页脚那行说明。 */
+   不给单一倍率，改成「国际免费 · 国内 0.11x」把两个版本各说一句——一个徽章
+   盖不住两种价，「部分免费」也太含糊。免费与否按目录倍率判，不按这一行的
+   积分是否为 0 判。 */
+const KPI_REALM_NAMES = {intl: '国际', cn: '国内'};
+function kpiRateIsFree(rate){
+  const raw = String(rate == null ? '' : rate).trim().toLowerCase();
+  return raw === '0' || raw === '0.00' || raw === 'x0' || raw === 'x0.00';
+}
+function kpiSplitRateText(rates){
+  const realms = Object.keys(rates || {});
+  if (!realms.length) return '部分免费';
+  return realms.map(r => KPI_REALM_NAMES[r] + (kpiRateIsFree(rates[r]) ? '免费' : ' ' + kpiRateText(rates[r])))
+    .join(' · ');
+}
 function kpiModelTag(entry){
   if (entry && entry.split){
-    return '<span class="kpi-bd-tag free" title="该模型在国际版 / 国内版的目录倍率不同，其中一部分流量为限时免费（不耗积分），已从积分与金额里排除">部分免费</span>';
+    return `<span class="kpi-bd-tag rate" title="该模型在国际版 / 国内版的目录倍率不同：标「免费」的那一版不耗积分，另一版按倍率扣积分（已计入「积分消耗」）">${esc(kpiSplitRateText(entry.rates))}</span>`;
   }
   const raw = String(entry && entry.rate != null ? entry.rate : (entry == null ? '' : entry)).trim().toLowerCase();
   if (!raw) return '';
-  if (raw.replace(/x/g, '') === '0.00' || raw.replace(/x/g, '') === '0'){
+  if (kpiRateIsFree(raw)){
     return '<span class="kpi-bd-tag free" title="限时免费模型：不消耗积分，也不计入「积分消耗」与「API 等价花费」">限时免费</span>';
   }
   return `<span class="kpi-bd-tag rate" title="目录消耗倍率">${esc(kpiRateText(raw))}</span>`;
@@ -22426,12 +22430,16 @@ function kpiFreeNote(){
   const rates = ((state.analytics || {}).model_rates) || {};
   const freeNames = Object.keys(rates).filter(k => rates[k] && rates[k].free);
   // 目录里两个版本倍率不一致的模型（如 intl 免费、cn 收费的
-  // deepseek-v4.1-flash）不给徽章：一个徽章盖不住两种价。但它的免费那部分
-  // 流量确实没折积分，这里照样说一声，免得「明明是 0 却什么都没解释」。
+  // deepseek-v4.1-flash）不给单一徽章，但这里要把两个版本各自的价说清楚：
+  // 免费的那一版没折积分，收费的那一版照常计入。
   const split = Object.keys(rates).filter(k => rates[k] && rates[k].split);
   const parts = [];
   if (freeNames.length) parts.push(`已排除限时免费模型：${freeNames.map(esc).join('、')}（不耗积分）`);
-  if (split.length) parts.push(`${split.map(esc).join('、')} 部分流量为限时免费，未计入积分与金额`);
+  if (split.length){
+    parts.push(split.map(k =>
+      `${esc(k)}：${esc(kpiSplitRateText((rates[k] || {}).rates))}`).join('；')
+      + '（免费的那一版不耗积分，收费的那一版已计入积分）');
+  }
   if (!parts.length) return '';
   return `<span class="kpi-bd-note">${parts.join('；')}</span>`;
 }
@@ -22533,7 +22541,12 @@ function kpiRowsHTML(rows, spec, total, max){
     const s = r.stat || {};
     const v = spec.weight(s);
     const pct = total > 0 ? v / total * 100 : 0;
-    const tag = r.realm ? `<span class="kpi-bd-tag ${r.realm === 'intl' ? 'intl' : 'cn'}">${r.realm === 'intl' ? '国际版' : '国内版'}</span>` : '';
+    // 鸡蛋没有国际 / 国内版之分：它的账号行只留网关标签，别再挂一个假的版本。
+    const tag = (r.realm && r.provider !== 'egg')
+      ? `<span class="kpi-bd-tag ${r.realm === 'intl' ? 'intl' : 'cn'}">${r.realm === 'intl' ? '国际版' : '国内版'}</span>` : '';
+    // 账号行先说「谁家的号」再说版本：同一个昵称可能分属不同网关。
+    const gwTag = (r.isAcct && r.provider)
+      ? `<span class="kpi-bd-tag gw">${esc(PROVIDER_NAMES[r.provider] || r.provider)}</span>` : '';
     // 模型行带计费类型：限时免费 / 真实倍率。账号行没有单一倍率，交给下面的
     // 「主要模型」清单逐条标。
     const modelTag = r.isAcct ? '' : kpiModelTag(rates[r.name]);
@@ -22549,7 +22562,7 @@ function kpiRowsHTML(rows, spec, total, max){
       data-filter-key="${filterKey}" data-filter-value="${esc(r.name)}"
       aria-pressed="${picked ? 'true' : 'false'}">
       <div class="hd">
-        <span class="nm"${r.tip ? ` data-tip="${esc(r.tip)}"` : ''}>${esc(r.name)}</span>${tag}${modelTag}
+        <span class="nm"${r.tip ? ` data-tip="${esc(r.tip)}"` : ''}>${esc(r.name)}</span>${gwTag}${tag}${modelTag}
         <span class="vv">${spec.num(s)}${spec.rowUnit || ''}${spec.share ? `<i>${pct.toFixed(1)}%</i>` : ''}</span>
       </div>
       <div class="bar"><i style="width:${Math.max(1.5, v / max * 100).toFixed(1)}%"></i></div>
@@ -22609,7 +22622,8 @@ function kpiDetailPayload(){
       });
     }
     accts.push({
-      name: nickname, stat, parts, realm: acc.realm, isAcct: true,
+      name: nickname, stat, parts, realm: acc.realm, provider: acc.provider || '',
+      isAcct: true,
       tip: 'UID：' + (acc.uid || '') + (acc.domain ? '\n' + acc.domain : ''),
     });
     for (const p of parts){
