@@ -1037,20 +1037,37 @@ def _find_model(model_id):
     return None
 
 
-def _pool_for_model(model_id):
+def _pool_for_model(model_id, pool_label=None):
     """这个模型属于哪个自建供应商池（没有就 None）。
 
     池子是操作者自己加的：优先级高于内置的免费源 —— 他显式挑过这个模型，
-    就该走他指定的那一家，而不是被同名的免费模型截胡。
+    就该走他指定的那一家，而不是被同名的免费模型截胡。``pool_label`` 是
+    公开 id 的后缀（池名）：同名模型挂在多个池子下时以它为准。
     """
     try:
         import wb_egg_pools
     except Exception:
         return None
     try:
-        return wb_egg_pools.find_by_model(model_id)
+        return wb_egg_pools.find_by_model(model_id, pool_label)
     except Exception:
         return None
+
+
+def pool_models_all():
+    """所有池子的模型（同 id 分属多个池子时各留一条）。
+
+    鸡蛋目录（``pool_models``）按纯 id 去重，一个 id 只能有一个去处；路由页
+    的公开 id 带「· 池名」，可以每个池子各列一条，请求再按后缀回到正确的池子。
+    """
+    try:
+        import wb_egg_pools
+    except Exception:
+        return []
+    try:
+        return wb_egg_pools.catalog_entries(dedupe=False)
+    except Exception:
+        return []
 
 
 def pool_models():
@@ -1080,13 +1097,13 @@ def provider_hint(model):
     return None
 
 
-def resolve(model_id):
+def resolve(model_id, pool_label=None):
     """返回 (source, 发送用的模型 id, 基础模型 id)；未知模型返回 None。"""
     name = str(model_id or "").strip()
     if not name:
         return None
     base = _base_model(name)
-    pool = _pool_for_model(name)
+    pool = _pool_for_model(name, pool_label)
     if pool is not None:
         # 自建池：source 是池子 id，模型 id 原样发给上游。
         return pool["id"], name, name
@@ -1125,19 +1142,20 @@ def _base_body(payload):
     return body
 
 
-def build_request(payload, session_key=""):
+def build_request(payload, session_key="", pool_label=None):
     """构造一次免费上游请求；返回 (url, body, headers, rename, source, billed)。
 
     自建供应商池的模型走 wb_egg_pools：协议、Base URL 与 Key 都由池子自己
     决定，Anthropic 协议还要把事件流翻成 OpenAI 形状（多一个 sse 转换器）。
+    ``pool_label`` 是公开 id 的后缀（池名），同名模型分属多个池子时用它定位。
     """
     chat = dict(payload or {})
     model = str(chat.get("model") or "").strip()
-    pool = _pool_for_model(model)
+    pool = _pool_for_model(model, pool_label)
     if pool is not None:
         url, body, headers, sse, source, billed = _pool_request(pool, chat)
         return url, body, headers, {}, source, billed, sse
-    resolved = resolve(model)
+    resolved = resolve(model, pool_label)
     if resolved is None:
         raise EggError(400, "模型 '%s' 不在鸡蛋免费目录里：先切到鸡蛋网关刷新白名单，"
                             "或从 /v1/models?provider=egg 里挑一个。" % model)
@@ -1336,10 +1354,10 @@ def _error_detail(status, raw, pool=None, model=""):
     return message or ("HTTP %d" % status)
 
 
-def open_stream(payload, session_key="", timeout=600):
+def open_stream(payload, session_key="", timeout=600, pool_label=None):
     """打开一次免费上游流；返回 (EggUpstream, 元数据)。"""
-    url, body, headers, rename, source, base, sse = build_request(payload,
-                                                                  session_key)
+    url, body, headers, rename, source, base, sse = build_request(
+        payload, session_key, pool_label)
     from wb_accounts import urlopen_with_fallback
     data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST", headers=headers)
@@ -1350,7 +1368,7 @@ def open_stream(payload, session_key="", timeout=600):
         detail = ""
         try:
             detail = _error_detail(exc.code, exc.read(4 << 10),
-                                    _pool_of(payload),
+                                    _pool_of(payload, pool_label),
                                     str((payload or {}).get("model") or ""))
         except Exception:
             detail = "HTTP %d" % exc.code
@@ -1359,7 +1377,7 @@ def open_stream(payload, session_key="", timeout=600):
     except EggError:
         raise
     except Exception as exc:
-        pool = _pool_of(payload)
+        pool = _pool_of(payload, pool_label)
         if pool:
             raise EggError(502, "自建供应商池「%s」不可达：%s"
                            % (pool.get("name") or pool.get("id") or "自建池", exc))
@@ -1368,7 +1386,7 @@ def open_stream(payload, session_key="", timeout=600):
             {"source": source, "model": base})
 
 
-def _pool_of(payload):
+def _pool_of(payload, pool_label=None):
     """这个请求要发给哪个自建池（不是自建池就 None）。
 
     报错文案要分清「内置免费源」与「自建供应商池」：后者是操作者自己的
@@ -1377,7 +1395,7 @@ def _pool_of(payload):
     model = str((payload or {}).get("model") or "")
     if not model:
         return None
-    return _pool_for_model(model)
+    return _pool_for_model(model, pool_label)
 
 
 def _retry_after(headers):

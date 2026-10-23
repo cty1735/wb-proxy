@@ -85,6 +85,12 @@ PRESETS = [
     {"name": "硅基流动 SiliconFlow", "protocol": PROTOCOL_OPENAI,
      "base_url": "https://api.siliconflow.cn/v1",
      "host": "api.siliconflow.cn"},
+    {"name": "商汤 SenseNova", "protocol": PROTOCOL_OPENAI,
+     "base_url": "https://token.sensenova.cn/v1",
+     "host": "token.sensenova.cn"},
+    {"name": "Agnes AI", "protocol": PROTOCOL_OPENAI,
+     "base_url": "https://api.agnes-ai.cn/v1",
+     "host": "api.agnes-ai.cn"},
     {"name": "魔搭 ModelScope", "protocol": PROTOCOL_OPENAI,
      "base_url": "https://api-inference.modelscope.cn/v1",
      "host": "api-inference.modelscope.cn"},
@@ -561,15 +567,28 @@ def get(pool_id):
     return None
 
 
-def find_by_model(model_id):
+def find_by_model(model_id, pool_label=None):
     """这个模型属于哪个池子（没有就 None）。
 
     只认**显式挑过**的模型：池子的 catalog 是「上游有什么」，models 才是
     「这个池子对外提供什么」。没挑过的模型不接流量，也不进清单。
+
+    ``pool_label`` 是公开 id 里「·」后面那段（客户端明确挑了哪个池子）。
+    同一个模型 id 可能被多个池子挑走（例如两家都提供 ``gpt-4o-mini``），
+    只按 id 查只能命中先登记的那个；带了池名就以池名为准，否则选「· Dup B」
+    的请求会打到 Dup A 去。
     """
     mid = str(model_id or "").strip()
     if not mid:
         return None
+    label = str(pool_label or "").strip()
+    if label:
+        with _lock:
+            for pool in _state["pools"]:
+                if not pool["enabled"]:
+                    continue
+                if pool["name"] == label and mid in pool["models"]:
+                    return _record(pool)
     pool_id = _index["map"].get(mid)
     if not pool_id:
         return None
@@ -721,11 +740,12 @@ def _public_account(account):
         }
 
 
-def catalog_entries():
+def catalog_entries(dedupe=True):
     """池子里对外提供的模型（清单条目形态，和 wb_zen 的目录一致）。
 
-    同一个模型 id 被两个池子挑走时，先登记的池子赢 —— 清单里一个 id 只能出现
-    一次，否则客户端按 id 挑模型会随机命中。
+    同一个模型 id 被两个池子挑走时，默认先登记的池子赢 —— 鸡蛋视图按纯 id
+    挑模型，一个 id 只能出现一次，否则客户端会随机命中。``dedupe=False`` 时
+    每个池子各留一条：路由页的公开 id 带「· 池名」，本来就分得开。
     """
     entries = []
     seen = set()
@@ -736,7 +756,7 @@ def catalog_entries():
             continue
         by_id = dict((m.get("id"), m) for m in pool.get("catalog") or [])
         for mid in pool.get("models") or []:
-            if mid in seen:
+            if dedupe and mid in seen:
                 continue
             seen.add(mid)
             meta = by_id.get(mid) or {}

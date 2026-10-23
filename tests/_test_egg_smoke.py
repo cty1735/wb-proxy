@@ -111,8 +111,12 @@ try:
     status, raw = http("GET", base + "/egg/pools", headers=panel)
     r = json.loads(raw)
     check("池子接口可用", status == 200 and "pools" in r, r)
-    check("预设齐了", len(r.get("presets") or []) == 15,
+    check("预设齐了", len(r.get("presets") or []) == 17,
           len(r.get("presets") or []))
+    for host in ("sensenova.cn", "agnes-ai.cn"):
+        check("预设含 %s" % host,
+              any(host in (p.get("base_url") or "")
+                  for p in (r.get("presets") or [])))
 
     # 加一个池子，确认清单里带上归属
     status, raw = http("POST", base + "/egg/pools/save", {

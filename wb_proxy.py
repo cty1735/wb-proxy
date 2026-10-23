@@ -12157,6 +12157,15 @@ def _build_pool_entries(realm=None):
     for mid, meta in _pool_cached_catalog("egg", realm or CURRENT_REALM):
         label = str((meta or {}).get("egg_source_label") or "").strip() or "鸡蛋"
         add(mid, meta, "egg", None, label)
+    # 鸡蛋目录（?provider=egg）按纯 id 去重：一个 id 只能有一个去处。统一清单
+    # 的公开 id 带「· 池名」，同一个模型被多个供应商池挑走时每条都要列出来，
+    # 客户端选哪条就走哪个池子（请求按后缀回到 wb_egg_pools.find_by_model）。
+    try:
+        for item in wb_zen.pool_models_all():
+            add(item.get("id"), wb_zen.model_entry_meta(item), "egg", None,
+                str(item.get("sourceLabel") or "").strip() or "鸡蛋")
+    except Exception:
+        pass
     # 顺序必须稳定：order 策略与面板排名都按这个顺序，「刷新后第一条变了」
     # 会让人以为策略失效。鸡蛋上游的目录顺序本来就不固定，这里按 id 排。
     rank = {provider: index
@@ -16884,11 +16893,13 @@ class _EggAccount(object):
         return None
 
 
-def open_egg_upstream(payload, session_key=None, target_realm=None):
+def open_egg_upstream(payload, session_key=None, target_realm=None,
+                      pool_label=None):
     """鸡蛋版的 open_upstream：把请求交给 wb_zen 的免费源。
 
     返回 (upstream, 伪账号, effort)。免费源没有账号池、没有换号可用，限流与
     地区拦截统一抛 wb_zen.EggError（带上游状态码），由调用方如实回给客户端。
+    ``pool_label`` 是公开 id 的后缀：同名模型挂在多个供应商池下时按它定位。
     """
     payload = _apply_token_saver_chat(payload)
     realm = target_realm or CURRENT_REALM
@@ -16897,7 +16908,8 @@ def open_egg_upstream(payload, session_key=None, target_realm=None):
         raise wb_zen.EggError(400, "缺少 model：从 /v1/models?provider=egg 里挑一个")
     header_timeout, idle_timeout = upstream_timeouts()
     upstream, _meta = wb_zen.open_stream(payload, session_key=session_key,
-                                         timeout=header_timeout)
+                                         timeout=header_timeout,
+                                         pool_label=pool_label)
     _apply_stream_idle_timeout(upstream, idle_timeout)
     return upstream, _EggAccount(realm), None
 
@@ -20860,10 +20872,13 @@ class Handler(BaseHTTPRequestHandler):
             payload["model"] = pool["model"]
             self._pool_realm = pool.get("realm")
             self._pool_public_model = model
+            self._pool_label = (pool.get("label") or ""
+                                if pool.get("provider") == "egg" else "")
             provider = pool["provider"]
         else:
             self._pool_realm = None
             self._pool_public_model = ""
+            self._pool_label = ""
             provider = resolve_chat_provider(model, self._request_provider())
         self._chat_provider_cache = provider
         return provider
@@ -20988,6 +21003,7 @@ class Handler(BaseHTTPRequestHandler):
         self._chat_provider_cache = None
         self._pool_realm = None
         self._pool_public_model = ""
+        self._pool_label = ""
         if not self._apply_pinned_route():
             return
         parsed = urlparse(self.path)
@@ -24962,7 +24978,8 @@ class Handler(BaseHTTPRequestHandler):
                     chat_req, session_key=session_key, target_realm=req_realm)
             elif provider == "egg":
                 upstream, account, effort = open_egg_upstream(
-                    chat_req, session_key=session_key, target_realm=req_realm)
+                    chat_req, session_key=session_key, target_realm=req_realm,
+                    pool_label=getattr(self, "_pool_label", ""))
             else:
                 upstream, account, effort = open_upstream(
                     chat_req, session_key=session_key, target_realm=req_realm)
@@ -25223,7 +25240,8 @@ class Handler(BaseHTTPRequestHandler):
                     chat_req, session_key=session_key, target_realm=req_realm)
             elif provider == "egg":
                 upstream, account, effort = open_egg_upstream(
-                    chat_req, session_key=session_key, target_realm=req_realm)
+                    chat_req, session_key=session_key, target_realm=req_realm,
+                    pool_label=getattr(self, "_pool_label", ""))
             else:
                 upstream, account, effort = open_upstream(
                     chat_req, session_key=session_key, target_realm=req_realm)
@@ -25383,6 +25401,7 @@ class Handler(BaseHTTPRequestHandler):
         self._chat_provider_cache = None
         self._pool_realm = None
         self._pool_public_model = ""
+        self._pool_label = ""
         if not self._apply_pinned_route():
             return
         path = self.path.split("?")[0]
@@ -25940,7 +25959,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(400, key_blocked, "invalid_request_error")
             req_realm = provider_realm("egg", self._request_realm())
             upstream, account, effort = open_egg_upstream(
-                chat_req, session_key=session_key, target_realm=req_realm)
+                chat_req, session_key=session_key, target_realm=req_realm,
+                pool_label=getattr(self, "_pool_label", ""))
         except wb_zen.EggError as exc:
             record_error(model, exc.status, exc.detail[:200],
                          elapsed_ms=int((time.time() - t_start) * 1000),
