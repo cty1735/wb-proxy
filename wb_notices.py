@@ -1,4 +1,4 @@
-"""新功能通知：把 docs/notices.md 解析成面板右上角通知中心的数据。
+"""更新通知：把 docs/notices.md 解析成面板右上角通知中心的数据。
 
 正文默认从 GitHub 上读取（服务端缓存 20 秒），直连失败时依次尝试
 gh-proxy 镜像、Gitee 镜像，最后回退到本仓库里的副本。所以维护者只改
@@ -26,7 +26,7 @@ GitHub 上的文件，所有网关实例下一次回源就能看到，不需要�
 
 `## ` 之前的内容（文件标题、说明、HTML 注释）会被忽略。正文按空行分段，
 连续的 `- ` / `* ` 行渲染成列表；行内支持 **粗体**、`代码`、[链接](https://...)。
-显式写 id 最稳：改标题不会让「不再显示」失效。
+显式写 id 最稳：改标题不会让「已读」记录失效。
 """
 
 import hashlib
@@ -294,7 +294,7 @@ def parse_notices(text):
             heading_title = match.group(2).strip() or match.group(1)
         title = str(meta.get("title") or heading_title).strip() or "未命名通知"
         notice_id = _clean_id(meta.get("id")) or _auto_id(date, title)
-        # 手写文件里重复 id 不该让两条通知互相顶掉「不再显示」的状态。
+        # 手写文件里重复 id 不该让两条通知互相顶掉「已读」的状态。
         base, suffix = notice_id, 2
         while notice_id in seen:
             notice_id = "%s-%d" % (base, suffix)

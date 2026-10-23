@@ -4,9 +4,11 @@
 
 | 日期 | 功能 |
 | --- | --- |
+| 2026-10-23 | 「新功能通知」改为**「更新通知」+ 已读 / 未读历史**：通知列表始终返回全部条目，已读项灰显并带「已读」标签，未读项保留徽标圆点；每条可「标为已读 / 标为未读」，底部「一键已读」一次清空未读。已读 id 继续存 `settings.json` 的 `notices_dismissed`（旧版「不再显示」的 id 自动视为已读，历史不会丢）；新增 `POST /notices/read`（`{id, read}` / `{ids, read}` / `{all:true, read}`），旧 `/notices/dismiss` 保留兼容。 |
 | 2026-10-23 | 通知正文改为**从 GitHub 实时读取**：服务端默认拉 `raw.githubusercontent.com` 的 `docs/notices.md`（缓存 20 秒，打开铃铛强制回源），直连不通时依次走 gh-proxy、Gitee 和本地副本；`WB_NOTICES_URL` / `WB_NOTICES_REMOTE=0` / `WB_NOTICES_TTL` 可覆盖。面板轮询改为 30 秒，并按完整内容判断是否重画（改标题 / 正文也会更新）。 |
 | 2026-10-23 | 修正路由池子行的可用性结论读取：批量测试统一记在 `provider=all` 的键上，列表统计、详情弹框、复制原因与就地重测都按同一口径查，不再显示成「未测试」或测到错误的提供商。 |
 | 2026-10-23 | 新增**新功能通知中心**：面板右上角铃铛图标 + 未读徽标，登录后自动展开未读通知，点「不再显示」按 id 记进 `settings.json` 的 `notices_dismissed`（换浏览器也记得）。正文维护在 `docs/notices.md`，追加一节即增量同步：服务端按 mtime 缓存，面板打开时回源并每分钟轮询；支持 `feature` / `improve` / `fix` / `notice` 四种标记、`title_en` / `body_en` / `title_hant` / `body_hant` 文案与 `|` 块正文。接口 `GET /notices`、`POST /notices/dismiss`（`{id}` / `{ids}` / `{all:true}`），均只认面板会话。 |
+| 2026-10-23 | 顶栏的**「网关默认出口」开关去掉**（「网关默认出口 · 国际版/国内版 · N 个 Key 生效」+「⇄ 切换默认出口」）：总路由池子本来就同时包含国际版与国内版的全部模型，客户端按「模型名 · 供应商」后缀就能走对出口，不再需要一个全局默认出口开关。服务端 `CURRENT_REALM` 与 `/realm` 行为不变（无后缀的旧 id 仍按它回落），只是面板不再暴露；品牌位仍显示当前视图的版本。 |
 | 2026-10-23 | 「网关模型清单」不再跟随顶部网关标签：无论当前选 WorkBuddy / Qoder / Trae / 鸡蛋，表里始终是**总路由池子**的完整清单（`模型名 · 供应商`）。面板另取一份 `?provider=all` 存到 `POOL_MODELS_DATA`，表头固定「供应商」、筛选固定按供应商分组（`pool_label`）、说明行与来源横幅固定描述池子构成；当前视图那份清单仍拉（概览、Trae 模型数、鸡蛋状态、逐视图刷新照旧）。 |
 | 2026-10-23 | 新增**池子 → 已接入 Agent 的自动同步**：任一网关目录、鸡蛋池子或面板停用表变化后，网关自动把总路由池子的最新模型表写回已接入的客户端（OpenCode / Hermes / Crush / DSH …），不用再点「同步到客户端」。实现为 `sync_pool_agents()` + 30s 指纹轮询（`pool_agent_signature()`，模型 id 与顺序都算）+ 变更点立即触发（`/models/toggle`、`/catalog/refresh`、鸡蛋池子增删改、池子后台刷新）；指纹没变一个字节都不写，`external_change`（被手工改过）的客户端跳过，只钉了某一家（`provider=workbuddy` …）的客户端也跳过。`wb_agents.integrate` 现在把 `provider` 记进 `integration-state.json`，`/agents` 的 `applied` 一并返回。 |
 | 2026-10-23 | 面板里所有原生 `confirm` / `alert` / `prompt`（19 处）换成**系统内弹框** `uiConfirm` / `uiAlert` / `uiPrompt`：复用面板自己的 `.modal-mask / .modal / .modal-hd / .modal-bd / .modal-ft` 与 `.primary / .sec / .danger` 按钮，不再出现「localhost:8788 显示」的浏览器框。文案按空行分段——第一段是问题，后面按 `.hint` 排版；删除 / 停用 / 清空这类不可逆操作用危险色按钮并带自己的按钮文字（删除、停用、清空…）。Esc / 点遮罩 / × 都是取消，Enter 是确定，prompt 焦点落在输入框并全选默认值；同时只留一个弹框。 |

@@ -2424,10 +2424,12 @@ def egg_proxy_url(accounts_dir):
     return str(slot.get("url") or "").strip()
 
 
-# --------------------------------------------------------- 新功能通知
-# 面板通知中心里「不再显示」的 id。只存 id、不存正文：正文在
+# --------------------------------------------------------- 更新通知
+# 面板通知中心里「已读」的 id。只存 id、不存正文：正文在
 # docs/notices.md 里维护，面板每次现读，改 md 不用动 settings.json。
-# 缺失键读作空列表；上限只挡手编文件写出一个无限增长的清单。
+# 键名沿用 notices_dismissed 是为了兼容旧数据：老版本把它当「不再显示」，
+# 升级后同一批 id 直接视为已读，历史仍然可见。缺失键读作空列表；上限只挡
+# 手编文件写出一个无限增长的清单。
 NOTICES_DISMISSED_KEY = "notices_dismissed"
 MAX_DISMISSED_NOTICES = 500
 _NOTICE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -2455,20 +2457,35 @@ def _clean_notice_ids(value):
     return out
 
 
-def dismissed_notices(accounts_dir):
-    """The notice ids this install has chosen not to show again."""
+def read_notices(accounts_dir):
+    """The notice ids this install has already read."""
     return _clean_notice_ids(load(accounts_dir).get(NOTICES_DISMISSED_KEY))
 
 
-def dismiss_notices(accounts_dir, ids):
-    """Add ids to the dismissed list. Returns the stored (normalised) list."""
-    added = _clean_notice_ids(ids)
+def dismissed_notices(accounts_dir):
+    """Backward-compatible alias for read_notices()."""
+    return read_notices(accounts_dir)
+
+
+def set_notices_read(accounts_dir, ids, read=True):
+    """Add or remove ids from the read list. Returns the stored id list."""
+    targets = _clean_notice_ids(ids)
     with _lock:
         data = load(accounts_dir)
-        merged = _clean_notice_ids(list(dismissed_notices(accounts_dir)) + added)
+        current = _clean_notice_ids(data.get(NOTICES_DISMISSED_KEY))
+        if read:
+            merged = _clean_notice_ids(current + targets)
+        else:
+            drop = set(targets)
+            merged = [item for item in current if item not in drop]
         data[NOTICES_DISMISSED_KEY] = merged
         save(accounts_dir, data)
     return merged
+
+
+def dismiss_notices(accounts_dir, ids):
+    """Backward-compatible alias: dismissing used to mean marking as read."""
+    return set_notices_read(accounts_dir, ids, True)
 
 
 class PanelSessions(object):

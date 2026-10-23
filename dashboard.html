@@ -852,7 +852,7 @@ body.provider-trae #btnFetchCredits{display:none !important}
   .lang-btn{min-width:36px;height:36px;padding:0 6px;font-size:12px}
 }
 
-/* ===== 顶栏「新功能通知」：图标 + 未读徽标 + 下拉面板 ===== */
+/* ===== 顶栏「更新通知」：图标 + 未读徽标 + 下拉面板 ===== */
 .notice-wrap{position:relative;display:inline-flex}
 .notice-btn{
   position:relative;display:inline-flex;align-items:center;justify-content:center;
@@ -892,7 +892,12 @@ body.provider-trae #btnFetchCredits{display:none !important}
 .notice-list{overflow:auto;padding:2px 14px 6px}
 .notice-item{padding:12px 0;border-bottom:1px solid var(--line)}
 .notice-item:last-child{border-bottom:none}
+.notice-item.read .notice-title{color:var(--dim);font-weight:500}
+.notice-item.read .notice-body{opacity:.72}
 .notice-meta{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim)}
+.notice-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex:none}
+.notice-state{font-size:10px;color:var(--dim);border:1px solid var(--line);
+  border-radius:999px;padding:0 5px;line-height:15px;flex:none}
 .notice-level{padding:1px 6px;border-radius:999px;font-size:10.5px;font-weight:600;
   border:1px solid var(--line);white-space:nowrap}
 .notice-level.feature{color:var(--accent);background:var(--accent-soft);border-color:transparent}
@@ -1982,12 +1987,16 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
   var ATTRS = ['title', 'placeholder', 'aria-label', 'data-label', 'alt'];
   var SKIP = {SCRIPT: 1, STYLE: 1, TEXTAREA: 1, NOSCRIPT: 1};
   var DICT = {
-    // ===== 顶栏「新功能通知」=====
-    '新功能通知': 'What’s new',
-    '不再显示': 'Don’t show again',
-    '全部不再显示': 'Dismiss all',
-    '已全部标记为不再显示': 'All notices dismissed',
-    '暂无新功能通知': 'No new notices',
+    // ===== 顶栏「更新通知」=====
+    '更新通知': 'Updates',
+    '标为已读': 'Mark as read',
+    '标为未读': 'Mark as unread',
+    '一键已读': 'Mark all as read',
+    '已全部标记为已读': 'All updates marked as read',
+    '暂无更新通知': 'No updates yet',
+    '条未读': 'unread',
+    '已读': 'Read',
+    '未读': 'Unread',
     '新功能': 'New feature',
     '改进': 'Improved',
     '修复': 'Fixed',
@@ -4788,26 +4797,26 @@ input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px so
         </button>
       </div>
     </div>
-    <!-- 新功能通知入口：正文来自 docs/notices.md，未读数与列表由 loadNotices() 渲染。 -->
+    <!-- 更新通知入口：正文来自 docs/notices.md，未读/已读状态由 loadNotices() 渲染。 -->
     <div class="notice-wrap" id="noticeWrap">
       <button type="button" class="notice-btn" id="noticeToggleBtn" onclick="toggleNoticeMenu(event)"
-              title="新功能通知" aria-label="新功能通知" aria-haspopup="dialog" aria-expanded="false">
+              title="更新通知" aria-label="更新通知" aria-haspopup="dialog" aria-expanded="false">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>
           <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
         </svg>
         <span class="notice-badge" id="noticeBadge" aria-hidden="true"></span>
       </button>
-      <div class="notice-dropdown" id="noticeDropdown" role="dialog" aria-label="新功能通知">
+      <div class="notice-dropdown" id="noticeDropdown" role="dialog" aria-label="更新通知">
         <div class="notice-hd">
-          <b>新功能通知</b>
+          <b>更新通知</b>
           <span class="notice-count" id="noticeCount"></span>
           <button type="button" class="notice-close" onclick="closeNoticeMenu(event)" title="关闭" aria-label="关闭">×</button>
         </div>
         <div class="notice-list" id="noticeList"></div>
         <div class="notice-ft">
           <span class="notice-src" id="noticeSrc"></span>
-          <button type="button" class="notice-dismiss" id="noticeDismissAll" onclick="dismissAllNotices(event)">全部不再显示</button>
+          <button type="button" class="notice-dismiss" id="noticeReadAll" onclick="markAllNoticesRead(event)">一键已读</button>
         </div>
       </div>
     </div>
@@ -16186,7 +16195,7 @@ async function startDashboard(){
   // 首批数据到齐：收掉首屏 loading。之后再慢的接口（成长任务、按需的看板）
   // 各自都有区块内的「加载中」文案，不需要继续盖住整页。
   bootLoadingDone();
-  // 登录后拉一次新功能通知：有未读就自动展开，点「不再显示」后不再打扰。
+  // 登录后拉一次更新通知：有未读就自动展开；已读的历史仍留在面板里。
   loadNotices(true);
   // Polling only starts after the panel is unlocked, so a locked browser
   // never hammers the server with 401s.
@@ -16212,21 +16221,26 @@ async function startDashboard(){
   }
 }
 
-/* ---------------- 新功能通知（右上角图标 + 下拉面板） ----------------
-   正文在 docs/notices.md，服务端 /notices 现读并按 mtime 缓存；这里只负责
-   渲染与「不再显示」。未读数 = 通知总数 - 已隐藏 id（id 存在网关本机，
-   所以换浏览器也记得）。登录成功后 loadNotices(true) 会在有未读时自动展开
-   一次，点「不再显示」后这条就不再出现，图标仍可随时回看剩下的通知。 */
+/* ---------------- 更新通知（右上角图标 + 下拉面板） ----------------
+   正文在 docs/notices.md，默认从 GitHub 回源；服务端 /notices 返回全量通知
+   与本机已读 id。未读数 = 通知总数 - 已读 id。已读条目不会消失，只是灰显，
+   方便回看历史；底部「一键已读」把所有通知一次标为已读。 */
 let NOTICE_ITEMS = [];
-let NOTICE_DISMISSED = new Set();
+let NOTICE_READ = new Set();
 let NOTICE_SOURCE = '';
 let NOTICE_SIG = '';
 let NOTICE_AUTO_OPENED = false;
 
 const NOTICE_LEVEL_LABEL = {feature: '新功能', improve: '改进', fix: '修复', notice: '通知'};
 
-function noticeVisible(){
-  return NOTICE_ITEMS.filter(function(item){ return !NOTICE_DISMISSED.has(item.id); });
+function noticeUnread(){
+  return NOTICE_ITEMS.filter(function(item){ return !NOTICE_READ.has(item.id); });
+}
+
+function noticeReadSet(data){
+  const ids = Array.isArray(data.read) ? data.read
+    : (Array.isArray(data.dismissed) ? data.dismissed : []);
+  return new Set(ids);
 }
 
 // 语言：英文优先 *_en，正體中文优先 *_hant，没有就按当前语言转换 / 原文。
@@ -16268,39 +16282,44 @@ function noticeBodyHtml(text){
 function noticeItemHtml(item){
   const level = NOTICE_LEVEL_LABEL[item.level] ? item.level : 'notice';
   const body = noticeBodyHtml(noticePick(item, 'body'));
-  return '<div class="notice-item">'
+  const read = NOTICE_READ.has(item.id);
+  return '<div class="notice-item' + (read ? ' read' : '') + '">'
     + '<div class="notice-meta">'
+    + (read
+        ? '<span class="notice-state">已读</span>'
+        : '<span class="notice-dot" role="img" aria-label="未读"></span>')
     + (item.date ? '<span>' + esc(item.date) + '</span>' : '')
     + '<span class="notice-level ' + level + '">' + NOTICE_LEVEL_LABEL[level] + '</span>'
     + '</div>'
     + '<div class="notice-title" data-no-i18n>' + esc(noticePick(item, 'title')) + '</div>'
     + (body ? '<div class="notice-body" data-no-i18n>' + body + '</div>' : '')
-    + '<div class="notice-actions"><button type="button" class="notice-dismiss" data-notice-dismiss="'
-    + esc(item.id) + '">不再显示</button></div>'
+    + '<div class="notice-actions"><button type="button" class="notice-dismiss"'
+    + ' data-notice-toggle="' + esc(item.id) + '">'
+    + (read ? '标为未读' : '标为已读') + '</button></div>'
     + '</div>';
 }
 
 function renderNotices(){
   const list = document.getElementById('noticeList');
   if(!list) return;
-  const visible = noticeVisible();
+  const unread = noticeUnread();
   const badge = document.getElementById('noticeBadge');
   if(badge){
-    badge.textContent = visible.length > 9 ? '9+' : String(visible.length);
-    badge.classList.toggle('on', visible.length > 0);
+    badge.textContent = unread.length > 9 ? '9+' : String(unread.length);
+    badge.classList.toggle('on', unread.length > 0);
   }
   const btn = document.getElementById('noticeToggleBtn');
   if(btn) btn.setAttribute('aria-label',
-    '新功能通知' + (visible.length ? '（' + visible.length + '）' : ''));
+    '更新通知' + (unread.length ? '（' + unread.length + ' 条未读）' : ''));
   const count = document.getElementById('noticeCount');
-  if(count) count.textContent = visible.length ? '· ' + visible.length : '';
+  if(count) count.textContent = unread.length ? '· ' + unread.length + ' 条未读' : '';
   const src = document.getElementById('noticeSrc');
   if(src) src.textContent = NOTICE_SOURCE || '';
-  const allBtn = document.getElementById('noticeDismissAll');
-  if(allBtn) allBtn.style.display = visible.length ? '' : 'none';
-  list.innerHTML = visible.length
-    ? visible.map(noticeItemHtml).join('')
-    : '<div class="notice-empty">暂无新功能通知</div>';
+  const allBtn = document.getElementById('noticeReadAll');
+  if(allBtn) allBtn.style.display = unread.length ? '' : 'none';
+  list.innerHTML = NOTICE_ITEMS.length
+    ? NOTICE_ITEMS.map(noticeItemHtml).join('')
+    : '<div class="notice-empty">暂无更新通知</div>';
   // 动态插入的文案交给语言观察器；英文 / 正體中文下补一次，免得等下一轮变更。
   if(window.WB_I18N && window.WB_I18N.current() !== 'zh' && window.WB_I18N.apply)
     window.WB_I18N.apply();
@@ -16310,19 +16329,19 @@ async function loadNotices(autoOpen, force){
   try{
     const data = await getJSON('/notices' + (force ? '?refresh=1' : ''));
     NOTICE_ITEMS = Array.isArray(data.notices) ? data.notices : [];
-    NOTICE_DISMISSED = new Set(Array.isArray(data.dismissed) ? data.dismissed : []);
+    NOTICE_READ = noticeReadSet(data);
     NOTICE_SOURCE = data.source || '';
     // 轮询时内容没变就不重画（避免每轮一次整页 i18n 重走）。用完整内容做
     // 签名：同一条通知改了标题 / 正文也要重画，不能只看 id 和 updated_at。
     const sig = JSON.stringify(NOTICE_ITEMS) + '|'
-      + Array.from(NOTICE_DISMISSED).sort().join(',');
+      + Array.from(NOTICE_READ).sort().join(',');
     if(sig !== NOTICE_SIG){
       NOTICE_SIG = sig;
       renderNotices();
     }
     if(autoOpen && !NOTICE_AUTO_OPENED){
       NOTICE_AUTO_OPENED = true;
-      if(noticeVisible().length) openNoticeMenu();
+      if(noticeUnread().length) openNoticeMenu();
     }
   }catch(e){
     // 通知不是面板主数据：拉不到就静默，别为它弹错误。
@@ -16360,27 +16379,25 @@ function toggleNoticeMenu(evt){
   loadNotices(false, true);
 }
 
-async function dismissNotice(id){
+async function setNoticeRead(id, read){
   if(!id) return;
   try{
-    const data = await postJSON('/notices/dismiss', {id: id});
-    NOTICE_DISMISSED = new Set(Array.isArray(data.dismissed) ? data.dismissed : []);
+    const data = await postJSON('/notices/read', {id: id, read: !!read});
+    NOTICE_READ = noticeReadSet(data);
     renderNotices();
-    if(!noticeVisible().length) closeNoticeMenu();
   }catch(e){
     toast('操作失败: ' + e.message, 'bad');
   }
 }
 
-async function dismissAllNotices(evt){
+async function markAllNoticesRead(evt){
   if(evt && evt.preventDefault){ evt.preventDefault(); evt.stopPropagation(); }
-  if(!noticeVisible().length) return;
+  if(!noticeUnread().length) return;
   try{
-    const data = await postJSON('/notices/dismiss', {all: true});
-    NOTICE_DISMISSED = new Set(Array.isArray(data.dismissed) ? data.dismissed : []);
+    const data = await postJSON('/notices/read', {all: true, read: true});
+    NOTICE_READ = noticeReadSet(data);
     renderNotices();
-    closeNoticeMenu();
-    toast('已全部标记为不再显示', 'ok');
+    toast('已全部标记为已读', 'ok');
   }catch(e){
     toast('操作失败: ' + e.message, 'bad');
   }
@@ -16395,17 +16412,18 @@ document.addEventListener('click', function(evt){
 document.addEventListener('keydown', function(evt){
   if(evt.key === 'Escape') closeNoticeMenu();
 });
-// 「不再显示」用事件委托：通知列表每次重画，不必逐个绑处理器。
+// 已读 / 未读切换用事件委托：列表每次重画，不必逐个绑处理器。
 (function(){
   const list = document.getElementById('noticeList');
   if(!list) return;
   list.addEventListener('click', function(evt){
     const btn = evt.target && evt.target.closest
-      ? evt.target.closest('[data-notice-dismiss]') : null;
+      ? evt.target.closest('[data-notice-toggle]') : null;
     if(!btn) return;
     evt.preventDefault();
     evt.stopPropagation();
-    dismissNotice(btn.getAttribute('data-notice-dismiss'));
+    const id = btn.getAttribute('data-notice-toggle');
+    setNoticeRead(id, !NOTICE_READ.has(id));
   });
 })();
 

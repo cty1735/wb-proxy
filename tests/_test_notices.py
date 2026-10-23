@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""新功能通知：md 解析、id 稳定、远程/本地回退与「不再显示」的持久化。
+"""更新通知：md 解析、id 稳定、远程/本地回退与已读状态的持久化。
 
 不真联网：远程源用假的 _fetch_url 替换。wb_settings 只碰一个临时目录里的
 settings.json。
@@ -18,7 +18,7 @@ import wb_settings
 os.environ["WB_NOTICES_REMOTE"] = "0"
 
 
-SAMPLE = """# 新功能通知
+SAMPLE = """# 更新通知
 
 <!-- 这段说明不该出现在任何一条通知里 -->
 
@@ -35,7 +35,7 @@ body_en: |
 右上角新增通知入口。
 
 - 支持 `feature` / `fix`
-- 「不再显示」按 id 记住
+- 已读状态按 id 记住
 
 ## 2026-10-22 修复登录
 level: 修复
@@ -211,17 +211,29 @@ class RemoteNoticesTest(unittest.TestCase):
         self.assertEqual([], calls)
 
 
-class DismissedNoticesTest(unittest.TestCase):
-    def test_dismiss_union(self):
+class ReadNoticesTest(unittest.TestCase):
+    def test_mark_read_union(self):
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual([], wb_settings.dismissed_notices(tmp))
+            self.assertEqual([], wb_settings.read_notices(tmp))
+            self.assertEqual(["a"], wb_settings.set_notices_read(tmp, ["a"]))
+            self.assertEqual(["a", "b"], wb_settings.set_notices_read(tmp, ["b", "a"]))
+            self.assertEqual(["a", "b"], wb_settings.read_notices(tmp))
+
+    def test_mark_unread_removes_only_given_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wb_settings.set_notices_read(tmp, ["a", "b"])
+            self.assertEqual(["b"], wb_settings.set_notices_read(tmp, ["a"], read=False))
+            self.assertEqual(["b"], wb_settings.read_notices(tmp))
+            self.assertEqual([], wb_settings.set_notices_read(tmp, ["b"], read=False))
+
+    def test_dismiss_alias_still_marks_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(["a"], wb_settings.dismiss_notices(tmp, ["a"]))
-            self.assertEqual(["a", "b"], wb_settings.dismiss_notices(tmp, ["b", "a"]))
-            self.assertEqual(["a", "b"], wb_settings.dismissed_notices(tmp))
+            self.assertEqual(["a"], wb_settings.dismissed_notices(tmp))
 
     def test_invalid_ids_are_dropped(self):
         with tempfile.TemporaryDirectory() as tmp:
-            stored = wb_settings.dismiss_notices(
+            stored = wb_settings.set_notices_read(
                 tmp, ["ok-1", "", "has space", "../etc", None, {"a": 1},
                       "ok-1", "OK-2"])
             self.assertEqual(["ok-1", "ok-2"], stored)
@@ -229,7 +241,7 @@ class DismissedNoticesTest(unittest.TestCase):
     def test_list_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
             ids = ["n-%04d" % index for index in range(600)]
-            stored = wb_settings.dismiss_notices(tmp, ids)
+            stored = wb_settings.set_notices_read(tmp, ids)
             self.assertEqual(wb_settings.MAX_DISMISSED_NOTICES, len(stored))
 
 

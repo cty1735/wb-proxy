@@ -20832,7 +20832,7 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if path.startswith("/updates"):
             return True
-        # 新功能通知：正文来自 docs/notices.md，只有面板会话该看到。
+        # 更新通知：正文来自 docs/notices.md，只有面板会话该看到。
         if path.startswith("/notices"):
             return True
         if path.startswith("/logs"):
@@ -20976,7 +20976,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/settings":
             return self._get_settings()
         if path == "/notices":
-            # 新功能通知：默认从 GitHub 上的 docs/notices.md 回源。
+            # 更新通知：默认从 GitHub 上的 docs/notices.md 回源。
             return self._get_notices(query)
         if path == "/token-saver/stats":
             # 省 token 的节省统计：只读本机落盘的字节计数，面板轮询这里。
@@ -21734,32 +21734,42 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200, runtime_settings_view())
 
     def _get_notices(self, query=None):
-        """新功能通知 + 本机已选「不再显示」的 id。
+        """更新通知 + 本机已读 / 未读状态。
 
         正文默认从 GitHub 上的 docs/notices.md 回源（服务端缓存 20 秒；拉不到
         时依次走 gh-proxy / Gitee / 本地副本）；点铃铛会带 ?refresh=1 强制回源。
-        「不再显示」是按 id 存进 settings.json 的，所以换浏览器也记得。
+        已读 id 存进 settings.json，换浏览器也记得；通知本身始终全量返回，
+        所以已读的历史更新仍然看得到。
         """
         values = (query or {}).get("refresh") or [""]
         force = str(values[0]).strip().lower() in ("1", "true", "yes")
         state = wb_notices.load_notices_with_meta(force=force)
         notices = state["notices"]
-        dismissed = wb_settings.dismissed_notices(ACCOUNTS_DIR)
-        dismissed_set = set(dismissed)
-        unread = sum(1 for item in notices if item.get("id") not in dismissed_set)
+        read = wb_settings.read_notices(ACCOUNTS_DIR)
+        read_set = set(read)
+        unread = sum(1 for item in notices if item.get("id") not in read_set)
         return self._json(200, {
             "notices": notices,
-            "dismissed": dismissed,
+            "read": read,
+            "dismissed": read,
             "unread": unread,
             "source": state["source"],
             "updated_at": state["updated_at"],
         })
 
-    def _route_notices_dismiss(self):
-        """把一条 / 多条 / 全部通知标成「不再显示」。"""
+    def _route_notices_read(self, force_read=False):
+        """把一条 / 多条 / 全部通知标为已读或未读。"""
         payload = self._payload_or_error()
         if payload is None:
             return
+        if force_read:
+            read = True
+        else:
+            value = payload.get("read", True)
+            if isinstance(value, str):
+                read = value.strip().lower() not in ("0", "false", "no", "off")
+            else:
+                read = bool(value)
         if payload.get("all") is True:
             ids = [item.get("id") for item in wb_notices.load_notices()]
         elif isinstance(payload.get("ids"), list):
@@ -21769,8 +21779,12 @@ class Handler(BaseHTTPRequestHandler):
         else:
             return self._error(400, "id, ids or all is required",
                                "invalid_request_error")
-        dismissed = wb_settings.dismiss_notices(ACCOUNTS_DIR, ids)
-        return self._json(200, {"dismissed": dismissed})
+        read_ids = wb_settings.set_notices_read(ACCOUNTS_DIR, ids, read=read)
+        return self._json(200, {"read": read_ids, "dismissed": read_ids})
+
+    def _route_notices_dismiss(self):
+        """旧面板仍会 POST 这里；「不再显示」现在等同于标为已读。"""
+        return self._route_notices_read(force_read=True)
 
     def _get_updates(self):
         """What the running build is, and whether a newer stable release exists.
@@ -25301,11 +25315,12 @@ class Handler(BaseHTTPRequestHandler):
             if not self._panel_ok():
                 return self._error(401, "panel password required", "invalid_request_error")
             return self._handle_settings_save()
-        if path == "/notices/dismiss":
-            # 通知中心的「不再显示」：只认面板会话，写的是 settings.json。
+        if path in ("/notices/read", "/notices/dismiss"):
+            # 更新通知的已读 / 未读：只认面板会话，写的是 settings.json。
+            # /notices/dismiss 保留给旧面板，等同「标为已读」。
             if not self._panel_ok():
                 return self._error(401, "panel password required", "invalid_request_error")
-            return self._route_notices_dismiss()
+            return self._route_notices_read(force_read=(path == "/notices/dismiss"))
         if path == "/updates/check":
             # Panel-only management write, like the pricing ones. No body to
             # read: the action takes no parameters, so a button that posts
