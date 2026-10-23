@@ -16041,8 +16041,8 @@ const POLL_TASKS = [
   {every: 5000, run: function(){ if(currentProvider() === 'all') loadRouting(); }},
   {every: 30000, run: function(){ loadSchedulerStatus(); }},
   {every: 15000, run: function(){ loadAccounts(); }},
-  // md 里追加的通知一分钟内同步到图标；内容没变时 loadNotices 自己不重画。
-  {every: 60000, run: function(){ loadNotices(false); }},
+  // 远程通知每 30 秒回源一次（服务端再缓存 20 秒）；内容没变时 loadNotices 自己不重画。
+  {every: 30000, run: function(){ loadNotices(false); }},
 ];
 let POLL_FACTOR = 1;
 let POLL_PAUSED = false;
@@ -16306,15 +16306,15 @@ function renderNotices(){
     window.WB_I18N.apply();
 }
 
-async function loadNotices(autoOpen){
+async function loadNotices(autoOpen, force){
   try{
-    const data = await getJSON('/notices');
+    const data = await getJSON('/notices' + (force ? '?refresh=1' : ''));
     NOTICE_ITEMS = Array.isArray(data.notices) ? data.notices : [];
     NOTICE_DISMISSED = new Set(Array.isArray(data.dismissed) ? data.dismissed : []);
     NOTICE_SOURCE = data.source || '';
-    // 轮询时内容没变就不重画（避免每分钟一次整页 i18n 重走）。
-    const sig = (data.updated_at || 0) + '|'
-      + NOTICE_ITEMS.map(function(item){ return item.id; }).join(',') + '|'
+    // 轮询时内容没变就不重画（避免每轮一次整页 i18n 重走）。用完整内容做
+    // 签名：同一条通知改了标题 / 正文也要重画，不能只看 id 和 updated_at。
+    const sig = JSON.stringify(NOTICE_ITEMS) + '|'
       + Array.from(NOTICE_DISMISSED).sort().join(',');
     if(sig !== NOTICE_SIG){
       NOTICE_SIG = sig;
@@ -16356,8 +16356,8 @@ function toggleNoticeMenu(evt){
     return;
   }
   openNoticeMenu();
-  // 打开时顺手回源：md 刚追加的通知不用等下次刷新。
-  loadNotices(false);
+  // 点开铃铛顺手强制回源一次：刚在 GitHub 上改完的通知不用等下一轮轮询。
+  loadNotices(false, true);
 }
 
 async function dismissNotice(id){

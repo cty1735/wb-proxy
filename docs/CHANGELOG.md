@@ -4,6 +4,7 @@
 
 | 日期 | 功能 |
 | --- | --- |
+| 2026-10-23 | 通知正文改为**从 GitHub 实时读取**：服务端默认拉 `raw.githubusercontent.com` 的 `docs/notices.md`（缓存 20 秒，打开铃铛强制回源），直连不通时依次走 gh-proxy、Gitee 和本地副本；`WB_NOTICES_URL` / `WB_NOTICES_REMOTE=0` / `WB_NOTICES_TTL` 可覆盖。面板轮询改为 30 秒，并按完整内容判断是否重画（改标题 / 正文也会更新）。 |
 | 2026-10-23 | 修正路由池子行的可用性结论读取：批量测试统一记在 `provider=all` 的键上，列表统计、详情弹框、复制原因与就地重测都按同一口径查，不再显示成「未测试」或测到错误的提供商。 |
 | 2026-10-23 | 新增**新功能通知中心**：面板右上角铃铛图标 + 未读徽标，登录后自动展开未读通知，点「不再显示」按 id 记进 `settings.json` 的 `notices_dismissed`（换浏览器也记得）。正文维护在 `docs/notices.md`，追加一节即增量同步：服务端按 mtime 缓存，面板打开时回源并每分钟轮询；支持 `feature` / `improve` / `fix` / `notice` 四种标记、`title_en` / `body_en` / `title_hant` / `body_hant` 文案与 `|` 块正文。接口 `GET /notices`、`POST /notices/dismiss`（`{id}` / `{ids}` / `{all:true}`），均只认面板会话。 |
 | 2026-10-23 | 「网关模型清单」不再跟随顶部网关标签：无论当前选 WorkBuddy / Qoder / Trae / 鸡蛋，表里始终是**总路由池子**的完整清单（`模型名 · 供应商`）。面板另取一份 `?provider=all` 存到 `POOL_MODELS_DATA`，表头固定「供应商」、筛选固定按供应商分组（`pool_label`）、说明行与来源横幅固定描述池子构成；当前视图那份清单仍拉（概览、Trae 模型数、鸡蛋状态、逐视图刷新照旧）。 |

@@ -190,6 +190,20 @@ Promise.resolve(api.dismissNotice('a')).then(function() {
   check('没有通知时列表空态', els.noticeList.innerHTML.indexOf('暂无新功能通知') >= 0);
   check('没有通知时隐藏全部按钮', els.noticeDismissAll.style.display === 'none');
 
-  console.log(FAIL ? ('FAILED: ' + FAIL) : 'all checks passed');
-  process.exit(FAIL ? 1 : 0);
+  // 远程正文：点开铃铛会带 refresh=1 强制回源；来源显示为 GitHub。
+  let loadCalls = [];
+  api.__set({
+    items: [], dismissed: [], source: 'GitHub · test',
+    getJSON: function(url) {
+      loadCalls.push(url);
+      return Promise.resolve({notices: [], dismissed: [], source: 'GitHub · test'});
+    },
+  });
+  return api.loadNotices(false, true).then(function() {
+    check('打开铃铛强制回源', loadCalls[0] === '/notices?refresh=1', loadCalls[0]);
+    check('来源显示 GitHub', els.noticeSrc.textContent === 'GitHub · test');
+
+    console.log(FAIL ? ('FAILED: ' + FAIL) : 'all checks passed');
+    process.exit(FAIL ? 1 : 0);
+  });
 });

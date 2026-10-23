@@ -1,8 +1,13 @@
 """新功能通知：把 docs/notices.md 解析成面板右上角通知中心的数据。
 
-通知内容和网关代码分开维护：往 markdown 里追加一节，面板下一次拉 /notices
-就能看到，不需要改 Python 或前端。每条通知按 id 记住「不再显示」，状态存在
-settings.json（见 wb_settings.dismissed_notices）。
+正文默认从 GitHub 上读取（服务端缓存 20 秒），直连失败时依次尝试
+gh-proxy 镜像、Gitee 镜像，最后回退到本仓库里的副本。所以维护者只改
+GitHub 上的文件，所有网关实例下一次回源就能看到，不需要重新发版。
+
+    WB_NOTICES_URL       换一个通知地址；留空用内置的 GitHub 地址
+    WB_NOTICES_REMOTE=0  强制只读本地文件（离线 / 自测）
+    WB_NOTICES_TTL       远程缓存秒数，默认 20
+    WB_NOTICES_TIMEOUT   单次抓取超时秒数，默认 3
 
 文件格式（一节 = 一条通知）：
 
@@ -28,14 +33,25 @@ import hashlib
 import os
 import re
 import threading
+import time
+import urllib.request
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_FILE = os.path.join(ROOT, "docs", "notices.md")
+
+# GitHub 上的正文是唯一需要维护的副本；后面两个只是网络不通时的镜像。
+GITHUB_URL = "https://raw.githubusercontent.com/cty1735/wb-proxy/main/docs/notices.md"
+GH_PROXY_URL = "https://gh-proxy.com/" + GITHUB_URL
+GITEE_URL = "https://gitee.com/cty1735/wb-proxy/raw/main/docs/notices.md"
+DEFAULT_URLS = (GITHUB_URL, GH_PROXY_URL, GITEE_URL)
 
 # 手滑写一个超大文件不该把面板拖死；正常通知文件只有几 KB。
 MAX_FILE_BYTES = 1024 * 1024
 MAX_BODY_CHARS = 20000
 MAX_NOTICES = 200
+
+REMOTE_TTL_SECONDS = 20.0
+REMOTE_TIMEOUT_SECONDS = 3.0
 
 _LEVEL_ALIASES = {
     "feature": "feature",
@@ -67,9 +83,91 @@ _HEADING_RE = re.compile(r"^##\s+(.+?)\s*$")
 _DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s*[·:：\-—]?\s*(.*)$")
 
 _lock = threading.RLock()
-# 解析结果按 (path, mtime_ns, size) 缓存：面板每次打开通知中心都会拉一次，
-# 而文件只在有人追加通知时才变。
+# 解析结果按 (来源, 版本, 大小/内容哈希) 缓存：面板每次打开通知中心都会拉
+# 一次，而内容只在有人追加/修改通知时才变。
 _cache = {"key": None, "value": []}
+
+# 远程正文：text=None 表示「还没成功拿到过」。获取失败时保留上一份好数据，
+# 网络恢复前继续给用户看，不要把通知中心整个清空。
+_remote_lock = threading.Lock()
+_remote_cache = {"text": None, "url": "", "fetched_at": 0.0, "updated_at": 0}
+
+
+def _env_float(name, default):
+    try:
+        value = float((os.environ.get(name) or "").strip())
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def remote_enabled():
+    value = (os.environ.get("WB_NOTICES_REMOTE") or "").strip().lower()
+    return value not in ("0", "off", "false", "no", "local")
+
+
+def remote_urls():
+    override = (os.environ.get("WB_NOTICES_URL") or "").strip()
+    return (override,) if override else DEFAULT_URLS
+
+
+def _fresh_url(url):
+    # 镜像 / CDN 会缓存几十秒；加个时间戳让每次回源都拿到最新提交。
+    sep = "&" if "?" in url else "?"
+    return "%s%st=%d" % (url, sep, int(time.time()))
+
+
+def _fetch_url(url, timeout):
+    request = urllib.request.Request(url, headers={
+        "User-Agent": "wb-proxy-notices/1.0 (+https://github.com/cty1735/wb-proxy)",
+        "Accept": "text/markdown, text/plain, */*",
+        "Cache-Control": "no-cache",
+    })
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        raw = response.read(MAX_FILE_BYTES + 1)
+    if len(raw) > MAX_FILE_BYTES:
+        raise ValueError("notices file is too large")
+    return raw.decode("utf-8-sig", "replace")
+
+
+def _remote_state(force=False):
+    """Return the cached remote snapshot, fetching it when it is stale.
+
+    Returns None when no remote copy has ever been fetched. A failed refresh
+    keeps the previous good snapshot so a temporary network problem does not
+    empty the notice center.
+    """
+    if not remote_enabled():
+        return None
+    ttl = _env_float("WB_NOTICES_TTL", REMOTE_TTL_SECONDS)
+    now = time.time()
+    with _remote_lock:
+        has_text = _remote_cache["text"] is not None
+        age = now - _remote_cache["fetched_at"]
+        if has_text and not force and age < ttl:
+            return dict(_remote_cache)
+        # 从没成功过时也别每个请求都重试：失败后按最多 10 秒退避。
+        if not has_text and not force and age < min(ttl, 10.0):
+            return None
+    timeout = _env_float("WB_NOTICES_TIMEOUT", REMOTE_TIMEOUT_SECONDS)
+    for base in remote_urls():
+        try:
+            text = _fetch_url(_fresh_url(base), timeout)
+        except Exception:
+            continue
+        with _remote_lock:
+            _remote_cache.update({
+                "text": text,
+                "url": base,
+                "fetched_at": time.time(),
+                "updated_at": int(time.time()),
+            })
+            return dict(_remote_cache)
+    with _remote_lock:
+        _remote_cache["fetched_at"] = time.time()
+        if _remote_cache["text"] is not None:
+            return dict(_remote_cache)
+    return None
 
 
 def notices_path():
@@ -226,32 +324,6 @@ def parse_notices(text):
     return notices[:MAX_NOTICES]
 
 
-def load_notices(path=None):
-    """Return the parsed notices, re-reading only when the file changed.
-
-    Missing/unreadable file reads as an empty list: a fresh checkout without the
-    markdown file should still render the panel, just with no notices.
-    """
-    path = path or notices_path()
-    try:
-        info = os.stat(path)
-        key = (path, info.st_mtime_ns, info.st_size)
-    except OSError:
-        return []
-    with _lock:
-        if _cache["key"] == key:
-            return [dict(item) for item in _cache["value"]]
-    try:
-        with open(path, encoding="utf-8-sig") as fh:
-            text = fh.read(MAX_FILE_BYTES)
-    except OSError:
-        return []
-    value = parse_notices(text)
-    with _lock:
-        _cache.update({"key": key, "value": value})
-    return [dict(item) for item in value]
-
-
 def source_label(path=None):
     """Path shown in the panel, relative to the project root when possible."""
     path = path or notices_path()
@@ -259,3 +331,84 @@ def source_label(path=None):
         return os.path.relpath(path, ROOT).replace(os.sep, "/")
     except ValueError:
         return path
+
+
+def _remote_source_label(url):
+    if url == GITHUB_URL:
+        return "GitHub · cty1735/wb-proxy/docs/notices.md"
+    if url == GH_PROXY_URL:
+        return "GitHub 镜像 · cty1735/wb-proxy/docs/notices.md"
+    if url == GITEE_URL:
+        return "Gitee · cty1735/wb-proxy/docs/notices.md"
+    return url
+
+
+def _parse_cached(key, text):
+    with _lock:
+        if _cache["key"] == key:
+            return [dict(item) for item in _cache["value"]]
+    value = parse_notices(text)
+    with _lock:
+        _cache.update({"key": key, "value": value})
+    return [dict(item) for item in value]
+
+
+def _local_state(path):
+    try:
+        info = os.stat(path)
+    except OSError:
+        return None
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            text = fh.read(MAX_FILE_BYTES)
+    except OSError:
+        return None
+    key = ("local", path, info.st_mtime_ns, info.st_size)
+    return {
+        "notices": _parse_cached(key, text),
+        "source": source_label(path),
+        "updated_at": int(info.st_mtime),
+        "remote": False,
+    }
+
+
+def load_notices_with_meta(path=None, force=False):
+    """Return notices plus where they came from.
+
+    Remote first, local copy last: the markdown in the repository is the source
+    of truth, while a checkout without network still shows its bundled copy.
+    ``force`` skips the short cache; the panel uses it when the bell is opened.
+    """
+    remote = _remote_state(force=force)
+    if remote is not None:
+        text = remote["text"]
+        digest = hashlib.sha1(text.encode("utf-8")).hexdigest()
+        return {
+            "notices": _parse_cached(("remote", remote["url"], digest), text),
+            "source": _remote_source_label(remote["url"]),
+            "updated_at": int(remote.get("updated_at") or 0),
+            "remote": True,
+        }
+    local = _local_state(path or notices_path())
+    if local is not None:
+        return local
+    return {
+        "notices": [],
+        "source": source_label(path or notices_path()),
+        "updated_at": 0,
+        "remote": False,
+    }
+
+
+def load_notices(path=None, force=False):
+    """Return the parsed notices, remote when available and local as fallback."""
+    return load_notices_with_meta(path, force)["notices"]
+
+
+def _reset_caches():
+    """Drop both caches (used by tests and manual reloads)."""
+    with _lock:
+        _cache.update({"key": None, "value": []})
+    with _remote_lock:
+        _remote_cache.update({"text": None, "url": "", "fetched_at": 0.0,
+                              "updated_at": 0})

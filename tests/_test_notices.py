@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""新功能通知：md 解析、id 稳定、文件缓存与「不再显示」的持久化。
+"""新功能通知：md 解析、id 稳定、远程/本地回退与「不再显示」的持久化。
 
-不联网、不起服务：wb_notices 是纯函数 + 文件缓存，wb_settings 只碰一个
-临时目录里的 settings.json。
+不真联网：远程源用假的 _fetch_url 替换。wb_settings 只碰一个临时目录里的
+settings.json。
 """
 
 import os
@@ -13,6 +13,9 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import wb_notices
 import wb_settings
+
+# 本地文件/缓存用例不该联网；远程用例自己打开。
+os.environ["WB_NOTICES_REMOTE"] = "0"
 
 
 SAMPLE = """# 新功能通知
@@ -124,6 +127,88 @@ class LoadNoticesTest(unittest.TestCase):
             first[0]["title"] = "被改过"
             second = wb_notices.load_notices(path)
             self.assertEqual("第一条", second[0]["title"])
+
+
+class RemoteNoticesTest(unittest.TestCase):
+    REMOTE = ("## 2026-10-23 远程更新\nid: remote-one\n\n"
+              "来自 GitHub 的通知\n")
+    LOCAL = "## 2026-10-23 本地副本\nid: local-one\n\n离线时的兜底\n"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = os.path.join(self._tmp.name, "notices.md")
+        with open(self.path, "w", encoding="utf-8") as fh:
+            fh.write(self.LOCAL)
+        self._env = {name: os.environ.get(name) for name in
+                     ("WB_NOTICES_REMOTE", "WB_NOTICES_URL",
+                      "WB_NOTICES_TTL", "WB_NOTICES_TIMEOUT")}
+        self.addCleanup(self._restore)
+        os.environ["WB_NOTICES_REMOTE"] = "1"
+        os.environ["WB_NOTICES_URL"] = "https://example.test/notices.md"
+        os.environ["WB_NOTICES_TTL"] = "60"
+        os.environ.pop("WB_NOTICES_TIMEOUT", None)
+        self._fetch = wb_notices._fetch_url
+        self.addCleanup(setattr, wb_notices, "_fetch_url", self._fetch)
+        wb_notices._reset_caches()
+
+    def _restore(self):
+        for name, value in self._env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        wb_notices._reset_caches()
+
+    def _serve(self, text, calls=None):
+        calls = [] if calls is None else calls
+
+        def fetch(url, timeout):
+            calls.append(url)
+            if isinstance(text, Exception):
+                raise text
+            return text
+
+        wb_notices._fetch_url = fetch
+        return calls
+
+    def test_remote_wins_over_local(self):
+        calls = self._serve(self.REMOTE)
+        state = wb_notices.load_notices_with_meta(self.path, force=True)
+        self.assertTrue(state["remote"])
+        self.assertEqual(["remote-one"], [item["id"] for item in state["notices"]])
+        self.assertIn("example.test", state["source"])
+        self.assertEqual(1, len(calls))
+        self.assertIn("t=", calls[0])
+
+    def test_cache_and_force(self):
+        calls = self._serve(self.REMOTE)
+        first = wb_notices.load_notices_with_meta(self.path, force=True)
+        second = wb_notices.load_notices_with_meta(self.path)
+        self.assertEqual(["remote-one"], [item["id"] for item in first["notices"]])
+        self.assertEqual(["remote-one"], [item["id"] for item in second["notices"]])
+        self.assertEqual(1, len(calls), "TTL 内不该再抓一次")
+        next_text = (self.REMOTE.replace("remote-one", "remote-two")
+                     .replace("远程更新", "远程更新 v2"))
+        self._serve(next_text, calls)
+        third = wb_notices.load_notices_with_meta(self.path, force=True)
+        self.assertEqual(["remote-two"], [item["id"] for item in third["notices"]])
+        self.assertEqual(2, len(calls), "force 必须绕过缓存")
+
+    def test_network_failure_falls_back_to_local(self):
+        self._serve(OSError("offline"))
+        state = wb_notices.load_notices_with_meta(self.path, force=True)
+        self.assertFalse(state["remote"])
+        self.assertEqual(["local-one"], [item["id"] for item in state["notices"]])
+        self.assertNotIn("example.test", state["source"])
+
+    def test_disabled_reads_local_only(self):
+        calls = self._serve(self.REMOTE)
+        os.environ["WB_NOTICES_REMOTE"] = "0"
+        state = wb_notices.load_notices_with_meta(self.path, force=True)
+        self.assertFalse(state["remote"])
+        self.assertEqual(["local-one"], [item["id"] for item in state["notices"]])
+        self.assertEqual([], calls)
 
 
 class DismissedNoticesTest(unittest.TestCase):

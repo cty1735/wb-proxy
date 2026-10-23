@@ -20976,8 +20976,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/settings":
             return self._get_settings()
         if path == "/notices":
-            # 新功能通知：读 docs/notices.md + 本机的「不再显示」清单。
-            return self._get_notices()
+            # 新功能通知：默认从 GitHub 上的 docs/notices.md 回源。
+            return self._get_notices(query)
         if path == "/token-saver/stats":
             # 省 token 的节省统计：只读本机落盘的字节计数，面板轮询这里。
             return self._json(200, wb_tokensaver.stats(ACCOUNTS_DIR))
@@ -21733,27 +21733,26 @@ class Handler(BaseHTTPRequestHandler):
             return
         return self._json(200, runtime_settings_view())
 
-    def _get_notices(self):
+    def _get_notices(self, query=None):
         """新功能通知 + 本机已选「不再显示」的 id。
 
-        正文只从 docs/notices.md 现读（按 mtime 缓存），改 md 不需要重启；
+        正文默认从 GitHub 上的 docs/notices.md 回源（服务端缓存 20 秒；拉不到
+        时依次走 gh-proxy / Gitee / 本地副本）；点铃铛会带 ?refresh=1 强制回源。
         「不再显示」是按 id 存进 settings.json 的，所以换浏览器也记得。
         """
-        path = wb_notices.notices_path()
-        notices = wb_notices.load_notices(path)
+        values = (query or {}).get("refresh") or [""]
+        force = str(values[0]).strip().lower() in ("1", "true", "yes")
+        state = wb_notices.load_notices_with_meta(force=force)
+        notices = state["notices"]
         dismissed = wb_settings.dismissed_notices(ACCOUNTS_DIR)
         dismissed_set = set(dismissed)
         unread = sum(1 for item in notices if item.get("id") not in dismissed_set)
-        try:
-            updated_at = int(os.stat(path).st_mtime)
-        except OSError:
-            updated_at = 0
         return self._json(200, {
             "notices": notices,
             "dismissed": dismissed,
             "unread": unread,
-            "source": wb_notices.source_label(path),
-            "updated_at": updated_at,
+            "source": state["source"],
+            "updated_at": state["updated_at"],
         })
 
     def _route_notices_dismiss(self):
