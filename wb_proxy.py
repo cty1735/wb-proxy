@@ -12940,14 +12940,19 @@ def record_routing_decision(requested, route):
         })
 
 
-def routing_status():
-    """路由页数据：策略、候选排名（预览，不推进轮换）、最近的决策。"""
+def routing_status(full=False):
+    """路由页数据：策略、候选排名（预览，不推进轮换）、最近的决策。
+
+    ``full=True`` 给完整候选排名（明细弹窗用），默认只回前 40 条预览：
+    5 秒一轮的轮询没必要背着上百行不要看的排名。
+    """
     try:
         config = wb_settings.routing_config(ACCOUNTS_DIR)
     except Exception:
         config = {"strategy": wb_settings.ROUTING_DEFAULT_STRATEGY}
     candidates = _routing_candidates()
     ranked = _routing_rank(candidates, config["strategy"], advance=False)
+    shown = ranked if full else ranked[:40]
     preview = [{
         "model": item["public"],
         "base": item["base"],
@@ -12955,7 +12960,7 @@ def routing_status():
         "realm": item["realm"],
         "label": item["label"],
         "ready": item.get("ready"),
-    } for item in ranked[:40]]
+    } for item in shown]
     with _routing_lock:
         decisions = list(_routing_decisions)[:40]
     return {
@@ -21029,7 +21034,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/settings/reveal":
             return self._get_settings_reveal(query)
         if path == "/routing":
-            return self._get_routing()
+            return self._get_routing(query)
         if path == "/agents":
             return self._get_agents(query)
         if path == "/agents/available":
@@ -23484,12 +23489,17 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200, {"ok": True, "disabled": disabled,
                                 "count": changed, "scopes": scopes})
 
-    def _get_routing(self):
-        """「路由」页：策略、候选排名、最近的决策。"""
+    def _get_routing(self, query=None):
+        """「路由」页：策略、候选排名、最近的决策。
+
+        ``?all=1`` 回完整候选排名（明细弹窗），默认 40 条预览。
+        """
         if not self._panel_ok():
             return self._error(401, "panel password required",
                                "invalid_request_error")
-        return self._json(200, routing_status())
+        full = str((query or {}).get("all", [""])[0]).lower() in (
+            "1", "true", "yes", "on")
+        return self._json(200, routing_status(full=full))
 
     def _route_routing_config(self, payload):
         strategy = str((payload or {}).get("strategy") or "").strip().lower()
