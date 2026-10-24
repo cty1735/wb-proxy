@@ -4748,7 +4748,7 @@ html.chromeless .app-body{padding-top:14px}
          四个网关的模型现在合成一个池子，客户端拿到的 /v1/models 是统一的
          「模型名 · 供应商」，点哪家标签都只影响面板看到的内容。 -->
     <div class="provider-switch" id="providerSwitch" role="group" aria-label="提供商" data-no-i18n>
-      <button type="button" id="providerBtnAll" class="active" onclick="switchProvider('all')" aria-pressed="true" title="路由：四个网关的全部模型合成一个池子">路由</button>
+      <button type="button" id="providerBtnAll" class="active" onclick="switchProvider('all')" aria-pressed="true" title="路由：有账号的网关 + 鸡蛋免费模型合成一个池子">路由</button>
       <button type="button" id="providerBtnWorkbuddy" onclick="switchProvider('workbuddy')" aria-pressed="false">WorkBuddy</button>
       <button type="button" id="providerBtnQoder" onclick="switchProvider('qoder')" aria-pressed="false">Qoder</button>
       <button type="button" id="providerBtnTrae" onclick="switchProvider('trae')" aria-pressed="false">Trae</button>
@@ -5416,7 +5416,7 @@ html.chromeless .app-body{padding-top:14px}
           <option value="agent">测试口径：Agent（带工具）</option>
           <option value="chat">测试口径：对话（不带工具）</option>
         </select>
-        <div style="font-size:12px;color:var(--dim)" id="modelsTableDesc">展示总路由池子的全部模型（WorkBuddy / Qoder / Trae / 鸡蛋，含国际与国内，id 为「模型名 · 供应商」）、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率；每行可单独测试与启用/停用，测过的可用性记在本机、刷新后还在</div>
+        <div style="font-size:12px;color:var(--dim)" id="modelsTableDesc">展示总路由池子的模型（WorkBuddy / Qoder / Trae 只列有账号的网关，鸡蛋始终保留，含国际与国内，id 为「模型名 · 供应商」）、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率；每行可单独测试与启用/停用，测过的可用性记在本机、刷新后还在</div>
         <!-- 手动刷新：强制走一次上游 /v3/config（只在当前视图的版本上，用该
              版本的账号），成功后本表立即重载。服务端同一版本 30s 冷却。 -->
         <button class="sec mini" id="btnRefreshModels" onclick="refreshModelCatalog(this)"
@@ -8381,7 +8381,7 @@ const GATEWAY_TITLE_QODER = "Qoder 网关与账号";
 const GATEWAY_TITLE_TRAE = "Trae 网关与账号";
 const GATEWAY_TITLE_EGG = "鸡蛋网关 · 免费白嫖";
 const GATEWAY_DESC_WB = "管理账号池与代理出口，查看当日调用量、估算花费、成功率、最近请求与网关模型清单。";
-const GATEWAY_DESC_ALL = "WorkBuddy / Qoder / Trae（各含国际与国内）+ 鸡蛋的全部模型合成一个池子；模型 id 是「模型名 · 供应商」，客户端不需要再带 X-Provider。";
+const GATEWAY_DESC_ALL = "WorkBuddy / Qoder / Trae（各含国际与国内）+ 鸡蛋合成一个池子；前三个网关只列有账号的模型，鸡蛋免账号、始终保留；模型 id 是「模型名 · 供应商」，客户端不需要再带 X-Provider。";
 const GATEWAY_DESC_QODER = "管理 Qoder 账号池与代理出口，查看当日调用量、成功率、最近请求与网关模型清单。";
 const GATEWAY_DESC_TRAE = "管理 Trae 账号池与代理出口，查看当日调用量、成功率、最近请求与网关模型清单。";
 const GATEWAY_DESC_EGG = "免账号、免密钥聚合 OpenCode Zen 免费车道与 Kilo 免费池；切到鸡蛋会自动刷新免费模型清单。";
@@ -8395,7 +8395,7 @@ const TASKS_DESC_EGG = "鸡蛋免费白嫖：没有签到与成长任务，模�
 // 模型清单页的说明：Qoder 的目录可能没有倍率（按账号额度计费）；Trae 的
 // 倍率来自账号目录的 consumption_rate（客户端选择器同款），可正常展示。
 const MODELS_DESC_WB = "展示当前视图下官方对话大模型、上下文容量、推理/视觉能力、思考控制、默认采样参数及在售倍率";
-const MODELS_DESC_ALL = "展示路由池子里的全部模型（模型名 · 供应商，含国际与国内）、上下文容量、推理/视觉能力、思考控制与倍率口径；「供应商」列标明它真实走哪个网关或免费源";
+const MODELS_DESC_ALL = "展示路由池子里的模型（模型名 · 供应商）：WorkBuddy / Qoder / Trae 只列有账号的网关，鸡蛋始终保留；含国际与国内、上下文容量、推理/视觉能力、思考控制与倍率口径；「供应商」列标明它真实走哪个网关或免费源";
 const MODELS_DESC_QODER = "展示 Qoder 的官方对话大模型、上下文容量、推理/视觉能力、思考控制与默认采样参数；倍率为 Credits 消耗参考系数";
 const MODELS_DESC_TRAE = "展示 Trae 的官方对话大模型、上下文容量、推理/视觉能力与默认采样参数；倍率为客户端选择器同款消耗倍率（Credits 消耗系数，含低谷折扣）";
 const MODELS_DESC_EGG = "展示鸡蛋当前可用的模型（每行标注所属池子：OpenCode Zen 免费车道 / Kilo 免费池 / 自建供应商池）、上下文容量、推理/视觉能力与工具支持；内置的两路免费源免账号免密钥，自建池用你自己的 Key";
@@ -8882,6 +8882,36 @@ async function initRealm(){
   window.updateUI();
 }
 
+// 「刷新全部模型清单」的后台任务轮询：七份目录串行刷新，鸡蛋最长可拖 90 秒。
+// 旧面板按固定 5/15/45 秒重载，后台还没写完就把旧清单画回去，看起来像
+// 「点了没反应」。这里等 running=false 再重画；状态接口不可用（旧网关）时
+// 返回 null，由调用方回退到固定延迟。
+async function waitPoolCatalogRefresh(taskId, onTick){
+  const deadline = Date.now() + 240000;
+  while(Date.now() < deadline){
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    let st;
+    try{
+      st = await getJSON('/catalog/refresh/status');
+    }catch(e){
+      return null;
+    }
+    if(!st || st.ok !== true) return null;
+    // 网关重启过：内存里的任务状态没了（id 为空）。这不算「刷新完成」，
+    // 让调用方按中断处理，别拿 0/7 的结果去重画。
+    if(taskId && !st.id){
+      return {ok: false, running: false, lost: true,
+              msg: '网关重启后刷新任务已中断'};
+    }
+    // 另一次刷新接管了任务（例如另一个面板先点了）：继续跟新的那个。
+    if(st.id) taskId = st.id;
+    if(onTick) onTick(st);
+    if(st.running !== true) return st;
+  }
+  return {ok: false, running: false, timeout: true,
+          msg: '后台刷新超过 4 分钟仍未结束'};
+}
+
 async function refreshModelCatalog(btn){
   // 手动刷新模型清单：强制走一次上游（服务端执行，绕过 300s 缓存），只刷当前
   // 视图版本——这张表显示的是哪个版本，刷新按钮就只拉哪个版本，绝不跨区
@@ -8898,11 +8928,51 @@ async function refreshModelCatalog(btn){
   try{
     const r = await postJSON('/catalog/refresh', {realm: realm, provider: provider});
     if(provider === 'all' && r && r.ok){
-      // 七份目录一起拉要几十秒：服务端后台跑，这里先回话，稍后再拉清单。
+      // 七份目录一起拉要几十秒：服务端后台跑并返回任务 id，面板轮询到全部
+      // 结束再重拉清单。没有状态接口的旧网关回退到固定延迟重载。
       toast(label + '：' + (r.msg || '已在后台刷新'), 'ok');
-      setTimeout(() => { if(currentProvider() === 'all') loadModels(); }, 5000);
-      setTimeout(() => { if(currentProvider() === 'all') loadModels(); }, 15000);
-      setTimeout(() => { if(currentProvider() === 'all') loadModels(); }, 45000);
+      const st = await waitPoolCatalogRefresh(r.id || r.task_id || '', function(s){
+        if(btn && currentProvider() === 'all'){
+          const done = (s.ok_count || 0) + (s.failed_count || 0);
+          const total = s.total || 7;
+          btn.textContent = '刷新中… ' + done + '/' + total
+            + (s.stage ? ' · ' + s.stage : '');
+        }
+      });
+      if(st && st.lost){
+        toast(label + '：' + (st.msg || '刷新任务已中断'), 'warn');
+        if(currentProvider() === 'all') await loadModels();
+      }else if(st && !st.timeout){
+        const okN = st.ok_count || 0, failN = st.failed_count || 0;
+        const results = st.results || [];
+        const totalN = st.total || (results.length || 7);
+        // 失败的那几份点名：多半是「这个区还没加账号」，只说「1 份失败」
+        // 让人不知道该去补哪个区。只有一份失败时把上游原话一起带上。
+        const badItems = results.filter(it => it && it.ok === false);
+        const badNames = badItems.slice(0, 3).map(it =>
+          (PROVIDER_NAMES[it.provider] || it.provider)
+          + (it.realm === 'cn' ? ' 国内版' : ' 国际版'));
+        const badText = badItems.length
+          ? ('，' + badNames.join('、') + (badItems.length > 3 ? ' 等' : '')
+             + '失败'
+             + (badItems.length === 1 && badItems[0].msg
+                ? ('（' + badItems[0].msg + '）') : ''))
+          : (failN ? ('，' + failN + ' 份失败或跳过') : '');
+        toast(label + '：已刷新 ' + okN + '/' + totalN + ' 份目录' + badText,
+              failN ? 'warn' : 'ok');
+        if(currentProvider() === 'all'){
+          await loadModels();
+          await loadAgents();
+        }
+      }else if(st && st.timeout){
+        toast(label + '：' + (st.msg || '刷新超时'), 'warn');
+        if(currentProvider() === 'all') await loadModels();
+      }else{
+        // 旧网关没有 /catalog/refresh/status：沿用原来的固定延迟重载。
+        setTimeout(() => { if(currentProvider() === 'all') loadModels(); }, 5000);
+        setTimeout(() => { if(currentProvider() === 'all') loadModels(); }, 15000);
+        setTimeout(() => { if(currentProvider() === 'all') loadModels(); }, 45000);
+      }
       return;
     }
     if(r && r.ok){
@@ -8932,7 +9002,7 @@ function renderModelsLoading(){
   const tb = document.querySelector('#modelsTable tbody');
   const countEm = document.getElementById('availModelCount');
   if(countEm) countEm.textContent = '(加载中…)';
-  if(tb) tb.innerHTML = '<tr><td colspan="12" class="empty">正在加载路由池子的模型清单（四个网关全部模型）…</td></tr>';
+  if(tb) tb.innerHTML = '<tr><td colspan="12" class="empty">正在加载路由池子的模型清单（有账号的网关 + 鸡蛋免费模型）…</td></tr>';
   const src = document.getElementById('modelsSourceLine');
   if(src){
     src.style.cssText = CATALOG_BANNER_BASE + 'background:transparent;border:1px dashed var(--line);color:var(--dim)';
@@ -8943,8 +9013,9 @@ function renderModelsLoading(){
 async function loadModels(){
   const seq = ++MODELS_REQ_SEQ;
   // 模型清单固定是「路由」池子：顶部四个网关标签只切账号 / 网关面板，不再
-  // 把清单缩到某一家（总路由本来就包含全部模型）。当前视图那份仍要拉：
-  // 概览、Trae 模型数、鸡蛋池子状态都按视图口径。
+  // 把清单缩到某一家。池子只列有账号的网关（鸡蛋免账号，始终保留），新用户
+  // 因此只看到鸡蛋的免费模型。当前视图那份仍要拉：概览、Trae 模型数、鸡蛋
+  // 池子状态都按视图口径。
   const poolOnly = currentProvider() === 'all';
   const path = '/v1/models?realm=' + encodeURIComponent(window.VIEW_REALM)
              + '&include_disabled=1';
@@ -9117,8 +9188,8 @@ function renderRoutingOverview(){
     status.style.cssText = 'flex-direction:column;align-items:flex-start;gap:2px';
     status.innerHTML = '<b>当前策略：' + esc((strategies.find(s => s.id === active) || {}).label || active) + '</b>'
       + '<span style="color:var(--dim)">' + esc(note) + '</span>'
-      + '<span style="color:var(--dim)">候选只含有可用账号的网关（鸡蛋始终可用）；面板停用的模型不参与路由。'
-      + '没有账号的网关不会出现在候选里，配好账号后自动加入。</span>';
+      + '<span style="color:var(--dim)">池子清单与候选都只含有账号的网关（鸡蛋免账号、始终可用）；面板停用的模型不参与路由。'
+      + '没有账号的网关不会出现，配好账号后自动加入。</span>';
   }
 
   const box = document.getElementById('routeStrategyCards');
@@ -9282,7 +9353,10 @@ function statModelsHTML(kind){
         : pa.localeCompare(pb, 'zh-CN');
     });
   if(!list.length){
-    return '<div class="kpi-bd-empty">模型清单还没加载出来：先点右上角「刷新全部模型清单」。</div>';
+    return '<div class="kpi-bd-empty">' + (kind === 'pool'
+      ? '模型清单还没加载出来：先点右上角「刷新全部模型清单」。'
+      : '这个网关还没有模型：先点「刷新全部模型清单」；若仍未出现，通常是还没有接入账号（鸡蛋除外）。')
+      + '</div>';
   }
   const intl = list.filter(m => m.pool_realm === 'intl').length;
   const cn = list.filter(m => m.pool_realm === 'cn').length;
@@ -11085,14 +11159,20 @@ function renderModelsSourceLine(meta){
     });
     const eggCount = pool && pool.egg ? (pool.egg.total || 0) : 0;
     parts.push('鸡蛋 ' + eggCount);
+    const cappedCount = (POOL_MODELS_DATA || []).filter(function(m){
+      return m && m.free_cap_exhausted === true;
+    }).length;
     el.style.cssText = CATALOG_BANNER_BASE
       + 'flex-direction:column;align-items:flex-start;gap:2px;'
       + 'background:var(--accent2-soft);border:1px solid rgba(94,140,79,.28);color:var(--accent2)';
-    el.title = '四个网关的模型合成一个池子：WorkBuddy / Qoder / Trae 各含国际与国内，鸡蛋按供应商（免费源 / 自建池 / 平台池）分。'
-      + '客户端不带 ?provider= 拉 /v1/models 拿到的就是这份清单。';
+    el.title = '路由池子：WorkBuddy / Qoder / Trae 只列有账号的网关（各含国际与国内），鸡蛋免账号、始终保留（按供应商 / 免费源 / 自建池 / 平台池分）。'
+      + '客户端不带 ?provider= 拉 /v1/models 拿到的就是这份清单。'
+      + (cappedCount ? '其中 ' + cappedCount + ' 个免费模型的本次免费额度已用尽，表里按回落倍率标注。' : '');
     el.innerHTML = '<b>✓ 路由池子：' + ((pool && pool.total) || POOL_MODELS_DATA.length) + ' 个模型</b>'
       + '<span style="color:var(--dim)">' + esc(parts.join(' · '))
-      + ' · 点「刷新全部模型清单」让后台把七份目录各拉一次</span>';
+      + ' · 点「刷新全部模型清单」让后台把七份目录各拉一次</span>'
+      + (cappedCount ? '<span style="color:var(--warn)">⚠ ' + cappedCount
+         + ' 个免费模型本次额度已用尽，已标出回落倍率</span>' : '');
     return;
   }
   const tip = (currentProvider() === 'qoder')
@@ -11210,6 +11290,21 @@ function renderAvailableModels(){
     } else if(eggLike && (c === '0.00' || c === '0' || !credText)){
       // 鸡蛋的全部模型都是免费额度：显示「免费」比「限时免费 0.00x」准确。
       credBadge = '<span class="badge ok" style="background:var(--accent2-soft);color:var(--accent2)"' + credTitle + '>免费</span>';
+    } else if(m.free_cap_exhausted === true && (c === '0.00' || c === '0')){
+      // 目录里的 x0.00 只说明「额度内不计积分」，不是永久免费。该出口的
+      // 所有账号都撞到上游 6004（免费额度用尽）时，按运行时状态换成「额度
+      // 用尽」；有付费兄弟模型就顺带标出回落倍率与恢复时间。
+      const capPaid = String(m.free_cap_paid_rate || '').trim().replace(/^x/i, '');
+      const capReset = m.free_cap_reset ? fmtCatalogStamp(m.free_cap_reset) : '';
+      const capParts = ['该模型本次免费额度已用尽（上游 6004）'];
+      if(capReset) capParts.push('预计 ' + capReset + ' 恢复免费额度');
+      if(capPaid) capParts.push('额度恢复前可回落到付费通道，按 ' + capPaid + 'x 计费');
+      if(credNote) capParts.push(credNote);
+      const capTitle = ' title="' + esc(capParts.join('；')) + '"';
+      const capStyle = 'background:var(--warn-soft);color:var(--warn);border-color:rgba(183,121,31,.35)';
+      credBadge = '<span class="badge warn" style="' + capStyle + '"' + capTitle + '>'
+        + (capPaid ? '额度用尽 · 回落 ' + esc(capPaid) + 'x' : '免费额度已用尽')
+        + '</span>';
     } else if(c === '0.00' || c === '0'){
       // 0 就是官网选择器里的「限时免费」（Qoder 的 Efficient 目前就是这种）。
       credBadge = '<span class="badge ok" style="background:var(--accent2-soft);color:var(--accent2)"' + credTitle + '>限时免费 0.00x</span>';

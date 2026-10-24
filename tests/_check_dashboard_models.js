@@ -96,10 +96,11 @@ const want = [
   'loadModelTestState',
   'renderModelTestDetail', 'showModelTestDetail', 'closeModelTestDetail',
   'copyModelTestError', 'retestFromModelDetail',
+  'refreshModelCatalog', 'waitPoolCatalogRefresh',
 ];
 const setters = [
   'MODELS_DATA', 'POOL_MODELS_DATA', 'EGG_POOL_FILTER', 'currentProvider', 'esc', 'toast',
-  'postJSON', 'getJSON', 'MODEL_TEST_MODE',
+  'postJSON', 'getJSON', 'MODEL_TEST_MODE', 'VIEW_REALM', 'loadModels', 'loadAgents',
 ].map(n => "  try{ if(o." + n + " !== undefined) " + n + " = o." + n + "; }catch(e){}");
 const exportSrc = want.map(n => n + ': ' + n).join(',');
 const EXPORTS =
@@ -192,6 +193,26 @@ check('启停开关接上函数',
 check('停用行的测试按钮禁用',
       /data-label="测试"[^>]*><button class="sec mini" disabled/.test(htmlOut)
       || /class="test-cell"[^>]*data-label="测试"><button class="sec mini" disabled/.test(htmlOut));
+
+// --- 免费额度用尽：徽章换成回落倍率，不再写「限时免费」 ---------------
+const capModels = [{
+  id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', credits: 'x0.00',
+  free_cap_exhausted: true,
+  free_cap_reset: Math.floor(Date.now() / 1000) + 3600,
+  free_cap_paid_id: 'deepseek-v4.1-flash-sg',
+  free_cap_paid_rate: 'x0.03',
+  available: true,
+}];
+api.__set({MODELS_DATA: capModels, POOL_MODELS_DATA: capModels});
+api.renderAvailableModels();
+const capHtml = MODELS_TBODY.innerHTML;
+check('额度用尽显示回落倍率',
+      capHtml.indexOf('额度用尽 · 回落 0.03x') >= 0, capHtml);
+check('额度用尽徽章提示恢复时间',
+      capHtml.indexOf('恢复免费额度') >= 0, capHtml);
+check('额度用尽不再写限时免费',
+      capHtml.indexOf('限时免费 0.00x') < 0, capHtml);
+api.__set({MODELS_DATA: sampleModels(), POOL_MODELS_DATA: sampleModels()});
 
 // --- 测试结果就地渲染 -------------------------------------------------
 api.__testState({
@@ -619,6 +640,44 @@ function okResponse() {
         /th\{color:var\(--dim\);[^}]*background:var\(--panel2\)\}/.test(htmlRaw));
   check('窄屏卡片视图下撤掉滚动区',
         /#modelsTableScroll\{overflow:visible;max-height:none\}/.test(htmlRaw));
+
+  // --- 刷新全部模型清单：后台任务结束时点名失败的目录 -------------------
+  // 七份目录里少一份（例如某个区还没加 Trae 账号）不该只说「1 份失败」，
+  // 得让用户知道该去补哪个区。
+  const refreshToasts = [];
+  api.__set({
+    VIEW_REALM: 'intl',
+    currentProvider: function () { return 'all'; },
+    toast: function (msg, kind) { refreshToasts.push([msg, kind]); },
+    postJSON: function () {
+      return Promise.resolve({ok: true, pool: true, id: 'task-7', msg: '已在后台刷新'});
+    },
+    getJSON: function () {
+      return Promise.resolve({
+        ok: true, id: 'task-7', running: false, total: 7, ok_count: 6, failed_count: 1,
+        stage: 'done', stage_index: 7, results: [
+          {realm: 'intl', provider: 'workbuddy', ok: true},
+          {realm: 'cn', provider: 'workbuddy', ok: true},
+          {realm: 'intl', provider: 'qoder', ok: true},
+          {realm: 'cn', provider: 'qoder', ok: true},
+          {realm: 'intl', provider: 'trae', ok: false, msg: '没有可用的 Trae 账号'},
+          {realm: 'cn', provider: 'trae', ok: true},
+          {realm: 'intl', provider: 'egg', ok: true},
+        ],
+      });
+    },
+    loadModels: function () { return Promise.resolve(); },
+    loadAgents: function () { return Promise.resolve(); },
+  });
+  await api.refreshModelCatalog(null);
+  const doneToast = refreshToasts.filter(t => t[0].indexOf('已刷新') >= 0)[0] || [''];
+  check('刷新完成提示报出成功的份数',
+        doneToast[0].indexOf('6/7') >= 0, doneToast);
+  check('刷新完成提示点名失败的目录',
+        doneToast[0].indexOf('Trae 国际版') >= 0, doneToast);
+  check('刷新完成提示带上失败原因',
+        doneToast[0].indexOf('没有可用的 Trae 账号') >= 0, doneToast);
+  check('有目录失败时用警告色', doneToast[1] === 'warn', doneToast);
 
   finish();
 })();

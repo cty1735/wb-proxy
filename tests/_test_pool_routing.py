@@ -16,6 +16,8 @@ import os
 import shutil
 import sys
 import tempfile
+import time
+import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -146,6 +148,38 @@ check("full 与预览前 40 条一致",
       [m["model"] for m in (full.get("models") or [])[:40]]
       == [m["model"] for m in (status.get("models") or [])],
       "")
+
+print("池子按账号过滤")
+real_pool = P.POOL
+real_cache = P._pool_cache
+try:
+    raw = P._build_pool_entries()
+    check("未过滤的池子有三个账号网关",
+          {meta.get("pool_provider") for _mid, meta in raw}
+          >= {"workbuddy", "qoder", "trae"},
+          sorted({meta.get("pool_provider") for _mid, meta in raw}))
+    # 用一份新鲜缓存拦掉后台刷新：这里只验证「取清单时按当前账号过滤」。
+    P._pool_cache = {"at": time.time(), "data": raw}
+
+    P.POOL = types.SimpleNamespace(accounts=[])
+    providers = {meta.get("pool_provider")
+                 for _mid, meta in P.fetch_pool_models()}
+    check("空账号池只留鸡蛋", providers == {"egg"}, sorted(providers))
+
+    P.POOL = types.SimpleNamespace(accounts=[
+        types.SimpleNamespace(provider="workbuddy", realm="cn")])
+    entries = P.fetch_pool_models()
+    realms = {(meta.get("pool_provider"), meta.get("pool_realm"))
+              for _mid, meta in entries
+              if meta.get("pool_provider") == "workbuddy"}
+    check("只有国内账号时只留国内模型", realms == {("workbuddy", "cn")},
+          sorted(realms))
+    check("有账号后鸡蛋仍然保留",
+          any(meta.get("pool_provider") == "egg"
+              for _mid, meta in entries), "")
+finally:
+    P.POOL = real_pool
+    P._pool_cache = real_cache
 
 route = P.resolve_routing_model("order")
 check("order 能选出成员", bool(route and route.get("public")), route)

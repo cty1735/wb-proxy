@@ -181,7 +181,7 @@ const want = [
   'eggPlatformPickerFilter', 'eggPlatformSelectAll', 'eggPlatformToggleModel',
 ];
 const setters = [
-  'MODELS_DATA', 'EGG_POOLS', 'EGG_POOL_PRESETS', 'EGG_POOL_FORM',
+  'MODELS_DATA', 'POOL_MODELS_DATA', 'EGG_POOLS', 'EGG_POOL_PRESETS', 'EGG_POOL_FORM',
   'EGG_POOL_CARD', 'EGG_POOL_FILTER', 'EGG_POOL_PICK_FILTER', 'currentProvider', 'esc',
   'fmtCatalogStamp', 'toast', 'getJSON', 'postJSON', 'loadModels',
   'EGG_PLATFORMS', 'EGG_PLATFORM_DEFS', 'EGG_PLATFORM_OPEN',
@@ -213,6 +213,14 @@ api.__set({
     { id: 'm2', egg_source: 'kilo', egg_source_label: 'Kilo 免费池' },
     { id: 'm3', egg_source: 'pool-abc', egg_source_label: 'NVIDIA NIM' },
     { id: 'm4', egg_source: 'pool-abc', egg_source_label: 'NVIDIA NIM' },
+  ],
+  // 清单固定是总路由池子（eggPoolGroups 读 POOL_MODELS_DATA），MODELS_DATA
+  // 只是当前视图那一份；两份都要有池子标签。
+  POOL_MODELS_DATA: [
+    { id: 'm1', pool_provider: 'egg', pool_label: 'Zen 免费车道', egg_source: 'zen' },
+    { id: 'm2', pool_provider: 'egg', pool_label: 'Kilo 免费池', egg_source: 'kilo' },
+    { id: 'm3', pool_provider: 'egg', pool_label: 'NVIDIA NIM', egg_source: 'pool-abc' },
+    { id: 'm4', pool_provider: 'egg', pool_label: 'NVIDIA NIM', egg_source: 'pool-abc' },
   ],
   EGG_POOLS: [
     {
@@ -256,13 +264,13 @@ check('筛选框含池子名', sel.innerHTML.indexOf('NVIDIA NIM') >= 0, sel.inn
 check('筛选框含模型数', sel.innerHTML.indexOf('（2 个模型') >= 0, sel.innerHTML);
 // 下拉里要能看出「是哪些模型」，不只是个数
 check('筛选框含模型名', sel.innerHTML.indexOf('m3、m4') >= 0, sel.innerHTML);
-check('筛选框含全部池子', sel.innerHTML.indexOf('全部池子（4 个模型）') >= 0, sel.innerHTML);
+check('筛选框含全部池子', sel.innerHTML.indexOf('全部供应商（4 个模型）') >= 0, sel.innerHTML);
 
 // 1b. 说明行：选中池子后把该池的模型摊开
 const hint = document.getElementById('eggPoolFilterHint');
 check('说明行默认显示全部摘要',
-  hint.textContent.indexOf('全部池子（4 个模型）') >= 0, hint.textContent);
-api.__set({ EGG_POOL_FILTER: 'pool-abc' });
+  hint.textContent.indexOf('全部供应商（4 个模型）') >= 0, hint.textContent);
+api.__set({ EGG_POOL_FILTER: 'NVIDIA NIM' });
 api.buildEggPoolFilter();
 check('说明行摊开选中池子的模型',
   hint.textContent.indexOf('NVIDIA NIM（2 个模型）：m3、m4') >= 0, hint.textContent);
@@ -272,9 +280,9 @@ api.__set({ EGG_POOL_FILTER: '' });
 api.buildEggPoolFilter();
 
 // 2. 过滤生效
-api.__set({ EGG_POOL_FILTER: 'pool-abc' });
+api.__set({ EGG_POOL_FILTER: 'NVIDIA NIM' });
 check('按池子过滤', api.eggFilteredModels().length === 2, api.eggFilteredModels().length);
-api.__set({ EGG_POOL_FILTER: 'zen' });
+api.__set({ EGG_POOL_FILTER: 'Zen 免费车道' });
 check('按 Zen 过滤', api.eggFilteredModels().length === 1);
 api.__set({ EGG_POOL_FILTER: '' });
 check('不过滤时是全部', api.eggFilteredModels().length === 4);
@@ -335,11 +343,11 @@ check('选择器默认勾中已挑的',
   (list2.innerHTML.match(/type="checkbox" checked/g) || []).length === 3,
   (list2.innerHTML.match(/type="checkbox" checked/g) || []).length);
 
-// 9. 非鸡蛋视图：筛选框藏起来
+// 9. 其他视图：清单固定是总路由池子，供应商筛选仍然有效
 api.__set({ currentProvider: function () { return 'workbuddy'; } });
 api.buildEggPoolFilter();
-check('非鸡蛋视图藏起筛选框', sel.style.display === 'none', sel.style.display);
-check('非鸡蛋视图不过滤', api.eggFilteredModels().length === 4);
+check('其他视图仍显示筛选框', sel.style.display === 'inline-block', sel.style.display);
+check('其他视图不过滤', api.eggFilteredModels().length === 4);
 
 // 10. 挑选模型：按 id 搜 + 只看免费
 api.__set({ currentProvider: function () { return 'egg'; } });

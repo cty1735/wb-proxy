@@ -18,6 +18,7 @@ import argparse
 import bisect
 import calendar
 import copy
+import datetime
 import errno
 import hashlib
 import heapq
@@ -11792,8 +11793,17 @@ def merge_reasoning(base, live):
         out.pop("effort", None)
     return out
 def merge_catalog(primary, realm=None, extras=False):
+    """Merge the live catalogue with the bundled snapshot.
+
+    The live catalogue is authoritative for **membership**: if upstream no
+    longer lists a model, a refresh must remove it from /v1/models. The
+    bundled table is only the fallback for when nothing live is available
+    (offline install, all upstream paths failed); it supplies field values
+    (limits, reasoning controls, aliases) for models that *are* live, but it
+    no longer resurrects retired models forever. That permanent union is what
+    made "刷新模型清单" look like it did nothing.
+    """
     r = realm or CURRENT_REALM
-    merged = {}
     # "all" is the union of both realms. The analytics dashboard lists every
     # model the gateway has served, so it must not drop the ones that only
     # one side's catalog knows about.
@@ -11801,25 +11811,33 @@ def merge_catalog(primary, realm=None, extras=False):
         source_static = list(wb_catalog.STATIC_INTL_MODELS) + list(wb_catalog.STATIC_CN_MODELS)
     else:
         source_static = getattr(wb_catalog, "STATIC_CN_MODELS" if r == "cn" else "STATIC_INTL_MODELS", wb_catalog.STATIC_MODELS)
-    primary_ids = set(m for m, _ in (primary or []))
+    static = {}
     for item in source_static:
         mid = item.get("id")
-        if mid == "hy4-preview-f" and "hy4-preview" in primary_ids and "hy4-preview-f" not in primary_ids:
-            continue
-        if mid and is_chat_model(mid) and mid not in merged:
-            merged[mid] = dict(item)
-    for mid, meta in primary or []:
-        if not is_chat_model(mid):
-            continue
-        if meta:
-            base = merged.get(mid) or {}
+        if mid and is_chat_model(mid) and mid not in static:
+            static[mid] = dict(item)
+    live = [(mid, meta) for mid, meta in (primary or [])
+            if mid and is_chat_model(mid)]
+    primary_ids = set(mid for mid, _meta in live)
+    merged = {}
+    if live:
+        for mid, meta in live:
+            base = dict(static.get(mid) or {})
             base_reasoning = base.get("reasoning")
-            base.update(meta)
-            if isinstance(meta.get("reasoning"), dict):
-                base["reasoning"] = merge_reasoning(base_reasoning, meta["reasoning"])
+            if isinstance(meta, dict):
+                base.update(meta)
+                if isinstance(meta.get("reasoning"), dict):
+                    base["reasoning"] = merge_reasoning(base_reasoning,
+                                                        meta["reasoning"])
+            base["_wb_realm"] = r
             merged[mid] = base
-        elif mid not in merged:
-            merged[mid] = {}
+    else:
+        # No live data at all: keep the bundled snapshot so the gateway still
+        # answers /v1/models offline.
+        for mid, item in static.items():
+            item = dict(item)
+            item["_wb_realm"] = r
+            merged[mid] = item
     order = CN_UI_ORDER if r == "cn" else INTL_UI_ORDER
     if r == "all":
         order = list(INTL_UI_ORDER) + [m for m in CN_UI_ORDER if m not in INTL_UI_ORDER]
@@ -11834,9 +11852,9 @@ def merge_catalog(primary, realm=None, extras=False):
     if extras:
         # A model the curated table has never heard of still ships when the
         # *live* catalogue lists it - that is how a newly added upstream model
-        # reaches /v1/models without a release. The bundled snapshot alone is
-        # not enough: it also carries legacy entries the picker may not show.
-        for mid, _meta in primary or []:
+        # reaches /v1/models without a release. Never add a static-only entry:
+        # the bundled table also carries retired models.
+        for mid, _meta in live:
             if mid in merged and mid not in seen:
                 item = merged[mid]
                 # 无倍率模型隐藏：未配置有效 credits（内置表无、远程 meta 也无）不进入对外目录
@@ -12175,23 +12193,58 @@ def _build_pool_entries(realm=None):
     return out
 
 
+def _pool_account_scopes():
+    """路由池子里「有账号」的 (网关, 出口) 组合。
+
+    鸡蛋是免账号的免费网关，不在这里登记；调用方永远保留它。
+    """
+    try:
+        accounts = list(POOL.accounts) if POOL else []
+    except Exception:
+        accounts = []
+    return {(getattr(account, "provider", None),
+             getattr(account, "realm", None)) for account in accounts
+            if getattr(account, "provider", None) in POOL_PROVIDER_ORDER
+            and getattr(account, "realm", None)}
+
+
+def _filter_pool_by_accounts(entries):
+    """只保留有账号的网关；鸡蛋免账号，始终保留。
+
+    按 (网关, 出口) 过滤，而不是只看网关：只有国内账号时，国际版那批模型
+    在路由里同样发不出去，不该让新用户选到必失败的成员。
+    """
+    scopes = _pool_account_scopes()
+    out = []
+    for mid, meta in entries:
+        meta = meta or {}
+        provider = meta.get("pool_provider")
+        if provider == "egg" or (provider, meta.get("pool_realm")) in scopes:
+            out.append((mid, meta))
+    return out
+
+
 def fetch_pool_models(realm=None):
     """「路由」页 / 客户端的统一模型清单。
 
     先用现有缓存 + 内置快照拼一份立即返回，再在后台把七份目录各拉一次：
     客户端探 /v1/models 只有几秒，绝不能等鸡蛋那 40 秒的免费源目录。
+
+    清单按**当前账号**过滤：WorkBuddy / Qoder / Trae 没有账号的网关不出现
+    （新用户只看到鸡蛋的免费模型），配好账号后下一轮自动加入；鸡蛋免账号，
+    始终保留。缓存里存的是未过滤的全量，账号增删不必等缓存过期。
     """
     now = time.time()
     with _lock:
         c = _pool_cache
         if c["data"] and now - c["at"] < POOL_CACHE_TTL:
-            return c["data"]
+            return _filter_pool_by_accounts(c["data"])
     entries = _build_pool_entries(realm)
     with _lock:
         _pool_cache["at"] = time.time()
         _pool_cache["data"] = entries
     _kick_pool_refresh()
-    return entries
+    return _filter_pool_by_accounts(entries)
 
 
 def _kick_pool_refresh():
@@ -12444,30 +12497,161 @@ def agent_models(provider=None, realm=None, pool=False):
     return models
 
 
-def refresh_pool_catalog():
-    """「路由」页的刷新按钮：后台把七份目录各重拉一次，立即回话。"""
-    def run():
-        for provider in POOL_PROVIDER_ORDER:
-            for r in POOL_REALM_ORDER:
-                try:
-                    refresh_catalog(r, provider)
-                except Exception as exc:
-                    log("pool refresh: %s/%s failed (%s)" % (provider, r, exc))
-        try:
-            refresh_catalog(CURRENT_REALM, "egg")
-        except Exception as exc:
-            log("pool refresh: egg failed (%s)" % exc)
-        with _lock:
-            _pool_cache["at"] = 0.0
-        # 七份目录都刷新完了：池子重建，已接入的 Agent 立刻换上新模型表。
-        kick_pool_agent_sync("pool refresh")
+#: 「刷新全部模型清单」的后台任务状态。七份目录（WorkBuddy / Qoder / Trae ×
+#: 国际/国内 + 鸡蛋）串行刷新，鸡蛋最长可拖 90 秒；面板轮询这个状态，等任务
+#: 真正结束再重画清单。旧实现只在全部完成后才清池子缓存，面板按固定的
+#: 5/15/45 秒重载，鸡蛋还没拉完就把旧清单画回去——看起来像「刷新没生效」。
+_pool_refresh_task = {
+    "id": "",
+    "running": False,
+    "stage": "",
+    "stage_index": 0,
+    "total": 0,
+    "started_at": 0.0,
+    "finished_at": 0.0,
+    "success": False,
+    "results": [],
+}
+_pool_refresh_seq = 0
 
-    threading.Thread(target=run, name="pool-refresh", daemon=True).start()
-    return {
-        "ok": True,
-        "pool": True,
-        "msg": "已在后台刷新四个网关的模型清单（约 10~60 秒），稍后自动更新",
-    }
+
+def pool_catalog_refresh_state():
+    """当前 / 最近一次「刷新全部模型清单」任务的状态（面板轮询用）。
+
+    返回的 ``ok`` 只表示状态可读；``success`` 才是任务结果。``results`` 每项
+    对应一份目录（provider / realm / ok / count / msg），``failed_count`` 是
+    失败或跳过的份数。任务从没跑过时 ``id`` 为空、``running`` 为 False。
+    """
+    with _lock:
+        task = dict(_pool_refresh_task)
+        task["results"] = [dict(item)
+                           for item in (_pool_refresh_task.get("results") or [])
+                           if isinstance(item, dict)]
+    results = task["results"]
+    ok_count = sum(1 for item in results if item.get("ok"))
+    failed = [item for item in results if not item.get("ok")]
+    task["ok_count"] = ok_count
+    task["failed_count"] = len(results) - ok_count
+    now = time.time()
+    task["elapsed"] = round(
+        max(0.0, (task.get("finished_at") or now)
+            - (task.get("started_at") or now)), 1)
+    task["ok"] = True
+    total = task.get("total") or 0
+    if task.get("running"):
+        task["msg"] = "正在刷新 %d/%d 份目录（%s）…" % (
+            task.get("stage_index") or 0, total, task.get("stage") or "准备中")
+    elif not task.get("id"):
+        task["msg"] = "尚未刷新过"
+    elif failed:
+        labels = ["%s/%s" % (item.get("provider") or "?",
+                             item.get("realm") or "?")
+                  for item in failed[:4]]
+        more = " 等" if len(failed) > 4 else ""
+        task["msg"] = ("已刷新 %d/%d 份目录；失败 %d 份：%s%s"
+                       % (ok_count, len(results), len(failed),
+                          "、".join(labels), more))
+    else:
+        task["msg"] = "已刷新 %d/%d 份目录" % (ok_count, len(results))
+    return task
+
+
+def _run_pool_catalog_refresh(task_id):
+    """后台串行刷新七份目录，每完成一份就作废池子缓存并更新任务状态。"""
+    jobs = [(provider, r) for provider in POOL_PROVIDER_ORDER
+            for r in POOL_REALM_ORDER]
+    jobs.append(("egg", CURRENT_REALM))
+    total = len(jobs)
+    with _lock:
+        if _pool_refresh_task.get("id") != task_id:
+            return
+        _pool_refresh_task["total"] = total
+    for index, (provider, realm) in enumerate(jobs):
+        stage = "egg" if provider == "egg" else "%s/%s" % (provider, realm)
+        with _lock:
+            if _pool_refresh_task.get("id") != task_id:
+                return
+            _pool_refresh_task["stage"] = stage
+            _pool_refresh_task["stage_index"] = index + 1
+        try:
+            result = refresh_catalog(realm, provider)
+        except Exception as exc:
+            log("pool refresh: %s failed (%s)" % (stage, exc))
+            result = {"ok": False, "realm": realm, "msg": str(exc)}
+        entry = {
+            "provider": provider,
+            "realm": realm,
+            "ok": bool((result or {}).get("ok")),
+            "count": int((result or {}).get("count") or 0),
+            "msg": str((result or {}).get("msg") or ""),
+        }
+        if (result or {}).get("cooldown"):
+            entry["cooldown"] = True
+        with _lock:
+            if _pool_refresh_task.get("id") != task_id:
+                return
+            _pool_refresh_task["results"].append(entry)
+            # 这份目录可能已经把 _models_cache 换掉了：池子下次请求就重建，
+            # 面板在轮询期间也能逐步看到已刷新的那几家。
+            _pool_cache["at"] = 0.0
+        if entry["ok"]:
+            log("pool refresh: %s updated %d model(s)"
+                % (stage, entry["count"]))
+        else:
+            log("pool refresh: %s kept the previous list (%s)"
+                % (stage, entry["msg"] or "upstream gave none"))
+    with _lock:
+        if _pool_refresh_task.get("id") != task_id:
+            return
+        _pool_refresh_task["running"] = False
+        _pool_refresh_task["stage"] = "done"
+        _pool_refresh_task["stage_index"] = total
+        _pool_refresh_task["finished_at"] = time.time()
+        _pool_refresh_task["success"] = (
+            bool(_pool_refresh_task["results"])
+            and all(item.get("ok")
+                    for item in _pool_refresh_task["results"]))
+        _pool_cache["at"] = 0.0
+    # 七份目录都刷新完了：池子重建，已接入的 Agent 立刻换上新模型表。
+    kick_pool_agent_sync("pool refresh")
+
+
+def refresh_pool_catalog():
+    """「路由」页的刷新按钮：后台把七份目录各重拉一次，立即回话。
+
+    同时只跑一个任务：重复点击返回正在跑的那个任务 id，面板继续轮询，
+    不会把同一批上游请求叠成两倍。返回结构见 pool_catalog_refresh_state()。
+    """
+    global _pool_refresh_seq
+    started = False
+    with _lock:
+        if not _pool_refresh_task.get("running"):
+            _pool_refresh_seq += 1
+            task_id = "%d-%d" % (int(time.time() * 1000), _pool_refresh_seq)
+            _pool_refresh_task.update({
+                "id": task_id,
+                "running": True,
+                "stage": "准备中",
+                "stage_index": 0,
+                "total": len(POOL_PROVIDER_ORDER) * len(POOL_REALM_ORDER) + 1,
+                "started_at": time.time(),
+                "finished_at": 0.0,
+                "success": False,
+                "results": [],
+            })
+            started = True
+    if started:
+        threading.Thread(target=_run_pool_catalog_refresh,
+                         args=(task_id,), name="pool-refresh",
+                         daemon=True).start()
+    state = pool_catalog_refresh_state()
+    state["pool"] = True
+    if started:
+        state["msg"] = ("已开始刷新七份模型目录（WorkBuddy / Qoder / Trae × "
+                        "国际/国内 + 鸡蛋），面板会自动等它结束")
+    else:
+        state["msg"] = "正在刷新中：%s" % (state.get("msg") or "")
+    return state
 
 
 # ---------------------------------------------------------------------------
@@ -13212,6 +13396,23 @@ def model_entry(mid, meta):
         item["credits"] = meta["credits"]
     if meta.get("credits_note"):
         item["credits_note"] = meta["credits_note"]
+    # 免费额度（6004）状态是运行时事实，不能只信缓存里的目录倍率：同一份
+    # x0.00 目录在额度内是免费，额度用尽后这个出口就暂停免费调用（开了
+    # 免费额度回落才按付费兄弟模型计费）。面板据此把「限时免费」换成
+    # 「免费额度已用尽」，并显示回落倍率与恢复时间。
+    if meta.get("free_cap_paid_id"):
+        item["free_cap_paid_id"] = meta["free_cap_paid_id"]
+    if meta.get("free_cap_paid_rate"):
+        item["free_cap_paid_rate"] = meta["free_cap_paid_rate"]
+    cap_realm = str(meta.get("pool_realm") or meta.get("_wb_realm")
+                    or CURRENT_REALM)
+    # 只有「对外宣告免费」的行才谈得上免费额度用尽；活动过期后目录已经换成
+    # 付费倍率，不该再挂一个「额度用尽」把真实倍率盖掉。
+    cap = (free_model_cap_status(cap_realm, lookup_id)
+           if credits_is_free(meta.get("credits")) else {})
+    if cap:
+        item["free_cap_exhausted"] = True
+        item["free_cap_reset"] = int(cap["reset"])
     if meta.get("egg_source"):
         # 鸡蛋的免费池归属（zen = OpenCode Zen 免费车道 / kilo = Kilo 免费池 /
         # pool-xxx = 操作者自建的供应商池）：面板的模型清单按它给每行标出这条
@@ -13307,6 +13508,174 @@ REMOTE_CONFIG_PATH = "/v3/config"
 VARIANT_SUFFIXES = ("-sg", "-x")
 
 
+def _walk_catalog_nodes(node):
+    """Depth-first walk of every dict in a /v3/config payload.
+
+    The same keys sit under ``data`` in the live response and at the top level
+    in the desktop cache file, so every lookup walks instead of guessing the
+    envelope.
+    """
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            for child in _walk_catalog_nodes(value):
+                yield child
+    elif isinstance(node, list):
+        for value in node:
+            for child in _walk_catalog_nodes(value):
+                yield child
+
+
+def _catalog_epoch(value):
+    """ISO-8601 timestamp from a promotion schedule -> unix seconds (0 if bad)."""
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    try:
+        return datetime.datetime.fromisoformat(
+            text.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+
+def _catalog_free_discount(discount):
+    """True when a promotion's discount makes the model cost zero credits."""
+    if not isinstance(discount, dict):
+        return False
+    factor = discount.get("factor")
+    if factor is not None:
+        try:
+            return float(factor) == 0.0
+        except (TypeError, ValueError):
+            pass
+    raw = str(discount.get("discountedCredits") or "").strip().lower()
+    return credits_is_free(raw) or raw in ("0x", "x0x")
+
+
+def catalog_promotions(payload):
+    """model id -> {"until": epoch, "id": promo id} for free promotions.
+
+    Upstream marks these with ``modelPromotions`` (enabled + discount factor
+    0). They are time-boxed: the same x0.00 entry is not a permanent free
+    tier. Keeping the schedule lets the panel say "限时免费至 …" and lets the
+    catalogue stop advertising a free rate once the window has passed.
+    """
+    out = {}
+    for node in _walk_catalog_nodes(payload):
+        promos = node.get("modelPromotions")
+        if not isinstance(promos, list):
+            continue
+        for promo in promos:
+            if not isinstance(promo, dict) or promo.get("enabled") is False:
+                continue
+            if not _catalog_free_discount(promo.get("discount")):
+                continue
+            schedule = promo.get("schedule")
+            until = _catalog_epoch(
+                (schedule or {}).get("validUntil")
+                if isinstance(schedule, dict) else None)
+            if not until:
+                continue
+            for mid in promo.get("modelIds") or []:
+                mid = str(mid or "").strip()
+                if mid:
+                    out.setdefault(mid, {
+                        "until": until,
+                        "id": str(promo.get("id") or "").strip(),
+                    })
+    return out
+
+
+def catalog_rate_caps(payload):
+    """free model id -> {"paid_id", "allow_paid"} from ModelRateLimitCap.
+
+    The free model's x0.00 is paired with a paid sibling here
+    (deepseek-v4.1-flash -> deepseek-v4.1-flash-sg). When the free allowance
+    is exhausted the gateway falls back to that sibling (opt-in), and the
+    panel should be able to show the paid rate instead of a misleading
+    "永久免费".
+    """
+    out = {}
+    for node in _walk_catalog_nodes(payload):
+        cfg = node.get("productFeaturesConfig")
+        if not isinstance(cfg, dict):
+            continue
+        cap = cfg.get("ModelRateLimitCap")
+        if not isinstance(cap, dict):
+            continue
+        for line in cap.get("lines") or []:
+            if not isinstance(line, dict):
+                continue
+            free_id = str(line.get("freeId") or "").strip()
+            paid_id = str(line.get("paidId") or "").strip()
+            if free_id and paid_id:
+                out.setdefault(free_id, {
+                    "paid_id": paid_id,
+                    "allow_paid": bool(line.get("allowPaidSwitch")),
+                })
+    return out
+
+
+def _append_credits_note(item, text):
+    """Append one readable clause to a model's credits note (idempotent)."""
+    text = str(text or "").strip()
+    if not text or not isinstance(item, dict):
+        return
+    existing = str(item.get("credits_note") or "").strip()
+    if text in existing:
+        return
+    item["credits_note"] = (existing + "；" + text) if existing else text
+
+
+def _format_catalog_time(epoch):
+    """Panel-friendly local timestamp for promotion / cap deadlines."""
+    try:
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(float(epoch)))
+    except (TypeError, ValueError, OverflowError):
+        return ""
+
+
+def _apply_expired_promotions(meta, now=None):
+    """Replace a free promo rate with its paid sibling once the window closed.
+
+    The upstream may keep returning x0.00 for a model whose promo schedule has
+    already ended (stale config / delayed rotation). Publishing that verbatim
+    is what makes the panel say "限时免费" for a model that is billed again.
+    When ModelRateLimitCap names a paid sibling with a real rate, use it;
+    otherwise keep the upstream value and add an honest note.
+    """
+    if not isinstance(meta, dict):
+        return
+    now = time.time() if now is None else now
+    for _mid, item in meta.items():
+        if not isinstance(item, dict):
+            continue
+        promo = item.get("_wb_promo")
+        if not isinstance(promo, dict):
+            continue
+        until = float(promo.get("until") or 0.0)
+        if not until or until > now:
+            continue
+        if not credits_is_free(item.get("credits")):
+            continue
+        cap = item.get("_wb_rate_cap")
+        paid_id = str((cap or {}).get("paid_id") or "").strip() \
+            if isinstance(cap, dict) else ""
+        paid = ""
+        if paid_id and isinstance(meta.get(paid_id), dict):
+            paid = str(meta[paid_id].get("credits") or "").strip()
+        when = _format_catalog_time(until) or "活动结束"
+        if paid and not credits_is_free(paid):
+            item["credits"] = paid
+            item["free_cap_paid_id"] = paid_id
+            item["free_cap_paid_rate"] = paid
+            _append_credits_note(
+                item, "限时免费活动已于 %s 结束，按 %s 计费" % (when, paid))
+        else:
+            _append_credits_note(item, "限时免费活动已于 %s 结束" % when)
+
+
+
 def remote_config_headers(account, realm, ua=None):
     """Headers for the product-config call.
 
@@ -13394,7 +13763,10 @@ def parse_remote_catalog(payload):
                 for item in models:
                     mid = str(item.get("id") or "").strip()
                     if mid:
-                        meta.setdefault(mid, item)
+                        # Copy: promotion/cap annotations below must not leak
+                        # into persist_remote_catalog()'s byte-for-byte copy
+                        # of the upstream response.
+                        meta.setdefault(mid, dict(item))
             for value in node.values():
                 walk(value)
         elif isinstance(node, list):
@@ -13402,6 +13774,15 @@ def parse_remote_catalog(payload):
                 walk(value)
 
     walk(payload)
+    promotions = catalog_promotions(payload)
+    rate_caps = catalog_rate_caps(payload)
+    for mid, info in promotions.items():
+        if isinstance(meta.get(mid), dict):
+            meta[mid]["_wb_promo"] = info
+    for mid, info in rate_caps.items():
+        if isinstance(meta.get(mid), dict):
+            meta[mid]["_wb_rate_cap"] = info
+    _apply_expired_promotions(meta)
     return ids, meta
 
 
@@ -13422,24 +13803,96 @@ def snapshot_credits():
     return out
 
 
+def free_model_cap_status(realm, model, now=None):
+    """面板口径的「免费额度是否已用尽」。
+
+    免费模型（目前是 intl 的 deepseek-v4.1-flash / hy3 / hy4-preview-f）
+    上游给的是**每日免费额度**：撞到 6004 后账号上的这个模型会进入 cap，
+    到上游给的重置时刻才恢复。目录里的 x0.00 只说明「额度内不计积分」，
+    不是「永久免费」。这里判断该 realm 的所有可用账号是否都在 cap 里：
+
+      - 全部在 cap 里 -> {"exhausted": True, "reset": 最早恢复时刻, ...}
+      - 还有账号可用 -> {}（仍有免费额度，面板继续显示限时免费）
+
+    只读内存里的 `Account.model_caps`（6004 跨重启持久化，见
+    wb_accounts.note_model_cap），不发任何上游请求。目录请求是热路径，
+    所以先按 FREE_CAP_MODELS 的白名单短路，再按账号数做一次很小的循环。
+    """
+    try:
+        if not wb_accounts.is_free_cap_model(realm, model):
+            return {}
+        pool = POOL
+    except Exception:
+        return {}
+    if pool is None:
+        return {}
+    now = time.time() if now is None else now
+    try:
+        accounts = [
+            account for account in pool.accounts
+            if getattr(account, "realm", None) == realm
+            and getattr(account, "enabled", False)
+            and getattr(account, "access_token", None)
+            and (not getattr(account, "provider", None)
+                 or getattr(account, "provider", None) == wb_accounts.DEFAULT_PROVIDER)
+        ]
+    except Exception:
+        return {}
+    if not accounts:
+        return {}
+    caps = []
+    for account in accounts:
+        try:
+            until = float(account.cap_until(model, now=now) or 0.0)
+        except Exception:
+            return {}
+        if until <= now:
+            return {}
+        caps.append(until)
+    return {"exhausted": True, "reset": min(caps), "accounts": len(accounts)}
+
+
 def curate_remote_catalog(realm, ids, meta=None):
     """Trim a remote catalogue to the models the picker should offer.
 
       - virtual aliases (default-model ... auto) are not models;
       - "-sg" / "-x" builds are the paid variant of a name the list already
-        carries;
+        carries; only hide one when the same response carries the free base.
+        If the base is gone (retired) or is itself billed, the variant is the
+        only way to reach that model and must stay;
       - when a free ("x0.00") sibling exists, the free one is the one the
         picker shows, so the paid sibling is dropped;
-      - everything else keeps its upstream order. Names the upstream does not
-        list at all stay available through the curated order tables and the
-        bundled snapshot, which merge_catalog() keeps.
+      - free promotions are annotated with their end time; once the window
+        passed, the paid sibling's rate replaces the stale x0.00;
+      - everything else keeps its upstream order. The bundled snapshot is a
+        fallback for when nothing live is available (see merge_catalog).
     """
     credits = snapshot_credits()
+    now = time.time()
     for mid, item in (meta or {}).items():
-        if isinstance(item, dict):
-            credits[mid] = str(item.get("credits") or "").strip().lower()
-    order = CN_UI_ORDER if realm == "cn" else INTL_UI_ORDER
-    known = set(ids) | set(credits) | set(order)
+        if not isinstance(item, dict):
+            continue
+        credits[mid] = str(item.get("credits") or "").strip().lower()
+        promo = item.get("_wb_promo")
+        until = float((promo or {}).get("until") or 0.0) \
+            if isinstance(promo, dict) else 0.0
+        if until > now and credits_is_free(item.get("credits")):
+            _append_credits_note(
+                item, "限时免费至 %s" % (_format_catalog_time(until) or "活动结束"))
+        cap = item.get("_wb_rate_cap")
+        paid_id = str((cap or {}).get("paid_id") or "").strip() \
+            if isinstance(cap, dict) else ""
+        if paid_id:
+            paid_meta = meta.get(paid_id)
+            paid = str((paid_meta or {}).get("credits") or "").strip() \
+                if isinstance(paid_meta, dict) else ""
+            if paid and not credits_is_free(paid):
+                item["free_cap_paid_id"] = paid_id
+                item["free_cap_paid_rate"] = paid
+                if credits_is_free(item.get("credits")):
+                    _append_credits_note(
+                        item, "免费额度用尽后可回落至 %s（%s）"
+                        % (paid_id, paid))
 
     def free(mid):
         return credits.get(mid) in ("x0.00", "x0", "0", "0.00")
@@ -13449,6 +13902,12 @@ def curate_remote_catalog(realm, ids, meta=None):
         if not is_chat_model(mid):
             continue
         if mid.endswith(VARIANT_SUFFIXES):
+            # -sg / -x are suffixes of different lengths, so split on the last
+            # dash instead of slicing a fixed width.
+            base = mid.rsplit("-", 1)[0]
+            if base in ids and free(base) and not free(mid):
+                continue
+            out.append(mid)
             continue
         if mid.endswith("-f"):
             base = mid[:-2]
@@ -21036,6 +21495,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._get_v1_balance_summary()
         if path in ("/v1/models", "/models"):
             return self._get_v1_models(query)
+        if path == "/catalog/refresh/status":
+            # 面板轮询「刷新全部模型清单」的后台任务：只给面板会话看，和
+            # POST /catalog/refresh 一样属于管理操作。
+            if not self._panel_ok():
+                return self._error(401, "panel password required",
+                                   "invalid_request_error")
+            return self._json(200, pool_catalog_refresh_state())
         if path in ("/usage", "/v1/usage"):
             return self._get_v1_usage(query)
         if path == "/usage/agents":
@@ -21320,6 +21786,11 @@ class Handler(BaseHTTPRequestHandler):
         if pool_mode:
             try:
                 payload["pool"] = pool_catalog_summary(data)
+                if isinstance(payload["pool"], dict) and self._panel_ok():
+                    # 面板可直接从清单响应里看到刷新进度；轮询接口不可用时
+                    # （旧网关 / 反向代理只放行 /v1/models）也有兜底。外部
+                    # API Key 不需要管理状态，不往里塞。
+                    payload["pool"]["refresh"] = pool_catalog_refresh_state()
             except Exception as exc:
                 log("pool summary failed: %s" % exc)
                 payload["pool"] = None
