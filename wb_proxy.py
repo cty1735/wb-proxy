@@ -24280,7 +24280,7 @@ class Handler(BaseHTTPRequestHandler):
         if not platform:
             return self._error(400, "缺少平台标识", "invalid_request_error")
         try:
-            result = wb_platforms.login_start(platform)
+            result = wb_platforms.login_start(platform, payload)
         except wb_platforms.PlatformError as exc:
             return self._error(exc.status, exc.detail, "invalid_request_error")
         except Exception as exc:
@@ -24362,6 +24362,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(502, "刷新余额失败：%s" % exc)
         return self._egg_platform_result(pool, balance=balance,
                                          msg="余额已更新")
+
+    def _route_egg_platform_usage(self, payload):
+        """实时拉平台账号用量（ZCode 的赠送额度桶 / Coding Plan），顺带刷余额。"""
+        try:
+            pool = self._egg_platform_pool(payload, create=False)
+            result = wb_platforms.fetch_usage(pool)
+            pool = wb_egg_pools.get(pool["id"]) or pool
+        except wb_egg_pools.PoolError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        except wb_platforms.PlatformError as exc:
+            return self._error(exc.status, exc.detail, "invalid_request_error")
+        except Exception as exc:
+            return self._error(502, "刷新用量失败：%s" % exc)
+        invalidate_egg_catalog_cache()
+        return self._egg_platform_result(pool, usage=result, msg="用量已更新")
 
     def _route_egg_platform_claim(self, payload):
         try:
@@ -26021,6 +26036,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._route_egg_platform_refresh(payload)
             if path == "/egg/platforms/balance":
                 return self._route_egg_platform_balance(payload)
+            if path == "/egg/platforms/usage":
+                return self._route_egg_platform_usage(payload)
             if path == "/egg/platforms/claim":
                 return self._route_egg_platform_claim(payload)
             if path == "/egg/platforms/account/toggle":

@@ -24,6 +24,7 @@ PY_SUITES = [
     "_test_egg_e2e.py",
     "_test_egg_anthropic.py",
     "_test_egg_smoke.py",
+    "_test_egg_zcode.py",
     "_test_agent_source_tags.py",
     "_test_qoder_stream.py",
     "_test_qoder_queue.py",

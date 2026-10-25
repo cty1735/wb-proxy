@@ -179,13 +179,16 @@ const want = [
   'eggPlatformCardHtml', 'eggPlatformAccountsHtml', 'eggPlatformModelsHtml',
   'toggleEggPlatformPanel', 'applyEggPlatformPools',
   'eggPlatformPickerFilter', 'eggPlatformSelectAll', 'eggPlatformToggleModel',
+  'eggPlatformLoginEls', 'eggPlatformShowSteps', 'eggZcodeSite',
+  'setEggZcodeStatus', 'openEggPlatformLogin', 'closeEggPlatformLogin',
+  'startEggZcodeLogin',
 ];
 const setters = [
   'MODELS_DATA', 'POOL_MODELS_DATA', 'EGG_POOLS', 'EGG_POOL_PRESETS', 'EGG_POOL_FORM',
   'EGG_POOL_CARD', 'EGG_POOL_FILTER', 'EGG_POOL_PICK_FILTER', 'currentProvider', 'esc',
   'fmtCatalogStamp', 'toast', 'getJSON', 'postJSON', 'loadModels',
   'EGG_PLATFORMS', 'EGG_PLATFORM_DEFS', 'EGG_PLATFORM_OPEN',
-  'EGG_PLATFORM_PICK', 'EGG_PLATFORM_PICK_FILTER',
+  'EGG_PLATFORM_PICK', 'EGG_PLATFORM_PICK_FILTER', 'EGG_PLATFORM_LOGIN',
 ].map(n => "  try{ if(o." + n + " !== undefined) " + n + " = o." + n + "; }catch(e){}");
 const exportSrc = want.map(n => n + ': ' + n).join(',');
 const ctxSrc = vm.runInContext(
@@ -412,18 +415,48 @@ const platformPool = {
   claim: { at: 1750000000, msg: '已领取' },
   can_balance: true, can_claim: true, login_label: '浏览器登录',
 };
+const zcodePool = {
+  id: 'pool-zc', kind: 'platform', platform: 'zcode',
+  name: 'ZCode', platform_label: 'ZCode',
+  enabled: true, account_count: 1, count: 2,
+  accounts: [{ id: 'acct-z1', label: 'mkiwe915', enabled: true, status: 'ok',
+               expires_in: 7200, plan: 'ZCode 1024 Dev Day',
+               site_label: '智谱 BigModel', route: 'start',
+               usage: [
+                 { plan: 'ZCode 1024 Dev Day', name: 'GLM-5.3-Flash',
+                   total: 300000000, used: 1783201, remaining: 298216799,
+                   percent: 0.59, spent: false },
+                 { plan: 'ZCode 1024 Dev Day', name: 'GLM-5.3',
+                   total: 200000000, used: 0, remaining: 200000000,
+                   percent: 0, spent: false },
+               ] }],
+  models: ['zcode/GLM-5.3-Flash'],
+  catalog: [{ id: 'zcode/GLM-5.3-Flash', free: true, context: 1000000 },
+            { id: 'zcode/GLM-5.2', context: 1000000 }],
+  catalog_at: 1750000000,
+  balance: { total_balance: 500000000, total_quota: 508000000, total_used: 8000000 },
+  can_balance: true, can_claim: false, login_label: '登录 / API Key',
+};
 api.__set({
-  EGG_PLATFORM_DEFS: [{
-    id: 'codearts', name: '华为云 CodeArts', login_label: '浏览器登录',
-    hint: '浏览器登录后自动回调本机', balance: true, claim: true,
-    home: 'https://codearts.huaweicloud.com/portal',
-  }],
-  EGG_PLATFORMS: [platformPool],
+  EGG_PLATFORM_DEFS: [
+    {
+      id: 'codearts', name: '华为云 CodeArts', login_label: '浏览器登录',
+      hint: '浏览器登录后自动回调本机', balance: true, claim: true,
+      home: 'https://codearts.huaweicloud.com/portal',
+    },
+    {
+      id: 'zcode', name: 'ZCode', login: 'zcode', login_label: '登录 / API Key',
+      hint: 'Z.ai 或智谱 BigModel 的 ZCode 账号', balance: true, claim: false,
+      home: 'https://zcode.z.ai',
+    },
+  ],
+  EGG_PLATFORMS: [platformPool, zcodePool],
   EGG_PLATFORM_OPEN: {},
   EGG_PLATFORM_PICK: {},
   EGG_PLATFORM_PICK_FILTER: {},
+  EGG_PLATFORM_LOGIN: {platform: '', state: '', timer: null, url: ''},
 });
-api.applyEggPlatformPools([platformPool]);
+api.applyEggPlatformPools([platformPool, zcodePool]);
 api.renderEggPoolList();
 check('平台池合并不丢自建池',
   document.getElementById('eggPoolList').innerHTML.indexOf('NVIDIA NIM') >= 0,
@@ -459,6 +492,57 @@ check('模型列表有搜索框', plist.innerHTML.indexOf('搜索模型 ID') >= 
 check('模型列表有「只看免费」', plist.innerHTML.indexOf('只看免费') >= 0);
 check('模型列表有全选', plist.innerHTML.indexOf('>全选<') >= 0);
 check('模型列表有全不选', plist.innerHTML.indexOf('>全不选<') >= 0);
+
+// 12. ZCode 平台卡片与登录弹窗
+check('ZCode 卡片渲染', plist.innerHTML.indexOf('ZCode') >= 0, plist.innerHTML);
+check('ZCode 卡片登录方式', plist.innerHTML.indexOf('登录 / API Key') >= 0);
+check('ZCode 卡片没有每日领取按钮（claim=false）',
+  plist.innerHTML.split('ZCode')[1].indexOf('>一键领取<') < 0, plist.innerHTML);
+api.toggleEggPlatformPanel({ dataset: { platform: 'zcode' } }, 'accounts');
+check('ZCode 账号展开带套餐', plist.innerHTML.indexOf('ZCode 1024 Dev Day') >= 0,
+  plist.innerHTML);
+check('ZCode 账号展开带站点', plist.innerHTML.indexOf('智谱 BigModel') >= 0);
+check('ZCode 账号带用量行', plist.innerHTML.indexOf('egg-platform-usage') >= 0
+  && plist.innerHTML.indexOf('GLM-5.3-Flash') >= 0
+  && plist.innerHTML.indexOf('已用 0.6%') >= 0, plist.innerHTML);
+check('ZCode 用量带进度条',
+  plist.innerHTML.indexOf('egg-platform-usage-bar') >= 0
+  && plist.innerHTML.indexOf('width:0.59%') >= 0, plist.innerHTML);
+api.toggleEggPlatformPanel({ dataset: { platform: 'zcode' } }, 'accounts');
+check('ZCode 余额格式',
+  api.eggPlatformBalanceText(zcodePool) === '5 亿 / 5.08 亿 Tokens · 已用 1.6%',
+  api.eggPlatformBalanceText(zcodePool));
+check('ZCode 无总用量时不带已用',
+  api.eggPlatformBalanceText({ balance: { total_balance: 5, total_quota: 5 } })
+    === '5 / 5 Tokens',
+  api.eggPlatformBalanceText({ balance: { total_balance: 5, total_quota: 5 } }));
+check('ZCode 站点默认 Z.ai', api.eggZcodeSite() === 'zai', api.eggZcodeSite());
+// ZCode 模型 chip：上下文后缀 + 官方列表时间
+api.toggleEggPlatformPanel({ dataset: { platform: 'zcode' } }, 'models');
+check('ZCode 模型带上下文档位', plist.innerHTML.indexOf('GLM-5.3-Flash 1M') >= 0,
+  plist.innerHTML);
+check('ZCode 模型带官方列表时间', plist.innerHTML.indexOf('官方列表 · ') >= 0
+  && plist.innerHTML.indexOf('2026-01-01') >= 0, plist.innerHTML);
+api.toggleEggPlatformPanel({ dataset: { platform: 'zcode' } }, 'models');
+check('CodeArts 模型不带上下文后缀', plist.innerHTML.indexOf('model-a 1M') < 0);
+api.openEggPlatformLogin({ dataset: { platform: 'zcode' } });
+const zbox = document.getElementById('eggPlatformZcodeBox');
+const zstep1 = document.getElementById('eggPlatformStep1');
+const zrestart = document.getElementById('eggPlatformRestartBtn');
+check('ZCode 弹窗显示站点与方式', zbox.style.display === 'block', zbox.style.display);
+check('ZCode 弹窗先不显示步骤', zstep1.style.display === 'none', zstep1.style.display);
+check('ZCode 弹窗隐藏重新生成', zrestart.style.display === 'none', zrestart.style.display);
+api.startEggZcodeLogin('key');
+const zstatus = document.getElementById('eggZcodeStatus');
+check('ZCode Key 为空时提示', zstatus.textContent.indexOf('先粘贴') >= 0,
+  zstatus.textContent);
+api.closeEggPlatformLogin();
+check('ZCode 弹窗关闭后收起', zbox.style.display === 'none', zbox.style.display);
+// 非 ZCode 平台照旧：直接发起登录（stub 的 postJSON 返回 ok），不显示 ZCode 框
+api.openEggPlatformLogin({ dataset: { platform: 'codearts' } });
+check('CodeArts 弹窗不显示 ZCode 框', zbox.style.display === 'none', zbox.style.display);
+check('CodeArts 弹窗显示步骤', zstep1.style.display === '', zstep1.style.display);
+api.closeEggPlatformLogin();
 
 // 平台挑选器的筛选（DOM 桩：三条模型，只有一条免费）
 PLAT_LIST = makePlatformList([

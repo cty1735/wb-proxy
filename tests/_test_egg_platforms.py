@@ -47,10 +47,201 @@ def verify_es256(public_jwk, signing_input, signature):
 
 
 # --- 平台注册表 -----------------------------------------------------------
-check("平台列表含 CodeArts / Cline",
-      set(W.PLATFORM_IDS) == {"codearts", "cline"}, W.PLATFORM_IDS)
+check("平台列表含 CodeArts / Cline / ZCode",
+      set(W.PLATFORM_IDS) == {"codearts", "cline", "zcode"}, W.PLATFORM_IDS)
 check("CodeArts 默认池字段", W.defaults("codearts")["base_url"].startswith("https://"))
 check("Cline 默认池字段", W.defaults("cline")["platform"] == "cline")
+check("ZCode 默认池字段",
+      W.defaults("zcode")["base_url"] == "https://api.z.ai/api/anthropic"
+      and W.defaults("zcode")["protocol"] == "anthropic", W.defaults("zcode"))
+check("ZCode 站点归一化",
+      W._zcode_site("bigmodel") == "bigmodel"
+      and W._zcode_site("zhipu") == "bigmodel"
+      and W._zcode_site("zai") == "zai"
+      and W._zcode_site("") == "zai")
+check("ZCode 账号设备号稳定",
+      W._zcode_key_device("abc.def") == W._zcode_key_device("abc.def")
+      and len(W._zcode_key_device("abc.def")) == 36)
+check("ZCode 赠送额度解析",
+      W._zcode_bucket_models({"capabilities": ["model:glm-5.3", "tool:search"]})
+      == ["glm-5.3"]
+      and W._zcode_bucket_spent({"remaining_units": 0})
+      and not W._zcode_bucket_spent({"remaining_units": 1}))
+check("ZCode 模型名归一化",
+      W._zcode_model_name("glm-5.3-flash") == "GLM-5.3-Flash"
+      and W._zcode_model_name("Glm-5.3") == "GLM-5.3"
+      and W._zcode_model_name("glm-x") == "glm-x")
+
+# --- ZCode：Start Plan 解析（不联网，用桩替掉 _zcode_call） ---------------
+_saved_zcode_call = W._zcode_call
+_now = time.time()
+W._zcode_call = lambda method, url, **kw: {
+    "server_time": _now,
+    "plans": [
+        {"user_plan_id": "p1", "plan_id": "start-1024", "status": "active",
+         "name": "ZCode 1024 Dev Day", "ends_at": _now + 3600},
+    ],
+    "balances": [
+        {"user_plan_id": "p1", "plan_id": "start-1024",
+         "capabilities": ["model:glm-5.3-flash"],
+         "total_units": 300, "used_units": 100, "remaining_units": 200,
+         "expires_at": _now + 1800},
+        {"user_plan_id": "p1", "plan_id": "start-1024",
+         "capabilities": ["model:glm-5.3"],
+         "total_units": 1, "used_units": 1, "remaining_units": 0,
+         "expires_at": _now + 1800},
+    ],
+}
+start = W._zcode_start_plan("jwt.jwt.jwt", "dev-1")
+W._zcode_call = _saved_zcode_call
+check("Start Plan 解析出活模型",
+      start and start["models"] == ["GLM-5.3-Flash"], start)
+check("Start Plan 把用完的桶排除",
+      start and start["all_models"] == ["GLM-5.3-Flash", "GLM-5.3"]
+      and start["total"] == 300 and start["remaining"] == 200, start)
+check("Start Plan 带用量桶",
+      start and len(start.get("buckets") or []) == 2
+      and start["buckets"][0]["used"] == 100
+      and start["buckets"][0]["name"] == "GLM-5.3-Flash"
+      and start["buckets"][1]["spent"] is True, start and start.get("buckets"))
+
+# --- ZCode：Coding Plan 账号的清单 / 请求（不联网） -----------------------
+coding = W._zcode_account("zai", "coding", W.ZCODE_ZAI_BASE, key="key-1234567890.abcdef",
+                          plan="GLM Coding Plan", source="key",
+                          models=[m["id"] for m in W.ZCODE_MODELS])
+check("ZCode Key 账号不泄露凭据",
+      "api_key" not in W.account_public(coding)
+      and "jwt" not in W.account_public(coding)
+      and "auth_token" not in W.account_public(coding), W.account_public(coding))
+# 拉清单要读官方配置：测试里桩成「拿不到」，应回落内置兜底表。
+_saved_zcode_config = W._zcode_config
+W._zcode_config = lambda force=False: None
+try:
+    models, err = W.fetch_models({"platform": "zcode", "accounts": [coding]})
+finally:
+    W._zcode_config = _saved_zcode_config
+check("ZCode Coding 账号清单",
+      [m["id"] for m in models] == [m["id"] for m in W.ZCODE_MODELS]
+      and not err, (models, err))
+check("ZCode Coding 模型不标免费",
+      all(m.get("free") is not True for m in models), models)
+
+# --- ZCode：官方 provider 配置的解析 -------------------------------------
+official_cfg = {"config": {
+    "providerConfigRules": {"providerRules": [
+        {"providerId": "account:zai-individual-coding-plan",
+         "builtinModelIds": ["GLM-5.3-Flash", "GLM-5.2"]},
+    ]},
+    "modelConfigRules": {
+        "builtinProviderModelRules": [],
+        "modelRules": [
+            {"modelMatch": "GLM-5.*", "config": {
+                "properties": {"contextWindow": 1000000,
+                               "inputFormat": {"supportsImage": False}},
+                "optionSpecs": {"maxOutputTokens": {"max": 64000},
+                                "reasoningLevel": {"values": ["low", "high", "max"]}},
+            }},
+        ],
+    },
+}}
+official_rows = W._zcode_models_of(official_cfg, "account:zai-individual-coding-plan")
+check("官方配置解析出模型",
+      [m["id"] for m in official_rows] == ["GLM-5.3-Flash", "GLM-5.2"],
+      official_rows)
+check("官方配置带上下文 / 输出 / 推理档位",
+      official_rows and official_rows[0]["context"] == 1000000
+      and official_rows[0]["output"] == 64000
+      and official_rows[0]["efforts"] == ["low", "high", "max"],
+      official_rows)
+check("官方配置 plan id 分流",
+      W._zcode_plan_id(W.ZCODE_ZAI_BASE) == "account:zai-individual-coding-plan"
+      and W._zcode_plan_id(W.ZCODE_BIGMODEL_BASE)
+      == "account:bigmodel-individual-coding-plan"
+      and W._zcode_plan_id(W.ZCODE_START_BASE) == "account:zai-start-plan")
+check("兜底表齐全",
+      [m["id"] for m in W._zcode_fallback_models()]
+      == [m["id"] for m in W.ZCODE_MODELS])
+_saved_zcode_config = W._zcode_config
+W._zcode_config = lambda force=False: None
+try:
+    fallback = W._zcode_official_models(W.ZCODE_ZAI_BASE, force=True)
+finally:
+    W._zcode_config = _saved_zcode_config
+check("官方配置拿不到时回落兜底表",
+      [m["id"] for m in fallback] == [m["id"] for m in W.ZCODE_MODELS],
+      fallback)
+url, body, headers, conv, source, billed = W.build_request(
+    {"id": "pool-z", "platform": "zcode", "accounts": [coding]},
+    {"model": "zcode/GLM-5.3", "messages": [{"role": "user", "content": "hi"}],
+     "max_tokens": 8})
+check("ZCode Coding 请求 URL",
+      url == "https://api.z.ai/api/anthropic/v1/messages", url)
+check("ZCode Coding 请求带头",
+      headers.get("x-api-key") == "key-1234567890.abcdef"
+      and headers.get("authorization") == "Bearer key-1234567890.abcdef", headers)
+check("ZCode Coding 请求模型是原始 id", body.get("model") == "GLM-5.3", body)
+
+# --- ZCode：Start Plan 请求的打扮（不联网） -------------------------------
+dress_body = {
+    "model": "GLM-5.3-Flash",
+    "max_tokens": 16,
+    "stream": True,
+    "messages": [{"role": "user",
+                  "content": [{"type": "text", "text": "hi"}]}],
+    "system": "agent's own system prompt",
+    "tools": [{"name": "read", "input_schema": {"type": "object"}}],
+}
+dressed = W._zcode_dress(dict(dress_body), "bigmodel", "dev-2")
+check("Start Plan 三段 system",
+      isinstance(dressed.get("system"), list) and len(dressed["system"]) == 3
+      and dressed["system"][0].get("cache_control", {}).get("type") == "ephemeral",
+      dressed.get("system"))
+check("Start Plan 并进自己的 system 提示词",
+      dressed["system"][2]["text"].endswith("agent's own system prompt"),
+      dressed["system"][2]["text"][-60:])
+check("Start Plan 加环境前缀",
+      isinstance(dressed.get("messages"), list) and len(dressed["messages"]) == 2
+      and "<system-reminder>" in dressed["messages"][0]["content"][0]["text"])
+check("Start Plan 带设备号",
+      "device_id" in (dressed.get("metadata") or {}).get("user_id", ""),
+      dressed.get("metadata"))
+start_headers = W._zcode_start_headers("tok")
+check("Start Plan 请求头",
+      start_headers.get("authorization") == "Bearer tok"
+      and start_headers.get("HTTP-Referer") == "https://zcode.z.ai"
+      and start_headers.get("X-ZCode-Agent") == "glm"
+      and start_headers.get("anthropic-version") == "2023-06-01", start_headers)
+
+# --- ZCode：登录入口的入参校验（不联网） ---------------------------------
+try:
+    W.login_start("zcode", {"mode": "key", "key": "short"})
+    check("ZCode 短 Key 报错", False)
+except W.PlatformError as exc:
+    check("ZCode 短 Key 报错", exc.status == 400, exc.detail)
+try:
+    W.login_start("zcode", {"mode": "nope"})
+    check("ZCode 未知登录方式报错", False)
+except W.PlatformError as exc:
+    check("ZCode 未知登录方式报错", exc.status == 400, exc.detail)
+check("ZCode 账号 id 不随登录态变",
+      W._zcode_account("bigmodel", "start", W.ZCODE_BIGMODEL_BASE,
+                       jwt="j1", user={"id": "u1"})["id"]
+      == W._zcode_account("bigmodel", "start", W.ZCODE_BIGMODEL_BASE,
+                          jwt="j2", user={"id": "u1"})["id"])
+usage_account = W._zcode_account(
+    "bigmodel", "start", W.ZCODE_BIGMODEL_BASE, jwt="j1", user={"id": "u1"},
+    usage=[{"plan": "ZCode 1024 Dev Day", "name": "GLM-5.3-Flash",
+            "models": ["GLM-5.3-Flash"], "total": 300, "used": 100,
+            "remaining": 200, "spent": False}])
+usage_public = W.account_public(usage_account).get("usage") or []
+check("账号视图带用量",
+      len(usage_public) == 1
+      and usage_public[0]["plan"] == "ZCode 1024 Dev Day"
+      and usage_public[0]["used"] == 100
+      and usage_public[0]["remaining"] == 200
+      and abs(usage_public[0]["percent"] - 33.33) < 0.01, usage_public)
+check("用量视图不带凭据",
+      "jwt" not in usage_public and "device" not in usage_public, usage_public)
 try:
     W.defaults("nope")
     check("未知平台报错", False)

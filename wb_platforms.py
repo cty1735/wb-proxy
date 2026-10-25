@@ -22,17 +22,23 @@
 
 import base64
 import datetime
+import getpass
 import hashlib
 import hmac
 import json
+import locale
 import os
+import platform as _platform
+import re
 import secrets
 import socket
+import sys
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # ---------------------------------------------------------------------------
@@ -41,6 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PLATFORM_CODEARTS = "codearts"
 PLATFORM_CLINE = "cline"
+PLATFORM_ZCODE = "zcode"
 
 #: 面板上的平台卡片。顺序就是展示顺序；加新平台时在这里加一项，再补一个
 #: 适配分支即可（登录 / 续期 / 拉清单 / 建请求）。
@@ -65,6 +72,19 @@ PLATFORMS = [
         "hint": "在浏览器打开验证页并输入设备码；登录完成后自动加入账号池。",
         "home": "https://app.cline.bot",
         "balance": False,
+        "claim": False,
+    },
+    {
+        "id": PLATFORM_ZCODE,
+        "name": "ZCode",
+        "short": "ZCode",
+        "protocol": "anthropic",
+        "login": "zcode",
+        "login_label": "登录 / API Key",
+        "hint": ("Z.ai 或智谱 BigModel 的 ZCode（GLM Coding Plan）账号：浏览器登录、"
+                 "导入本机 ZCode 登录态，或粘贴 Coding Plan API Key。"),
+        "home": "https://zcode.z.ai",
+        "balance": True,
         "claim": False,
     },
 ]
@@ -130,6 +150,55 @@ CLINE_RECOMMENDED_PATH = "/api/v1/ai/cline/recommended-models"
 #: 令牌格式问题。Cline 自己的 CLI 也是这么存 / 这么发的。
 CLINE_TOKEN_PREFIX = "workos:"
 
+# ---------------------------------------------------------------------------
+# ZCode 固定端点（与 ZCode 3.16.3 / opencode-zcode-auth 对齐）
+# ---------------------------------------------------------------------------
+
+#: ZCode 自己的站（登录流程、Start Plan 请求、设备号都在这边）。
+ZCODE_BASE = "https://zcode.z.ai"
+#: 两个站的业务 API（账号信息 / 项目 Key / 套餐）。
+ZCODE_ZAI_API = "https://api.z.ai"
+ZCODE_BIGMODEL_API = "https://bigmodel.cn"
+#: 两个站的 GLM Coding Plan 推理端点（Anthropic Messages 协议）。
+ZCODE_ZAI_BASE = "https://api.z.ai/api/anthropic"
+ZCODE_BIGMODEL_BASE = "https://open.bigmodel.cn/api/anthropic"
+#: ZCode 的赠送额度（Start Plan）由 zcode.z.ai 自己服务。
+ZCODE_START_BASE = ZCODE_BASE + "/api/v1/zcode-plan/anthropic"
+
+ZCODE_APP_VERSION = "3.16.3"
+ZCODE_ANTHROPIC_VERSION = "2023-06-01"
+
+ZCODE_SITES = {
+    "zai": {
+        "name": "Z.ai",
+        "api": ZCODE_ZAI_API,
+        "base": ZCODE_ZAI_BASE,
+        "subscribe": "https://z.ai/subscribe",
+    },
+    "bigmodel": {
+        "name": "智谱 BigModel",
+        "api": ZCODE_BIGMODEL_API,
+        "base": ZCODE_BIGMODEL_BASE,
+        "subscribe": "https://bigmodel.cn/glm-coding",
+    },
+}
+
+#: ZCode 的 Coding Plan 模型（插件里的兜底表；ZCode 的远端配置拿不到时用它）。
+ZCODE_MODELS = [
+    {"id": "GLM-5.3", "context": 1000000, "output": 128000,
+     "reasoning": True, "vision": False},
+    {"id": "GLM-5.3-Flash", "context": 1000000, "output": 128000,
+     "reasoning": True, "vision": False},
+    {"id": "GLM-5.2", "context": 1000000, "output": 128000,
+     "reasoning": True, "vision": False},
+    {"id": "GLM-5-Turbo", "context": 200000, "output": 64000,
+     "reasoning": True, "vision": False},
+]
+
+#: 登录方式：browser（ZCode 的 OAuth CLI 流程）、import（本机 ZCode 登录态）、
+#: key（GLM Coding Plan API Key）。
+ZCODE_LOGIN_MODES = ("browser", "import", "key")
+
 
 class PlatformError(Exception):
     """一次平台操作失败，带 HTTP 状态与一句能直接展示的说明。"""
@@ -168,13 +237,15 @@ def defaults(platform):
         raise PlatformError(400, "不支持的平台：%s" % platform)
     if item["id"] == PLATFORM_CODEARTS:
         base_url = CODEARTS_SNAP_HOST
+    elif item["id"] == PLATFORM_ZCODE:
+        base_url = ZCODE_ZAI_BASE
     else:
         base_url = CLINE_API_BASE
     return {
         "kind": "platform",
         "platform": item["id"],
         "name": item["name"],
-        "protocol": "openai",
+        "protocol": item.get("protocol") or "openai",
         "base_url": base_url,
     }
 
@@ -853,6 +924,1446 @@ def _cline_models():
 
 
 # ---------------------------------------------------------------------------
+# ZCode：登录 / 续期 / 模型 / 请求
+# ---------------------------------------------------------------------------
+#
+# ZCode（zcode.z.ai）是智谱 GLM Coding Plan 的客户端。账号可能落在两个站点：
+# Z.ai（api.z.ai）或智谱 BigModel（bigmodel.cn）。它有三种可用的登录态：
+#
+# * 浏览器登录：ZCode 的 OAuth CLI 流程（zcode.z.ai 开一个授权页，后台轮询）；
+# * 本机 ZCode 登录态：~/.zcode/v2/credentials.json（加密，AES-256-GCM）；
+# * GLM Coding Plan API Key（形如 <id>.<secret>）。
+#
+# 有 Coding Plan 的账号用 ``api.z.ai/api/anthropic`` 或
+# ``open.bigmodel.cn/api/anthropic``；只有 ZCode 赠送额度（Start Plan /
+# ZCode 1024 Dev Day）的账号走 ``zcode.z.ai/api/v1/zcode-plan/anthropic``，
+# 请求必须带 ZCode 自己的系统提示词与请求头，否则一律 405/3012。
+
+_ZCODE_DEVICE_LOCK = threading.RLock()
+_ZCODE_DEVICE = {"id": "", "path": ""}
+
+
+def _zcode_site(value):
+    text = str(value or "").strip().lower()
+    if text in ("bigmodel", "big-model", "bigmodel.cn", "zhipu", "cn",
+                "智谱", "智谱 bigmodel", "智谱bigmodel"):
+        return "bigmodel"
+    return "zai"
+
+
+def _zcode_site_info(site):
+    return dict(ZCODE_SITES[_zcode_site(site)])
+
+
+def _zcode_root(base):
+    try:
+        parts = urllib.parse.urlsplit(str(base or ""))
+        if parts.scheme and parts.netloc:
+            return "%s://%s" % (parts.scheme, parts.netloc)
+    except Exception:
+        pass
+    return ZCODE_ZAI_API
+
+
+def _zcode_num(value):
+    """ZCode 的金额 / 时间有时是数字，有时是字符串。"""
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value or "").strip())
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _zcode_model_name(name):
+    """把赠送额度里的 ``glm-5.3-flash`` 归一成目录里的 ``GLM-5.3-Flash``。"""
+    text = str(name or "").strip()
+    for model in ZCODE_MODELS:
+        if model["id"].lower() == text.lower():
+            return model["id"]
+    return text
+
+
+# ---------------------------------------------------------------------------
+# ZCode 官方模型清单（provider 配置）
+# ---------------------------------------------------------------------------
+#
+# ZCode 自己的模型目录（哪些模型、上下文、输出上限、推理档位）不在推理
+# 端点里，而在它的客户端配置里：zcode.z.ai 指名的 builtin_provider_config
+# 或者本机安装的 ZCode 自带的 zcode-builtin.json（取 revision 最新的）。
+# 「刷新模型」时强制重拉远程那份，拿不到就用本机 / 上次的 / 内置兜底表。
+
+_ZCODE_CONFIG_CACHE = {"cfg": None, "at": 0.0}
+_ZCODE_CONFIG_LOCK = threading.RLock()
+ZCODE_CONFIG_TTL_SECONDS = 10 * 60
+
+
+def _zcode_local_config():
+    """本机 ZCode 客户端带的官方 provider 配置（revision 最大的那份）。"""
+    try:
+        paths = _zcode_local_paths()
+        root = os.path.join(paths["data_dir"], ".zcode", "v2", "runtime",
+                            "provider")
+        best = None
+        for dirpath, dirnames, filenames in os.walk(root):
+            depth = dirpath[len(root):].count(os.sep) if dirpath.startswith(root) else 99
+            if depth > 3:
+                dirnames[:] = []
+                continue
+            if depth == 3 and "zcode-builtin.json" in filenames:
+                try:
+                    with open(os.path.join(dirpath, "zcode-builtin.json"),
+                              "r", encoding="utf-8") as fh:
+                        cfg = json.load(fh)
+                    if isinstance(cfg, dict) and (
+                            best is None
+                            or (cfg.get("revision") or 0) > (best.get("revision") or 0)):
+                        best = cfg
+                except Exception:
+                    pass
+        return best
+    except Exception:
+        return None
+
+
+def _zcode_remote_config():
+    """zcode.z.ai 指名的官方 provider 配置。"""
+    data = _zcode_call(
+        "GET", ZCODE_BASE + "/api/v1/client/configs?app_version="
+        + urllib.parse.quote(ZCODE_APP_VERSION, safe="")
+        + "&platform=" + urllib.parse.quote(_zcode_platform_tag(), safe=""))
+    configs = (data or {}).get("configs") if isinstance(data, dict) else {}
+    url = ""
+    if isinstance(configs, dict):
+        url = str(configs.get("builtin_provider_config_json") or "").strip()
+    if not url.startswith("https://"):
+        raise PlatformError(502, "ZCode 的客户端配置里没有 provider 配置地址")
+    req = urllib.request.Request(url, headers={
+        "user-agent": "ZCode/" + ZCODE_APP_VERSION,
+        "accept": "application/json",
+    })
+    with _open(req, timeout=8) as resp:
+        raw = resp.read(8 << 20)
+    cfg = json.loads(raw.decode("utf-8", "replace"))
+    if not isinstance(cfg, dict):
+        raise PlatformError(502, "ZCode 的 provider 配置不是 JSON 对象")
+    return cfg
+
+
+def _zcode_config(force=False):
+    """官方 provider 配置：远程 + 本机取最新的；拿不到就用上次的。"""
+    with _ZCODE_CONFIG_LOCK:
+        now = time.time()
+        cached = _ZCODE_CONFIG_CACHE["cfg"]
+        if not force and cached is not None \
+                and now - _ZCODE_CONFIG_CACHE["at"] < ZCODE_CONFIG_TTL_SECONDS:
+            return cached
+        cfg = None
+        if force or cached is None:
+            try:
+                cfg = _zcode_remote_config()
+            except Exception as exc:
+                _log("zcode: 拉官方 provider 配置失败：%s" % exc)
+        local = _zcode_local_config()
+        if local is not None and (cfg is None
+                                  or (local.get("revision") or 0)
+                                  > (cfg.get("revision") or 0)):
+            cfg = local
+        if cfg is not None:
+            _ZCODE_CONFIG_CACHE["cfg"] = cfg
+            _ZCODE_CONFIG_CACHE["at"] = now
+            return cfg
+        return cached
+
+
+def _zcode_plan_id(base):
+    text = str(base or "")
+    if "/zcode-plan/" in text:
+        return "account:zai-start-plan"
+    if "bigmodel.cn" in text:
+        return "account:bigmodel-individual-coding-plan"
+    return "account:zai-individual-coding-plan"
+
+
+def _zcode_models_of(cfg, plan):
+    """从官方配置里解出 plan 的模型：id / 上下文 / 输出 / 图像 / 推理档位。"""
+    if not isinstance(cfg, dict):
+        return []
+    config = cfg.get("config") if isinstance(cfg.get("config"), dict) else {}
+    provider_rules = (config.get("providerConfigRules") or {}) \
+        .get("providerRules") if isinstance(config.get("providerConfigRules"), dict) else []
+    model_config = config.get("modelConfigRules") \
+        if isinstance(config.get("modelConfigRules"), dict) else {}
+    ids = []
+    seen = set()
+    for rule in provider_rules or []:
+        if not isinstance(rule, dict) or rule.get("providerId") != plan:
+            continue
+        for mid in rule.get("builtinModelIds") or []:
+            mid = str(mid or "").strip()
+            if mid and mid.lower() not in seen:
+                seen.add(mid.lower())
+                ids.append(mid)
+    off = set()
+    for rule in model_config.get("builtinProviderModelRules") or []:
+        if not isinstance(rule, dict) or rule.get("providerId") != plan:
+            continue
+        mid = str(rule.get("modelId") or "").strip()
+        if not mid:
+            continue
+        rule_cfg = rule.get("config") if isinstance(rule.get("config"), dict) else {}
+        if rule_cfg.get("enabled") is False:
+            off.add(mid.lower())
+        elif mid.lower() not in seen:
+            seen.add(mid.lower())
+            ids.append(mid)
+    model_rules = model_config.get("modelRules") or []
+    rows = []
+    for mid in ids:
+        if mid.lower() in off:
+            continue
+        row = {"id": mid, "context": 0, "output": 0, "image": False,
+               "efforts": []}
+        for rule in model_rules or []:
+            if not isinstance(rule, dict):
+                continue
+            pattern = str(rule.get("modelMatch") or "").strip()
+            if not pattern:
+                continue
+            try:
+                matched = re.match("^(?:%s)$" % pattern, mid, re.IGNORECASE)
+            except Exception:
+                continue
+            if not matched:
+                continue
+            rule_cfg = rule.get("config") if isinstance(rule.get("config"), dict) else {}
+            props = rule_cfg.get("properties") \
+                if isinstance(rule_cfg.get("properties"), dict) else {}
+            specs = rule_cfg.get("optionSpecs") \
+                if isinstance(rule_cfg.get("optionSpecs"), dict) else {}
+            try:
+                context = int(props.get("contextWindow") or 0)
+                if context > 0:
+                    row["context"] = context
+            except (TypeError, ValueError):
+                pass
+            max_tokens = specs.get("maxOutputTokens") or {}
+            if isinstance(max_tokens, dict):
+                try:
+                    output = int(max_tokens.get("max") or 0)
+                    if output > 0:
+                        row["output"] = output
+                except (TypeError, ValueError):
+                    pass
+            input_format = props.get("inputFormat") or {}
+            if isinstance(input_format, dict) \
+                    and isinstance(input_format.get("supportsImage"), bool):
+                row["image"] = input_format["supportsImage"]
+            levels = specs.get("reasoningLevel") or {}
+            if isinstance(levels, dict):
+                values = levels.get("values") or []
+                efforts = []
+                for value in values:
+                    if not isinstance(value, str):
+                        continue
+                    if value == "disabled":
+                        efforts.append("none")
+                    elif value == "enabled":
+                        efforts.append("high")
+                    else:
+                        efforts.append(value)
+                if efforts:
+                    row["efforts"] = efforts
+        rows.append(row)
+    return rows
+
+
+def _zcode_fallback_models():
+    return [
+        {"id": m["id"], "context": m["context"], "output": m["output"],
+         "image": bool(m.get("vision")),
+         "efforts": (["none", "high", "max"] if m.get("reasoning") else [])}
+        for m in ZCODE_MODELS
+    ]
+
+
+def _zcode_official_models(base, force=False):
+    """一个 Coding Plan 的官方模型列表；拿不到就回落内置兜底表。"""
+    cfg = _zcode_config(force=force)
+    rows = _zcode_models_of(cfg, _zcode_plan_id(base))
+    if not rows:
+        rows = _zcode_fallback_models()
+    return rows
+
+
+def _zcode_arch():
+    machine = str(_platform.machine() or "").strip().lower()
+    return {
+        "amd64": "x64", "x86_64": "x64", "x64": "x64",
+        "arm64": "arm64", "aarch64": "arm64",
+        "x86": "ia32", "i386": "ia32", "i686": "ia32",
+    }.get(machine, machine or "x64")
+
+
+def _zcode_platform_tag():
+    name = "win32" if sys.platform == "win32" else (
+        "darwin" if sys.platform == "darwin" else "linux")
+    return name + "-" + _zcode_arch()
+
+
+def _zcode_os_release():
+    # Node 的 os.release()：Windows 上是 10.0.x（Python 的 release() 只给 11）。
+    if sys.platform == "win32":
+        return str(_platform.version() or "").strip() or "10.0.0"
+    return str(_platform.release() or "").strip()
+
+
+def _zcode_os_version_line():
+    name = "win32" if sys.platform == "win32" else (
+        "darwin" if sys.platform == "darwin" else "linux")
+    return "%s %s %s" % (name, _zcode_os_release(), _zcode_arch())
+
+
+def _zcode_os_category():
+    if sys.platform == "win32":
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+def _zcode_language():
+    try:
+        value = locale.getdefaultlocale()[0] or ""
+    except Exception:
+        value = ""
+    value = str(value or "").replace("_", "-")
+    return value or "en-US"
+
+
+def _zcode_timezone():
+    value = str(os.environ.get("TZ") or "").strip()
+    if value:
+        return value
+    try:
+        names = " ".join(str(x or "") for x in time.tzname).lower()
+    except Exception:
+        names = ""
+    if "china" in names or "中国" in names or "台北" in names or "香港" in names:
+        return "Asia/Shanghai"
+    if "tokyo" in names or "日本" in names:
+        return "Asia/Tokyo"
+    if "korea" in names or "韩国" in names:
+        return "Asia/Seoul"
+    if "utc" in names or "gmt" in names:
+        return "UTC"
+    return "Asia/Shanghai"
+
+
+def _zcode_device_mid():
+    """发给 zcode.z.ai 的 X-Device-Mid（本机固定一个 UUID）。"""
+    with _ZCODE_DEVICE_LOCK:
+        if _ZCODE_DEVICE.get("id"):
+            return _ZCODE_DEVICE["id"]
+        path = ""
+        try:
+            import wb_egg_pools
+            path = os.path.join(os.path.dirname(wb_egg_pools._pools_path()),
+                                "zcode-device-mid")
+        except Exception:
+            path = ""
+        if path:
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    text = fh.read().strip()
+                uuid.UUID(text)
+                _ZCODE_DEVICE.update({"id": text.lower(), "path": path})
+                return _ZCODE_DEVICE["id"]
+            except Exception:
+                pass
+        value = str(uuid.uuid4())
+        if path:
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                    fh.write(value + "\n")
+            except Exception:
+                pass
+        _ZCODE_DEVICE.update({"id": value, "path": path})
+        return value
+
+
+def _zcode_key_device(key):
+    """只有 API Key 的账号：设备号由 Key 派生（每个进程都一样）。"""
+    digest = hashlib.sha256(("zcode-device\0" + str(key or "")).encode("utf-8")).hexdigest()
+    variant = format((int(digest[16], 16) & 3) | 8, "x")
+    return "%s-%s-4%s-%s%s-%s" % (
+        digest[0:8], digest[8:12], digest[13:16], variant, digest[17:20],
+        digest[20:32])
+
+
+def _zcode_call(method, url, auth="", body=None, headers=None, device="",
+                timeout=HTTP_TIMEOUT_SECONDS):
+    """问一个 ZCode / Z.ai / BigModel 的 JSON 接口。
+
+    它们把结果包在 ``{code, msg, data}`` 里（0 / 200 算成功）；zcode.z.ai
+    还要 X-Device-Mid。
+    """
+    request_headers = {
+        "content-type": "application/json",
+        "accept": "application/json",
+        "user-agent": "ZCode/" + ZCODE_APP_VERSION,
+    }
+    if auth:
+        request_headers["authorization"] = auth
+    if str(url).startswith(ZCODE_BASE + "/"):
+        request_headers["x-device-mid"] = device or _zcode_device_mid()
+    for key, value in (headers or {}).items():
+        if value is not None and value != "":
+            request_headers[str(key)] = str(value)
+    data = _json_bytes(body) if body is not None else None
+    req = urllib.request.Request(str(url), data=data, method=str(method).upper(),
+                                 headers=request_headers)
+    try:
+        with _open(req, timeout=timeout) as resp:
+            raw = resp.read(8 << 20)
+    except urllib.error.HTTPError as exc:
+        detail = _http_detail(exc)
+        message = detail
+        code = ""
+        try:
+            parsed = json.loads(detail) if detail else {}
+            if isinstance(parsed, dict):
+                code = str(parsed.get("code") or "")
+                error = parsed.get("error")
+                if isinstance(error, dict):
+                    code = code or str(error.get("code") or error.get("type") or "")
+                    message = str(error.get("message") or parsed.get("msg")
+                                  or parsed.get("message") or detail)
+                else:
+                    message = str(parsed.get("msg") or parsed.get("message")
+                                  or error or detail)
+        except Exception:
+            pass
+        message = str(message or "").strip() or ("HTTP %d" % exc.code)
+        if code and code not in ("0", "200", "null"):
+            message = "%s（HTTP %d，code %s）" % (message, exc.code, code)
+        else:
+            message = "%s（HTTP %d）" % (message, exc.code)
+        raise PlatformError(exc.code, "ZCode：%s" % message)
+    except PlatformError:
+        raise
+    except Exception as exc:
+        raise PlatformError(502, "连不上 ZCode：%s" % exc)
+    try:
+        payload = json.loads(raw.decode("utf-8", "replace"))
+    except Exception:
+        raise PlatformError(502, "ZCode 返回的不是 JSON")
+    if not isinstance(payload, dict):
+        return payload
+    code = payload.get("code")
+    if code not in (None, "", 0, "0", 200, "200", "null"):
+        raise PlatformError(502, "ZCode：%s（code %s）"
+                            % (payload.get("msg") or payload.get("message") or "请求失败",
+                               code))
+    return payload.get("data")
+
+
+def _zcode_jwt_claims(jwt):
+    parts = str(jwt or "").split(".")
+    if len(parts) != 3:
+        return {}
+    try:
+        raw = _b64url_decode(parts[1])
+        data = json.loads(raw.decode("utf-8", "replace"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _zcode_jwt_expiry(jwt):
+    value = _zcode_num(_zcode_jwt_claims(jwt).get("exp"))
+    return value if value > 0 else 0.0
+
+
+def _zcode_jwt_expired(jwt):
+    expiry = _zcode_jwt_expiry(jwt)
+    return bool(expiry and time.time() > expiry)
+
+
+def _zcode_bucket_models(bucket):
+    names = []
+    for item in bucket.get("capabilities") or []:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        if ":" in text and not text.lower().startswith("model:"):
+            continue
+        name = text.split(":", 1)[1].strip() if ":" in text else text
+        if name and name.lower() not in [x.lower() for x in names]:
+            names.append(name)
+    return names
+
+
+def _zcode_bucket_spent(bucket):
+    remaining = bucket.get("remaining_units")
+    if remaining is not None:
+        return _zcode_num(remaining) <= 0
+    total = bucket.get("total_units")
+    used = bucket.get("used_units")
+    if total is not None and used is not None:
+        return _zcode_num(used) >= _zcode_num(total)
+    return False
+
+
+def _zcode_start_plan(jwt, device=""):
+    """读 ZCode 的赠送额度（Start Plan / 1024 Dev Day）。
+
+    返回 ``{name, models, all_models, ends_at, total, remaining, plans}``；
+    没有生效中的赠送计划时返回 None。
+    """
+    if not str(jwt or "").strip():
+        return None
+    if _zcode_jwt_expired(jwt):
+        raise PlatformError(401, "ZCode 的登录态已过期：重新登录一次")
+    data = _zcode_call(
+        "GET", ZCODE_BASE + "/api/v1/zcode-plan/billing/balance?app_version="
+        + urllib.parse.quote(ZCODE_APP_VERSION, safe=""),
+        auth="Bearer " + str(jwt or "").strip(), device=device)
+    if not isinstance(data, dict):
+        return None
+    now = _zcode_num(data.get("server_time")) or time.time()
+    plans = [x for x in (data.get("plans") or []) if isinstance(x, dict)]
+    balances = [x for x in (data.get("balances") or []) if isinstance(x, dict)]
+
+    def same(bucket, plan):
+        if bucket.get("user_plan_id") and plan.get("user_plan_id"):
+            return bucket.get("user_plan_id") == plan.get("user_plan_id")
+        return str(bucket.get("plan_id") or "") == str(plan.get("plan_id") or "")
+
+    live_models = []
+    all_models = []
+    live_buckets = []
+    buckets = []
+    plan_names = []
+    ends_at = 0.0
+    for plan in plans:
+        if str(plan.get("status") or "").strip().lower() != "active":
+            continue
+        end = _zcode_num(plan.get("ends_at"))
+        if end > 0 and end <= now:
+            continue
+        name = str(plan.get("name") or "").strip()
+        if name and name not in plan_names:
+            plan_names.append(name)
+        if end > 0:
+            ends_at = end if not ends_at else min(ends_at, end)
+        for bucket in balances:
+            if not same(bucket, plan):
+                continue
+            expiry = _zcode_num(bucket.get("expires_at"))
+            if expiry > 0 and expiry <= now:
+                continue
+            if expiry > 0:
+                ends_at = expiry if not ends_at else min(ends_at, expiry)
+            bucket_models = [_zcode_model_name(x)
+                             for x in _zcode_bucket_models(bucket)]
+            spent = _zcode_bucket_spent(bucket)
+            row = {
+                "plan": name or "ZCode Start Plan",
+                "name": str(bucket.get("show_name")
+                            or bucket.get("entitlement_id")
+                            or (bucket_models[0] if bucket_models else "")
+                            or "额度").strip(),
+                "models": bucket_models,
+                "total": _zcode_num(bucket.get("total_units")),
+                "used": _zcode_num(bucket.get("used_units")),
+                "remaining": _zcode_num(bucket.get("remaining_units")),
+                "period": str(bucket.get("period") or "").strip(),
+                "spent": spent,
+            }
+            buckets.append(row)
+            for model in bucket_models:
+                if model.lower() not in [x.lower() for x in all_models]:
+                    all_models.append(model)
+                if not spent and model.lower() not in [
+                        x.lower() for x in live_models]:
+                    live_models.append(model)
+            if not spent:
+                live_buckets.append({
+                    "total": row["total"],
+                    "remaining": row["remaining"],
+                })
+    if not plan_names and not live_models:
+        return None
+    total = sum(x["total"] for x in live_buckets)
+    remaining = sum(x["remaining"] for x in live_buckets)
+    return {
+        "name": plan_names[0] if plan_names else "ZCode Start Plan",
+        "plans": plan_names,
+        "models": live_models,
+        "all_models": all_models,
+        "ends_at": ends_at,
+        "total": total,
+        "remaining": remaining,
+        "buckets": buckets,
+    }
+
+
+def _zcode_business_auth(site, token):
+    """把站点登录 token 换成业务 API 的 Authorization。"""
+    token = str(token or "").strip()
+    if not token:
+        raise PlatformError(401, "ZCode 登录响应里没有 access_token")
+    if _zcode_site(site) == "bigmodel":
+        return token
+    data = _zcode_call("POST", ZCODE_ZAI_API + "/api/auth/z/login",
+                       body={"token": token})
+    access = str((data or {}).get("access_token") or "").strip() \
+        if isinstance(data, dict) else ""
+    if not access:
+        raise PlatformError(502, "Z.ai 没有返回业务登录 token")
+    return "Bearer " + access
+
+
+def _zcode_customer_info(site, auth):
+    root = _zcode_site_info(site)["api"]
+    data = _zcode_call("GET", root + "/api/biz/customer/getCustomerInfo",
+                       auth=auth)
+    return data if isinstance(data, dict) else {}
+
+
+def _zcode_keys_url(site, org, project):
+    api = _zcode_site_info(site)["api"]
+    return "%s/api/biz/v1/organization/%s/projects/%s/api_keys" % (
+        api, urllib.parse.quote(str(org or ""), safe=""),
+        urllib.parse.quote(str(project or ""), safe=""))
+
+
+def _zcode_project_key(site, org, project, auth, name, key_type=None,
+                       extra_headers=None):
+    """找项目里叫 name 的 Key（没有就建一个），返回 ``<id>.<secret>``。"""
+    url = _zcode_keys_url(site, org, project)
+    headers = dict(extra_headers or {})
+    try:
+        rows = _zcode_call("GET", url, auth=auth, headers=headers)
+    except PlatformError as exc:
+        raise PlatformError(exc.status, "%s API Key：%s"
+                            % (_zcode_site_info(site)["name"], exc.detail))
+    if not isinstance(rows, list):
+        rows = []
+    key_id = ""
+    for row in rows:
+        if not isinstance(row, dict) or str(row.get("name") or "") != str(name):
+            continue
+        if key_type is not None and str(row.get("keyType") or "") != str(key_type):
+            continue
+        key_id = str(row.get("apiKey") or "").strip()
+        if key_id:
+            break
+    if not key_id:
+        body = {"name": str(name)}
+        if key_type is not None:
+            body["keyType"] = key_type
+        try:
+            created = _zcode_call("POST", url, auth=auth, body=body,
+                                  headers=headers)
+        except PlatformError as exc:
+            raise PlatformError(exc.status, "%s API Key：%s"
+                                % (_zcode_site_info(site)["name"], exc.detail))
+        key_id = str((created or {}).get("apiKey") or "").strip() \
+            if isinstance(created, dict) else ""
+    if not key_id:
+        raise PlatformError(502, "%s 没有给出 API Key"
+                            % _zcode_site_info(site)["name"])
+    try:
+        copied = _zcode_call("GET", url + "/copy/" + urllib.parse.quote(key_id, safe=""),
+                             auth=auth, headers=headers)
+    except PlatformError as exc:
+        raise PlatformError(exc.status, "%s API Key：%s"
+                            % (_zcode_site_info(site)["name"], exc.detail))
+    secret = str((copied or {}).get("secretKey") or "").strip() \
+        if isinstance(copied, dict) else ""
+    if secret:
+        return key_id + "." + secret
+    # 团队 Key 有时不回 secret，直接给 id
+    if key_type is not None:
+        return key_id
+    raise PlatformError(502, "%s 没有给出 API Key 的 secret"
+                        % _zcode_site_info(site)["name"])
+
+
+def _zcode_subscriptions(site, key):
+    root = _zcode_site_info(site)["api"]
+    data = _zcode_call("GET", root + "/api/biz/subscription/list", auth=key)
+    return data if isinstance(data, list) else []
+
+
+def _zcode_plan_name(site, key):
+    plan = ""
+    for row in _zcode_subscriptions(site, key):
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("status") or "").upper() != "VALID":
+            continue
+        plan = str(row.get("productName") or "").strip()
+        if plan:
+            break
+    return plan
+
+
+def _zcode_team_seat(site, info, auth):
+    """账号在团队套餐里的座位（组织 / 项目 / key）。"""
+    root = _zcode_site_info(site)["api"]
+    projects = []
+    for org in info.get("organizations") or []:
+        if not isinstance(org, dict):
+            continue
+        for project in org.get("projects") or []:
+            if not isinstance(project, dict):
+                continue
+            if str(project.get("projectType") or "") != "2":
+                continue
+            if not org.get("organizationId") or not project.get("projectId"):
+                continue
+            projects.append((str(org["organizationId"]),
+                             str(project["projectId"])))
+    last_error = ""
+    for org_id, project_id in projects:
+        headers = {
+            "Bigmodel-Organization": org_id,
+            "Bigmodel-Project": project_id,
+            "Set-Language": "zh" if _zcode_site(site) == "bigmodel" else "en",
+            "Accept-Language": "en-US,en",
+        }
+        try:
+            detail = _zcode_call(
+                "GET", root + "/api/biz/team/subscribe/product/querySubscribeDetail",
+                auth=auth, headers=headers)
+        except PlatformError as exc:
+            last_error = exc.detail
+            continue
+        if not isinstance(detail, dict):
+            continue
+        status = str(detail.get("status") or "").upper()
+        grant = str(detail.get("memberGrantStatus") or "").upper()
+        if detail.get("hasSubscription") is False or status != "EFFECTIVE" \
+                or grant != "VALID":
+            if status == "EFFECTIVE" and grant == "UNASSIGNED":
+                last_error = "这个账号在团队里，但还没有分到座位"
+            elif status == "EXPIRED":
+                last_error = "这个团队套餐已经到期"
+            continue
+        key = _zcode_project_key(site, org_id, project_id, auth,
+                                 "zcode-team-api-key", key_type=2,
+                                 extra_headers=headers)
+        return {
+            "key": key,
+            "org": org_id,
+            "project": project_id,
+            "plan": str(detail.get("productName") or "GLM Coding Team"),
+        }
+    return {"error": last_error}
+
+
+def _zcode_default_project(info):
+    chosen_org = None
+    chosen_project = None
+    for org in info.get("organizations") or []:
+        if not isinstance(org, dict) or not org.get("organizationId"):
+            continue
+        projects = [x for x in (org.get("projects") or [])
+                    if isinstance(x, dict) and x.get("projectId")
+                    and str(x.get("projectType") or "") != "2"]
+        if not projects:
+            continue
+        project = next((x for x in projects
+                        if "默认项目" in str(x.get("projectName") or "")), projects[0])
+        named = "默认机构" in str(org.get("organizationName") or "")
+        if chosen_org is None or named:
+            chosen_org = str(org["organizationId"])
+            chosen_project = str(project["projectId"])
+            if named:
+                break
+    return chosen_org or "", chosen_project or ""
+
+
+def _zcode_who(info, fallback="ZCode"):
+    if not isinstance(info, dict):
+        return fallback
+    email = str(info.get("email") or "").strip()
+    if email.endswith("@phone.local"):
+        email = email[:-len("@phone.local")]
+    name = str(info.get("displayName") or info.get("name")
+               or info.get("nickName") or info.get("username") or "").strip()
+    uid = str(info.get("id") or info.get("user_id")
+              or info.get("customerNumber") or "").strip()
+    return email or name or uid or fallback
+
+
+def _zcode_resolve_signed_in(site, token, jwt, device, on_team=False):
+    """用一次站点登录态找出这个账号真正能用的额度。
+
+    返回 route（coding / start）、key、base、plan、models、user 等。
+    """
+    site = _zcode_site(site)
+    token = str(token or "").strip()
+    jwt = str(jwt or "").strip()
+    device = str(device or "").strip() or _zcode_device_mid()
+    auth = _zcode_business_auth(site, token)
+    info = _zcode_customer_info(site, auth)
+    user = {
+        "email": str(info.get("email") or "").strip(),
+        "name": str(info.get("nickName") or info.get("customerName") or "").strip(),
+        "id": str(info.get("customerNumber") or info.get("id") or "").strip(),
+    }
+    site_info = _zcode_site_info(site)
+    if on_team:
+        seat = _zcode_team_seat(site, info, auth)
+        if not seat.get("key"):
+            raise PlatformError(400, seat.get("error")
+                                or "这个账号没有团队 GLM Coding Plan 的座位")
+        return {
+            "route": "coding", "site": site, "base": site_info["base"],
+            "key": seat["key"], "jwt": jwt, "device": device,
+            "plan": seat.get("plan") or "GLM Coding Team",
+            "org": seat.get("org") or "", "project": seat.get("project") or "",
+            "team": True, "models": [m["id"] for m in ZCODE_MODELS],
+            "expires_at": 0.0, "user": user, "auth_token": auth,
+        }
+    own_error = ""
+    own_key = ""
+    org_id, project_id = _zcode_default_project(info)
+    if org_id and project_id:
+        try:
+            own_key = _zcode_project_key(site, org_id, project_id, auth,
+                                         "zcode-api-key")
+        except PlatformError as exc:
+            own_error = exc.detail
+    if own_key:
+        try:
+            plan = _zcode_plan_name(site, own_key)
+        except PlatformError as exc:
+            own_error = exc.detail
+            plan = ""
+        if plan:
+            return {
+                "route": "coding", "site": site, "base": site_info["base"],
+                "key": own_key, "jwt": jwt, "device": device, "plan": plan,
+                "org": org_id, "project": project_id, "team": False,
+                "models": [m["id"] for m in ZCODE_MODELS],
+                "expires_at": 0.0, "user": user, "auth_token": auth,
+            }
+    team = _zcode_team_seat(site, info, auth)
+    if team.get("key"):
+        return {
+            "route": "coding", "site": site, "base": site_info["base"],
+            "key": team["key"], "jwt": jwt, "device": device,
+            "plan": team.get("plan") or "GLM Coding Team",
+            "org": team.get("org") or "", "project": team.get("project") or "",
+            "team": True, "models": [m["id"] for m in ZCODE_MODELS],
+            "expires_at": 0.0, "user": user, "auth_token": auth,
+        }
+    if jwt:
+        start = _zcode_start_plan(jwt, device)
+        if start and start.get("models"):
+            return {
+                "route": "start", "site": site,
+                "base": site_info["base"], "key": "", "jwt": jwt,
+                "device": device, "plan": start.get("name") or "ZCode Start Plan",
+                "org": "", "project": "", "team": False,
+                "models": list(start.get("models") or []),
+                "expires_at": float(start.get("ends_at") or 0),
+                "user": user, "auth_token": auth,
+                "gift": start,
+            }
+    detail = own_error or team.get("error") or ""
+    if detail:
+        raise PlatformError(400, "这个 ZCode 账号没有可用的 GLM Coding Plan 或赠送额度：%s"
+                            % detail)
+    subscribe = site_info.get("subscribe") or ""
+    raise PlatformError(
+        400, "这个 ZCode 账号没有 GLM Coding Plan，赠送额度也已用完；"
+             "请先在 %s 订阅，或在 ZCode 里领取赠送额度后再登录。" % subscribe)
+
+
+def _zcode_account(site, route, base, key="", jwt="", device="", plan="",
+                   models=None, user=None, source="browser", org="",
+                   project="", team=False, expires_at=0.0, auth_token="",
+                   base_account=None, usage=None):
+    """把一次登录结果收拾成平台账号。"""
+    user = user if isinstance(user, dict) else {}
+    site = _zcode_site(site)
+    base_account = base_account if isinstance(base_account, dict) else {}
+    uid = str(user.get("id") or "").strip()
+    email = str(user.get("email") or "").strip()
+    label = _zcode_who(user, "ZCode")
+    if source == "key":
+        label = str(plan or "GLM Coding Plan").strip() + " · " + str(key or "")[-6:]
+    identity = uid or key or jwt
+    seed = "%s\0%s" % (site, identity)
+    stable = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    account_id = str(base_account.get("id") or ("acct-" + stable[:12]))
+    return {
+        "id": account_id,
+        "label": label,
+        "email": email,
+        "enabled": base_account.get("enabled", True) is not False,
+        "created_at": float(base_account.get("created_at") or time.time()),
+        "last_used": float(base_account.get("last_used") or 0.0),
+        "status": "ok",
+        "last_error": "",
+        "platform": PLATFORM_ZCODE,
+        "site": site,
+        "route": route,
+        "base_url": base,
+        "api_key": str(key or ""),
+        "jwt": str(jwt or ""),
+        "device": str(device or ""),
+        "plan": str(plan or ""),
+        "models": list(models or []),
+        "uid": uid,
+        "org": str(org or ""),
+        "project": str(project or ""),
+        "team": bool(team),
+        "source": source,
+        "auth_token": str(auth_token or ""),
+        "expires_at": float(expires_at or 0.0),
+        # 赠送额度的用量快照（每个余额桶一行：套餐 / 模型 / 用了多少）。
+        "usage": [dict(x) for x in (usage or []) if isinstance(x, dict)],
+    }
+
+
+def _zcode_account_from_login(site, token, jwt, device, source="browser",
+                              on_team=False, user_hint=None):
+    resolved = _zcode_resolve_signed_in(site, token, jwt, device,
+                                        on_team=on_team)
+    user = dict(resolved.get("user") or {})
+    if isinstance(user_hint, dict):
+        for key in ("email", "name", "id"):
+            if not user.get(key) and user_hint.get(key):
+                user[key] = user_hint[key]
+    gift = resolved.get("gift") if isinstance(resolved.get("gift"), dict) else {}
+    return _zcode_account(
+        site, resolved["route"], resolved["base"],
+        key=resolved.get("key") or "", jwt=resolved.get("jwt") or "",
+        device=resolved.get("device") or device,
+        plan=resolved.get("plan") or "", models=resolved.get("models") or [],
+        user=user, source=source, org=resolved.get("org") or "",
+        project=resolved.get("project") or "", team=resolved.get("team") or False,
+        expires_at=resolved.get("expires_at") or 0.0,
+        auth_token=resolved.get("auth_token") or "",
+        usage=gift.get("buckets") or [])
+
+
+def _zcode_secret():
+    seed = str(os.environ.get("ZCODE_CREDENTIAL_SECRET") or "").strip()
+    if not seed:
+        home = os.path.expanduser("~")
+        try:
+            name = getpass.getuser()
+        except Exception:
+            name = ""
+        if "\\" in name:
+            name = name.rsplit("\\", 1)[-1]
+        platform_name = "win32" if sys.platform == "win32" else (
+            "darwin" if sys.platform == "darwin" else sys.platform)
+        seed = "zcode-credential-fallback:%s:%s:%s" % (platform_name, home, name)
+    return hashlib.sha256(seed.encode("utf-8")).digest()
+
+
+def _zcode_decrypt(secret, value):
+    text = str(value or "")
+    if not text.startswith("enc:v1:"):
+        return ""
+    parts = text[7:].split(".")
+    if len(parts) != 3:
+        return ""
+    try:
+        iv, tag, data = [
+            base64.urlsafe_b64decode(item + "=" * (-len(item) % 4))
+            for item in parts
+        ]
+        import wb_atrest
+        plain = wb_atrest._gcm_open(secret, iv, b"", data, tag)
+        return plain.decode("utf-8", "replace")
+    except Exception:
+        return ""
+
+
+def _zcode_local_paths():
+    home = os.path.expanduser("~")
+    settings = os.path.join(home, ".zcode", "v2", "setting.json")
+    data_dir = home
+    try:
+        with open(settings, "r", encoding="utf-8") as fh:
+            setting = json.load(fh)
+        moved = str((setting or {}).get("dataBaseDir") or "").strip()
+        if moved and os.path.isabs(moved):
+            data_dir = moved
+    except Exception:
+        setting = {}
+    return {
+        "home": home,
+        "setting": setting if isinstance(setting, dict) else {},
+        "settings_path": settings,
+        "data_dir": data_dir,
+        "credentials": os.path.join(data_dir, ".zcode", "v2", "credentials.json"),
+    }
+
+
+def _zcode_local_login():
+    """读本机 ZCode 的登录态；没有就返回 None。"""
+    paths = _zcode_local_paths()
+    try:
+        with open(paths["credentials"], "r", encoding="utf-8") as fh:
+            store = json.load(fh)
+    except Exception:
+        return None
+    if not isinstance(store, dict):
+        return None
+    secret = _zcode_secret()
+    active = _zcode_decrypt(secret, store.get("oauth:active_provider", "")).strip().lower()
+    site = active if active in ("zai", "bigmodel") else ""
+    if not site:
+        site = "bigmodel" if store.get("oauth:bigmodel:access_token") \
+            and not store.get("oauth:zai:access_token") else "zai"
+    token = _zcode_decrypt(secret, store.get("oauth:%s:access_token" % site)).strip()
+    jwt = _zcode_decrypt(secret, store.get("zcodejwttoken", "")).strip()
+    jwt = jwt[7:].strip() if jwt.lower().startswith("bearer ") else jwt
+    if not token:
+        other = "zai" if site == "bigmodel" else "bigmodel"
+        token = _zcode_decrypt(secret, store.get("oauth:%s:access_token" % other)).strip()
+        if token:
+            site = other
+    if not token and not jwt:
+        return None
+    user = {}
+    raw = _zcode_decrypt(secret, store.get("oauth:%s:user_info" % site, ""))
+    if raw:
+        try:
+            info = json.loads(raw)
+            if isinstance(info, dict):
+                profile = info.get("rawProfile") if isinstance(
+                    info.get("rawProfile"), dict) else {}
+                user = {
+                    "email": str(info.get("email") or profile.get("email") or ""),
+                    "name": str(info.get("displayName") or info.get("name")
+                                or info.get("username") or ""),
+                    "id": str(info.get("id") or info.get("user_id") or ""),
+                }
+        except Exception:
+            pass
+    return {
+        "site": site,
+        "token": token,
+        "jwt": jwt,
+        "user": user,
+        "device": _zcode_device_mid(),
+        "path": paths["credentials"],
+    }
+
+
+def _zcode_import_login(options=None):
+    local = _zcode_local_login()
+    if local is None:
+        raise PlatformError(
+            400, "本机没有找到 ZCode 的登录态：先打开 ZCode 客户端登录，"
+                 "或改用浏览器登录 / GLM Coding Plan API Key。")
+    try:
+        account = _zcode_account_from_login(
+            local["site"], local["token"], local["jwt"], local["device"],
+            source="zcode-app", user_hint=local.get("user"))
+    except PlatformError as exc:
+        raise PlatformError(exc.status, "本机 ZCode 登录态不可用：%s" % exc.detail)
+    _log("zcode: 已读取本机 ZCode 登录态（%s）" % account.get("label"))
+    return account
+
+
+def _zcode_key_login(options=None):
+    options = options or {}
+    key = str(options.get("key") or options.get("api_key") or "").strip()
+    if not key:
+        raise PlatformError(400, "先粘贴 GLM Coding Plan API Key")
+    if len(key) < 16 or " " in key or "." not in key:
+        raise PlatformError(400, "GLM Coding Plan API Key 形如 <id>.<secret>，请检查")
+    site = _zcode_site(options.get("site"))
+    plan = _zcode_plan_name(site, key)
+    if not plan:
+        raise PlatformError(
+            400, "这把 Key 背后没有生效的 GLM Coding Plan。"
+                 "ZCode 的赠送额度只能通过 ZCode 登录态使用，不能只用 Key。")
+    return _zcode_account(
+        site, "coding", _zcode_site_info(site)["base"], key=key,
+        device=_zcode_key_device(key), plan=plan,
+        models=[m["id"] for m in ZCODE_MODELS], user={}, source="key")
+
+
+def _zcode_login_success(platform, account):
+    session = _new_session(platform)
+    session["account"] = account
+    session["status"] = "success"
+    session["instructions"] = ""
+    return _public_session(session)
+
+
+def _zcode_browser_login_start(site):
+    site = _zcode_site(site)
+    session = _new_session(PLATFORM_ZCODE)
+    poll_auth = "Bearer " + secrets.token_hex(32)
+    device = str(uuid.uuid4())
+    init_body = {"provider": site}
+    flow = _zcode_call("POST", ZCODE_BASE + "/api/v1/oauth/cli/init",
+                       auth=poll_auth, body=init_body, device=device)
+    flow = flow if isinstance(flow, dict) else {}
+    flow_id = str(flow.get("flow_id") or "").strip()
+    authorize = str(flow.get("authorize_url") or "").strip()
+    if not flow_id or not authorize.startswith("https://"):
+        raise PlatformError(502, "ZCode 没有给出登录页")
+    split = urllib.parse.urlsplit(authorize)
+    query = urllib.parse.parse_qs(split.query, keep_blank_values=True)
+    back = ZCODE_BASE + "/app/oauth/login?" + urllib.parse.urlencode({
+        "redirect": "zcode://oauth/callback",
+        "app_version": ZCODE_APP_VERSION,
+    })
+    query["redirect" if site == "bigmodel" else "redirect_uri"] = [back]
+    authorize = urllib.parse.urlunsplit((
+        split.scheme, split.netloc, split.path,
+        urllib.parse.urlencode(query, doseq=True), split.fragment))
+    interval = max(1.0, _zcode_num(flow.get("poll_interval_sec")) or 2.0)
+    deadline = _zcode_num(flow.get("expires_at")) or (time.time() + 5 * 60)
+    session.update({
+        "site": site,
+        "zcode_flow_id": flow_id,
+        "zcode_poll_auth": poll_auth,
+        "zcode_device": device,
+        "zcode_interval": interval,
+        "url": authorize,
+        "instructions": ("在浏览器打开授权页并登录 %s；登录完成后会自动加入账号池。"
+                         % _zcode_site_info(site)["name"]),
+        "expires_at": min(time.time() + LOGIN_TTL_SECONDS,
+                          max(time.time() + 60, deadline)),
+    })
+    thread = threading.Thread(target=_zcode_poll_loop, args=(session,),
+                              daemon=True)
+    thread.start()
+    session["thread"] = thread
+    _log("zcode: %s 浏览器登录已启动" % _zcode_site_info(site)["name"])
+    return _public_session(session)
+
+
+def _zcode_poll_loop(session):
+    site = session.get("site") or "zai"
+    flow_id = session.get("zcode_flow_id") or ""
+    auth = session.get("zcode_poll_auth") or ""
+    device = session.get("zcode_device") or ""
+    interval = float(session.get("zcode_interval") or 2.0)
+    deadline = float(session.get("expires_at") or 0)
+    while time.time() < deadline:
+        if session.get("cancel") or session.get("status") != "pending":
+            return
+        time.sleep(interval)
+        if session.get("cancel") or session.get("status") != "pending":
+            return
+        try:
+            got = _zcode_call(
+                "GET", ZCODE_BASE + "/api/v1/oauth/cli/poll/"
+                + urllib.parse.quote(flow_id, safe=""),
+                auth=auth, device=device)
+        except PlatformError as exc:
+            if exc.status in (408, 429) or exc.status >= 500:
+                continue
+            session["status"] = "error"
+            session["error"] = "ZCode 登录：%s" % exc.detail
+            return
+        except Exception as exc:
+            session["status"] = "error"
+            session["error"] = "ZCode 登录轮询失败：%s" % exc
+            return
+        got = got if isinstance(got, dict) else {}
+        status = str(got.get("status") or "").strip().lower()
+        if status in ("", "pending"):
+            continue
+        if status == "failed":
+            session["status"] = "error"
+            session["error"] = "在 %s 上拒绝了这次登录" % _zcode_site_info(site)["name"]
+            return
+        if status != "ready":
+            session["status"] = "error"
+            session["error"] = "ZCode 登录返回了意外的状态：%s" % status
+            return
+        block = got.get(site) if isinstance(got.get(site), dict) else {}
+        token = str(block.get("access_token") or block.get("accessToken") or "").strip()
+        jwt = str(got.get("token") or "").strip()
+        if not token:
+            session["status"] = "error"
+            session["error"] = "ZCode 登录成功但没有返回 access_token"
+            return
+        user = got.get("user") if isinstance(got.get("user"), dict) else None
+        try:
+            account = _zcode_account_from_login(
+                site, token, jwt, device, source="browser", user_hint=user)
+        except PlatformError as exc:
+            session["status"] = "error"
+            session["error"] = exc.detail
+            return
+        except Exception as exc:
+            session["status"] = "error"
+            session["error"] = "ZCode 登录换取凭据失败：%s" % exc
+            return
+        session["account"] = account
+        session["status"] = "success"
+        _log("zcode: 账号 %s 登录成功" % account.get("label"))
+        return
+    session["status"] = "expired"
+    session["error"] = "ZCode 登录页已过期，请重新发起登录"
+
+
+def _zcode_refresh_account(pool, account):
+    """续期 / 重新读取一个 ZCode 账号。Key 不会过期，但套餐与额度会变。"""
+    account = dict(account or {})
+    site = _zcode_site(account.get("site"))
+    source = str(account.get("source") or "")
+    route = str(account.get("route") or "")
+    key = str(account.get("api_key") or "")
+    jwt = str(account.get("jwt") or "")
+    device = str(account.get("device") or "") or _zcode_device_mid()
+    if source == "zcode-app":
+        local = _zcode_local_login()
+        if local is not None:
+            old_uid = str(account.get("uid") or "")
+            new_uid = str((local.get("user") or {}).get("id") or "")
+            if not old_uid or not new_uid or old_uid == new_uid:
+                try:
+                    updated = _zcode_account_from_login(
+                        local["site"], local["token"], local["jwt"],
+                        local["device"], source="zcode-app",
+                        user_hint=local.get("user"))
+                except PlatformError as exc:
+                    raise PlatformError(exc.status, "本机 ZCode 登录态不可用：%s"
+                                        % exc.detail)
+                updated["id"] = account.get("id") or updated["id"]
+                updated["created_at"] = account.get("created_at") or updated["created_at"]
+                updated["enabled"] = account.get("enabled", True) is not False
+                updated["last_used"] = account.get("last_used") or 0.0
+                return updated
+    if bool(account.get("team")):
+        # 团队 Key 不会过期；有业务登录态时顺手复核一次座位。
+        auth = str(account.get("auth_token") or "")
+        if auth:
+            try:
+                info = _zcode_customer_info(site, auth)
+                seat = _zcode_team_seat(site, info, auth)
+                if seat.get("key"):
+                    account["api_key"] = seat["key"]
+                    account["plan"] = seat.get("plan") or account.get("plan") \
+                        or "GLM Coding Team"
+                else:
+                    raise PlatformError(401, seat.get("error")
+                                        or "团队座位已失效：重新登录一次")
+            except PlatformError:
+                raise
+            except Exception:
+                pass
+        account["status"] = "ok"
+        account["last_error"] = ""
+        return account
+    if route == "start" or (not key and jwt):
+        start = _zcode_start_plan(jwt, device)
+        if not start or not start.get("models"):
+            raise PlatformError(401, "ZCode 的赠送额度已用完或已过期：重新登录一次")
+        account.update({
+            "route": "start",
+            "plan": start.get("name") or "ZCode Start Plan",
+            "models": list(start.get("models") or []),
+            "expires_at": float(start.get("ends_at") or 0),
+            "usage": [dict(x) for x in (start.get("buckets") or [])
+                      if isinstance(x, dict)],
+            "status": "ok",
+            "last_error": "",
+        })
+        return account
+    if key:
+        plan = _zcode_plan_name(site, key)
+        if not plan:
+            raise PlatformError(401, "这把 Key 背后没有生效的 GLM Coding Plan")
+        account.update({
+            "plan": plan,
+            "models": [m["id"] for m in ZCODE_MODELS],
+            "expires_at": 0.0,
+            "status": "ok",
+            "last_error": "",
+        })
+        if str(account.get("route") or "") not in ("coding", "start"):
+            account["route"] = "coding"
+        return account
+    raise PlatformError(401, "这个 ZCode 账号的登录态不可用：重新登录一次")
+
+
+def _zcode_prompt():
+    import wb_zcode_prompt
+    return wb_zcode_prompt.PROMPT
+
+
+def _zcode_cached(text):
+    return {"type": "text", "text": str(text or ""),
+            "cache_control": {"type": "ephemeral"}}
+
+
+def _zcode_context_prefix():
+    prompt = _zcode_prompt()
+    context = prompt["context"]
+    today = datetime.date.today().isoformat()
+    body = "\n".join([
+        context["intro"],
+        context["currentDateHeading"] + "\n"
+        + context["currentDateLine"].replace("{date}", today),
+        "",
+        context["outro"],
+    ])
+    return {"role": "user",
+            "content": [{"type": "text",
+                         "text": "<system-reminder>" + body + "</system-reminder>"}]}
+
+
+def _zcode_environment(site, model):
+    prompt = _zcode_prompt()
+    env = prompt["environment"]
+    provider = "bigmodel-api" if _zcode_site(site) == "bigmodel" else "zai-api"
+    lines = [env["heading"], env["invokedLine"],
+             "- %s: %s" % (env["platformLabel"],
+                           "win32" if sys.platform == "win32" else sys.platform),
+             "- %s: %s" % (env["osVersionLabel"], _zcode_os_version_line())]
+    if model:
+        lines.append(env["poweredByLine"].replace("{provider}", provider)
+                     .replace("{model}", str(model)))
+    return "\n".join(lines)
+
+
+def _zcode_dress(body, site, device):
+    """把 Anthropic Messages 请求体打扮成 ZCode 客户端的样子。
+
+    Start Plan 只认 ZCode 自己的三段 system 提示词；系统的额外提示词并进
+    第三段（第四段会被 405/3012 拒掉）。
+    """
+    if not isinstance(body, dict) or not isinstance(body.get("messages"), list):
+        return body
+    prompt = _zcode_prompt()
+    system = body.get("system")
+    own = []
+    if isinstance(system, str):
+        if system.strip():
+            own.append(system)
+    elif isinstance(system, list):
+        for block in system:
+            if isinstance(block, dict) and block.get("type") == "text" \
+                    and str(block.get("text") or "").strip():
+                own.append(str(block["text"]))
+    dynamic = [prompt["beforeEnvironment"],
+               _zcode_environment(site, body.get("model")),
+               prompt["afterEnvironment"]] + own
+    body["system"] = [
+        _zcode_cached(prompt["cliPrefix"]),
+        _zcode_cached("\n\n".join(prompt["stableSections"])),
+        _zcode_cached("\n\n" + "\n\n".join(dynamic)),
+    ]
+    body["messages"] = [_zcode_context_prefix()] + list(body["messages"])
+    last = None
+    for message in body["messages"]:
+        if not isinstance(message, dict) or message.get("role") == "system":
+            continue
+        last = message
+        if isinstance(message.get("content"), list):
+            for block in message["content"]:
+                if isinstance(block, dict):
+                    block.pop("cache_control", None)
+    if isinstance(last, dict):
+        content = last.get("content")
+        if isinstance(content, str):
+            last["content"] = [_zcode_cached(content)]
+        elif isinstance(content, list) and content:
+            block = content[-1]
+            if isinstance(block, dict) and not block.get("cache_control"):
+                block["cache_control"] = {"type": "ephemeral"}
+    if isinstance(body.get("tools"), list):
+        for tool in body["tools"]:
+            if isinstance(tool, dict):
+                tool.pop("cache_control", None)
+    metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
+    metadata = dict(metadata)
+    metadata["user_id"] = json.dumps({
+        "device_id": str(device or _zcode_device_mid()),
+        "account_uuid": "",
+        "session_id": "",
+    }, separators=(",", ":"))
+    body["metadata"] = metadata
+    return body
+
+
+def _zcode_mark(body, device):
+    """Coding Plan 请求也带 ZCode 的设备号（缓存按它固定在一台机器上）。"""
+    if not isinstance(body, dict) or not isinstance(body.get("messages"), list):
+        return body
+    metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
+    metadata = dict(metadata)
+    if not str(metadata.get("user_id") or "").strip():
+        metadata["user_id"] = json.dumps({
+            "device_id": str(device or _zcode_device_mid()),
+            "account_uuid": "",
+            "session_id": "",
+        }, separators=(",", ":"))
+    body["metadata"] = metadata
+    return body
+
+
+def _zcode_start_headers(jwt):
+    return {
+        "content-type": "application/json",
+        "accept": "*/*",
+        "accept-language": "*",
+        "authorization": "Bearer " + str(jwt or "").strip(),
+        "anthropic-version": ZCODE_ANTHROPIC_VERSION,
+        "HTTP-Referer": ZCODE_BASE,
+        "user-agent": "ZCode/%s ai-sdk/anthropic/3.0.81" % ZCODE_APP_VERSION,
+        "X-ZCode-App-Version": ZCODE_APP_VERSION,
+        "X-Title": "Z Code@cli",
+        "X-Release-Channel": "production",
+        "X-Client-Language": _zcode_language(),
+        "X-Client-Timezone": _zcode_timezone(),
+        "X-ZCode-Agent": "glm",
+        "X-Platform": _zcode_platform_tag(),
+        "X-Os-Category": _zcode_os_category(),
+        "X-Os-Version": _zcode_os_release(),
+        "x-request-id": str(uuid.uuid4()),
+        "x-zcode-session-type": "main",
+        "x-zcode-trace-id": str(uuid.uuid4()),
+        "x-zcode-query-source": "main_turn",
+    }
+
+
+def _zcode_coding_headers(key):
+    key = str(key or "").strip()
+    return {
+        "content-type": "application/json",
+        "accept": "text/event-stream",
+        "anthropic-version": ZCODE_ANTHROPIC_VERSION,
+        "user-agent": "ZCode/" + ZCODE_APP_VERSION,
+        "x-api-key": key,
+        "authorization": "Bearer " + key,
+    }
+
+
+def _zcode_account_models(account):
+    names = [str(x or "").strip() for x in (account.get("models") or [])
+             if str(x or "").strip()]
+    if not names and str(account.get("route") or "") != "start":
+        names = [m["id"] for m in ZCODE_MODELS]
+    return names
+
+
+# ---------------------------------------------------------------------------
 # 登录会话
 # ---------------------------------------------------------------------------
 
@@ -905,9 +2416,14 @@ def _prune_sessions():
                     _sessions.pop(state, None)
 
 
-def login_start(platform):
-    """开始一次平台登录，返回给面板的启动信息。"""
+def login_start(platform, options=None):
+    """开始一次平台登录，返回给面板的启动信息。
+
+    ``options`` 只给需要额外输入的登录方式用（ZCode 的站点 / API Key /
+    导入本机登录态）；其它平台忽略它，行为与以前一致。
+    """
     _prune_sessions()
+    options = options if isinstance(options, dict) else {}
     item = platform_def(platform)
     if item is None:
         raise PlatformError(400, "不支持的平台：%s" % platform)
@@ -915,6 +2431,17 @@ def login_start(platform):
         return _codearts_login_start()
     if item["id"] == PLATFORM_CLINE:
         return _cline_login_start()
+    if item["id"] == PLATFORM_ZCODE:
+        mode = str(options.get("mode") or "browser").strip().lower()
+        if mode not in ZCODE_LOGIN_MODES:
+            raise PlatformError(400, "不支持的 ZCode 登录方式：%s" % mode)
+        if mode == "import":
+            return _zcode_login_success(
+                PLATFORM_ZCODE, _zcode_import_login(options))
+        if mode == "key":
+            return _zcode_login_success(
+                PLATFORM_ZCODE, _zcode_key_login(options))
+        return _zcode_browser_login_start(options.get("site"))
     raise PlatformError(400, "这个平台还没有登录适配")
 
 
@@ -1271,6 +2798,33 @@ def account_public(account):
         "expires_at": expires_at,
         "expires_in": max(0, int(expires_at - time.time())) if expires_at else 0,
         "platform": account.get("platform") or "",
+        # ZCode 的账号卡片要多说两句：站点、套餐、额度类型（Coding Plan /
+        # Start Plan）。这些都不是凭据，可以给面板看。
+        "site": account.get("site") or "",
+        "site_label": (_zcode_site_info(account.get("site"))["name"]
+                       if account.get("platform") == PLATFORM_ZCODE else ""),
+        "plan": account.get("plan") or "",
+        "route": account.get("route") or "",
+        "source": account.get("source") or "",
+        "team": bool(account.get("team")),
+        "models": [str(x) for x in (account.get("models") or [])][:40],
+        # 赠送额度的用量快照（每个余额桶一行）。只含数字与名字，没有凭据。
+        "usage": [
+            {
+                "plan": str(x.get("plan") or ""),
+                "name": str(x.get("name") or ""),
+                "models": [str(m) for m in (x.get("models") or [])][:8],
+                "total": int(_zcode_num(x.get("total"))),
+                "used": int(_zcode_num(x.get("used"))),
+                "remaining": int(_zcode_num(x.get("remaining"))),
+                "percent": round(_zcode_num(x.get("used"))
+                                 / _zcode_num(x.get("total")) * 100, 2)
+                if _zcode_num(x.get("total")) > 0 else 0.0,
+                "period": str(x.get("period") or ""),
+                "spent": bool(x.get("spent")),
+            }
+            for x in (account.get("usage") or []) if isinstance(x, dict)
+        ][:20],
     }
 
 
@@ -1282,10 +2836,23 @@ def _has_live_credential(account):
         return False
     if account.get("platform") == PLATFORM_CODEARTS:
         return bool(account.get("access_key") and account.get("secret_key"))
+    if account.get("platform") == PLATFORM_ZCODE:
+        if account.get("api_key"):
+            return True
+        return bool(account.get("jwt")) and not _zcode_jwt_expired(account.get("jwt"))
     return bool(account.get("access_token"))
 
 
 def _needs_refresh(account):
+    if account.get("platform") == PLATFORM_ZCODE:
+        # Coding Plan 的 Key 不会过期；赠送额度靠 expires_at（计划结束时间）
+        # 判断，Key 账号不需要后台续期。
+        if account.get("api_key"):
+            return False
+        expires_at = float(account.get("expires_at") or 0)
+        if not expires_at:
+            return not _has_live_credential(account)
+        return time.time() > expires_at - REFRESH_MARGIN_SECONDS
     expires_at = float(account.get("expires_at") or 0)
     if not expires_at:
         return not _has_live_credential(account)
@@ -1309,6 +2876,8 @@ def refresh_account(pool, account, force=False):
     try:
         if account.get("platform") == PLATFORM_CODEARTS:
             updated = _codearts_refresh(account)
+        elif account.get("platform") == PLATFORM_ZCODE:
+            updated = _zcode_refresh_account(pool, account)
         else:
             updated = _cline_refresh(account)
     except Exception as exc:
@@ -1324,15 +2893,34 @@ def refresh_account(pool, account, force=False):
     return updated
 
 
-def ensure_account(pool):
+def _zcode_model_served(account, model):
+    wanted = str(model or "").strip().lower()
+    if not wanted:
+        return True
+    names = [str(x or "").strip().lower()
+             for x in (account.get("models") or [])]
+    if not names:
+        return str(account.get("route") or "") != "start"
+    return wanted in names
+
+
+def ensure_account(pool, model=None):
     """挑一个可用账号；必要时先续期。
 
     轮询按池子做（多账号时把请求摊开），优先挑没被停用、凭据没坏的。
+    ZCode 多账号时按模型挑：赠送额度的账号排在前面（先用免费额度）。
     """
     accounts = [a for a in (pool.get("accounts") or [])
                 if isinstance(a, dict) and a.get("enabled", True) is not False]
     if not accounts:
         raise PlatformError(503, "这个平台还没有可用账号：先在面板「添加账号」")
+    if str(pool.get("platform") or "") == PLATFORM_ZCODE:
+        served = [a for a in accounts if _zcode_model_served(a, model)]
+        if not served:
+            raise PlatformError(400, "这个 ZCode 账号池里没有提供「%s」的账号"
+                                % str(model or ""))
+        served.sort(key=lambda a: 0 if str(a.get("route") or "") == "start" else 1)
+        accounts = served
     pool_id = str(pool.get("id") or "")
     with _rr_lock:
         start = _rr.get(pool_id, 0)
@@ -1357,6 +2945,112 @@ def ensure_account(pool):
 # 模型 / 余额 / 领取
 # ---------------------------------------------------------------------------
 
+def _zcode_fetch_models(pool):
+    """ZCode 的模型清单：官方 provider 配置 + 赠送额度实际能用的模型。
+
+    「刷新模型」时强制重拉一次官方最新配置（远程拿不到就用本机客户端 /
+    上次的 / 内置兜底表），所以官方上新模型后刷新就能看到。
+    """
+    accounts = [a for a in (pool.get("accounts") or [])
+                if isinstance(a, dict) and a.get("enabled", True) is not False]
+    if not accounts:
+        return [], "这个平台还没有可用账号：先在面板「添加账号」"
+    official = {}
+
+    def official_rows(base):
+        base = str(base or "")
+        if base not in official:
+            official[base] = _zcode_official_models(base, force=True)
+        return official[base]
+
+    def detail(raw):
+        wanted = str(raw or "").lower()
+        for rows in official.values():
+            for row in rows:
+                if str(row.get("id") or "").lower() == wanted:
+                    return row
+        for row in _zcode_fallback_models():
+            if row["id"].lower() == wanted:
+                return row
+        return {"id": raw, "context": 0, "output": 0, "image": False,
+                "efforts": []}
+
+    def reasoning_of(raw, info):
+        efforts = info.get("efforts") or []
+        if efforts:
+            return any(str(x) != "none" for x in efforts)
+        for row in ZCODE_MODELS:
+            if row["id"].lower() == str(raw or "").lower():
+                return bool(row.get("reasoning"))
+        return False
+
+    rows = []
+    seen = set()
+    start_models = set()
+    errors = []
+    for account in accounts:
+        route = str(account.get("route") or "")
+        names = []
+        if route == "start" or (not account.get("api_key") and account.get("jwt")):
+            # 预热官方配置（上下文 / 输出 / 图像标记），拿不到也不影响桶模型。
+            base = str(account.get("base_url") or "").strip() \
+                or _zcode_site_info(account.get("site"))["base"]
+            official_rows(base)
+            try:
+                start = _zcode_start_plan(
+                    account.get("jwt"), account.get("device") or "")
+            except PlatformError as exc:
+                errors.append("%s：%s" % (account.get("label") or "账号", exc.detail))
+                start = None
+            if start:
+                names = [_zcode_model_name(x) for x in (start.get("models") or [])]
+                start_models.update(x.lower() for x in names)
+                usage_rows = [dict(x) for x in (start.get("buckets") or [])
+                              if isinstance(x, dict)]
+                changed = (account.get("models") != names
+                           or account.get("usage") != usage_rows
+                           or float(account.get("expires_at") or 0)
+                           != float(start.get("ends_at") or 0))
+                account["models"] = names
+                account["usage"] = usage_rows
+                account["plan"] = start.get("name") or account.get("plan") or ""
+                account["expires_at"] = float(start.get("ends_at") or 0)
+                if changed:
+                    _persist(pool, account)
+            elif not names:
+                if not errors:
+                    errors.append("%s：赠送额度已用完或已过期"
+                                  % (account.get("label") or "账号"))
+        else:
+            base = str(account.get("base_url") or "").strip() \
+                or _zcode_site_info(account.get("site"))["base"]
+            names = [str(m.get("id") or "") for m in official_rows(base)]
+            names = [x for x in names if x]
+            if account.get("models") != names:
+                account["models"] = names
+                _persist(pool, account)
+        for raw in names:
+            key = str(raw or "").lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            info = detail(raw)
+            rows.append({
+                "id": raw,
+                "name": raw,
+                "context": int(info.get("context") or 0),
+                "output": int(info.get("output") or 0),
+                "vision": bool(info.get("image")),
+                "reasoning": reasoning_of(raw, info),
+                "tools": True,
+                "free": key in start_models,
+                "channel": "start" if key in start_models else "coding",
+            })
+    if rows:
+        return rows, ""
+    return [], errors[0] if errors else "ZCode 没有返回可用模型"
+
+
 def fetch_models(pool, timeout=HTTP_TIMEOUT_SECONDS):
     """拉一个平台池的模型清单。返回 (模型条目列表, 错误说明)。"""
     platform = str(pool.get("platform") or "")
@@ -1372,6 +3066,8 @@ def fetch_models(pool, timeout=HTTP_TIMEOUT_SECONDS):
             if not models:
                 return [], "Cline 没有返回模型目录"
             return models, ""
+        if platform == PLATFORM_ZCODE:
+            return _zcode_fetch_models(pool)
         return [], "不支持的平台：%s" % platform
     except PlatformError as exc:
         return [], exc.detail
@@ -1383,13 +3079,117 @@ def fetch_models(pool, timeout=HTTP_TIMEOUT_SECONDS):
         return [], "拉取失败：%s" % exc
 
 
+def _zcode_balance(pool):
+    accounts = [a for a in (pool.get("accounts") or [])
+                if isinstance(a, dict) and a.get("enabled", True) is not False]
+    if not accounts:
+        return {"note": "还没有账号", "at": time.time()}
+    total = 0.0
+    remaining = 0.0
+    names = []
+    errors = []
+    for account in accounts:
+        label = account.get("label") or "ZCode"
+        if account.get("plan") and account.get("plan") not in names:
+            names.append(str(account.get("plan")))
+        if str(account.get("route") or "") == "start" or (
+                not account.get("api_key") and account.get("jwt")):
+            try:
+                start = _zcode_start_plan(
+                    account.get("jwt"), account.get("device") or "")
+            except PlatformError as exc:
+                errors.append("%s：%s" % (label, exc.detail))
+                continue
+            if start:
+                total += float(start.get("total") or 0)
+                remaining += float(start.get("remaining") or 0)
+                for name in start.get("plans") or []:
+                    if name and name not in names:
+                        names.append(name)
+        else:
+            key = str(account.get("api_key") or "")
+            if key:
+                try:
+                    plan = _zcode_plan_name(account.get("site"), key)
+                    if plan and plan not in names:
+                        names.append(plan)
+                except PlatformError as exc:
+                    errors.append("%s：%s" % (label, exc.detail))
+    note = "、".join(names) if names else "ZCode 账号已就绪"
+    out = {"plan": note, "at": time.time()}
+    if total > 0:
+        out["total_quota"] = int(total)
+        out["total_balance"] = int(remaining)
+        out["total_used"] = int(max(0, total - remaining))
+        out["note"] = note
+    elif errors:
+        out["error"] = errors[0]
+    else:
+        out["note"] = note
+    return out
+
+
 def fetch_balance(pool):
     """查询平台余额；返回可落盘的快照。"""
     platform = str(pool.get("platform") or "")
     if platform == PLATFORM_CODEARTS:
         account = ensure_account(pool)
         return _codearts_balance(account)
+    if platform == PLATFORM_ZCODE:
+        return _zcode_balance(pool)
     return {"note": "这个平台没有公开的余额接口", "at": time.time()}
+
+
+def fetch_usage(pool):
+    """实时拉平台账号的用量（不是登录时的快照）并落盘。
+
+    ZCode：逐账号问一次最新余额（套餐名 / 每个余额桶的用了多少），顺便把
+    池子余额也刷新一遍。返回 ``{usage_ok, errors, balance}``。
+    """
+    platform = str(pool.get("platform") or "")
+    if platform != PLATFORM_ZCODE:
+        return {"usage_ok": True, "errors": []}
+    errors = []
+    for account in [a for a in (pool.get("accounts") or [])
+                    if isinstance(a, dict)]:
+        if account.get("enabled", True) is False:
+            continue
+        route = str(account.get("route") or "")
+        key = str(account.get("api_key") or "")
+        jwt = str(account.get("jwt") or "")
+        device = str(account.get("device") or "") or _zcode_device_mid()
+        label = account.get("label") or "ZCode"
+        try:
+            if route == "start" or (not key and jwt):
+                start = _zcode_start_plan(jwt, device)
+                if not start or not start.get("models"):
+                    raise PlatformError(401, "ZCode 的赠送额度已用完或已过期：重新登录一次")
+                account["usage"] = [dict(x) for x in (start.get("buckets") or [])
+                                    if isinstance(x, dict)]
+                account["models"] = list(start.get("models") or [])
+                account["plan"] = start.get("name") or account.get("plan") or ""
+                account["expires_at"] = float(start.get("ends_at") or 0)
+            elif key:
+                plan = _zcode_plan_name(_zcode_site(account.get("site")), key)
+                if not plan:
+                    raise PlatformError(401, "这把 Key 背后没有生效的 GLM Coding Plan")
+                account["plan"] = plan
+            else:
+                raise PlatformError(401, "这个 ZCode 账号的登录态不可用：重新登录一次")
+            account["status"] = "ok"
+            account["last_error"] = ""
+        except PlatformError as exc:
+            errors.append("%s：%s" % (label, exc.detail))
+            account["status"] = "error"
+            account["last_error"] = exc.detail
+        _persist(pool, account)
+    balance = _zcode_balance(pool)
+    try:
+        import wb_egg_pools
+        wb_egg_pools.set_platform_meta(pool.get("id"), "balance", balance)
+    except Exception as exc:
+        _log("zcode: 落盘余额失败：%s" % exc)
+    return {"usage_ok": not errors, "errors": errors[:3], "balance": balance}
 
 
 def claim(pool):
@@ -1462,9 +3262,35 @@ def build_request(pool, chat):
         import wb_egg_pools
     except Exception as exc:
         raise PlatformError(500, "供应商池模块不可用：%s" % exc)
-    body = wb_egg_pools._openai_body(chat, model)
     # 发给上游的是原始模型 id（对外的 id 带了平台前缀）。
     upstream = upstream_model(pool, model)
+    if platform == PLATFORM_ZCODE:
+        account = ensure_account(pool, upstream)
+        site = _zcode_site(account.get("site"))
+        key = str(account.get("api_key") or "").strip()
+        jwt = str(account.get("jwt") or "").strip()
+        device = str(account.get("device") or "").strip() or _zcode_device_mid()
+        route = str(account.get("route") or "")
+        body = wb_egg_pools._anthropic_body(chat, upstream)
+        converter = wb_egg_pools.AnthropicStream(model)
+        if route == "start" or (not key and jwt):
+            if not jwt:
+                raise PlatformError(401, "这个 ZCode 账号没有可用的登录态：重新登录一次")
+            if _zcode_jwt_expired(jwt):
+                raise PlatformError(401, "ZCode 的登录态已过期：重新登录一次")
+            body = _zcode_dress(body, site, device)
+            url = ZCODE_START_BASE + "/v1/messages"
+            headers = _zcode_start_headers(jwt)
+            return url, body, headers, converter, pool["id"], model
+        if not key:
+            raise PlatformError(401, "这个 ZCode 账号没有 GLM Coding Plan Key：重新登录一次")
+        body = _zcode_mark(body, device)
+        base = str(account.get("base_url") or "").strip() \
+            or _zcode_site_info(site)["base"]
+        url = base.rstrip("/") + "/v1/messages"
+        headers = _zcode_coding_headers(key)
+        return url, body, headers, converter, pool["id"], model
+    body = wb_egg_pools._openai_body(chat, model)
     if upstream and body.get("model") != upstream:
         body["model"] = upstream
     account = ensure_account(pool)
