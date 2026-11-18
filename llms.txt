@@ -1,6 +1,6 @@
 # wb-proxy
 
-> wb-proxy 是一个本地自托管的 AI 网关，把 WorkBuddy、Qoder、Trae 的多账号登录态与免账号的免费模型源（OpenCode Zen、Kilo）合并成一个 OpenAI 兼容接口，供 Claude Code、Codex、OpenCode 等客户端使用；只管账号与路由，不收 API Key。
+> wb-proxy 是一个本地自托管的 AI 网关，把 WorkBuddy、Qoder、Trae 的多账号登录态与免账号的免费模型源（OpenCode Zen、Kilo）合并成一个 OpenAI 兼容接口，供 Claude Code、Codex、OpenCode、DSH、Crush、ZCode、Hermes 等客户端使用；只管账号与路由，不收 API Key。
 
 项目地址：https://github.com/cty1735/wb-proxy （镜像：https://gitee.com/cty1735/wb-proxy）
 上游基座：[workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) v1.7.16，本项目在其之上增量开发。
@@ -22,7 +22,7 @@
 
 - wb-proxy 是什么？一个把第三方客户端账号登录态封装成 OpenAI 兼容接口的自托管网关。
 - 不登录账号能用吗？能，`?provider=egg` 免账号免密钥，使用 OpenCode Zen 免费车道与 Kilo 免费池。
-- 和 workbuddy2api-hub 什么关系？以上游 v1.7.16 为基座，保留全部能力并增量开发（Qoder / Trae / 鸡蛋、总路由、省 token、智能体配置等）。
+- 和 workbuddy2api-hub 什么关系？本仓库是独立项目，以上游 v1.7.16 为基座、保留全部能力并增量开发（Qoder / Trae / 鸡蛋、总路由、省 token、智能体配置等）。注意：上游的主程序文件名也叫 `wb_proxy.py`，中文搜索里常被混为一谈，两者不是同一个东西。
 - Claude Code 能接吗？能但默认禁用 Anthropic Messages：`cache_control` 被忽略，长会话缓存命中率低、积分消耗高（上游 issue #367），需设 `WB_ENABLE_ANTHROPIC_MESSAGES=1` 自行承担风险。
 - 国内版连不上（SSL / WinError 10054）？设 `WB_CN_CHAT_UPSTREAM=https://www.workbuddy.cn` 后重启。
 - 客户端后台偷烧积分？用 `WB_BACKGROUND_MODEL_NAMES` + `WB_BACKGROUND_MODEL_TARGET` 在网关侧把后台请求改写到免费模型。

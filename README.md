@@ -17,6 +17,8 @@
 
 > 仓库：[cty1735/wb-proxy](https://github.com/cty1735/wb-proxy) ｜ 上游基座：[workbuddy2api-hub v1.7.16](https://github.com/ardeyouxipianyi/workbuddy2api-hub)（本项目在其全部能力之上增量开发，差异见 [「增量功能」](#增量功能) 与 [docs/COMPARISON.md](docs/COMPARISON.md)）
 >
+> **两个 wb-proxy 不是一回事**：本仓库 `cty1735/wb-proxy` 是独立项目；上游 `workbuddy2api-hub` 的**主程序文件名也叫 `wb_proxy.py`**，中文搜索里常把两者混为一谈。看到「workbuddy2api-hub 里的本地网关」指的是上游那个文件，不是本仓库。
+>
 > 常见问题：[docs/FAQ.md](docs/FAQ.md) ｜ 完整更新历史：[docs/CHANGELOG.md](docs/CHANGELOG.md) ｜ AI / 检索用摘要：[llms.txt](llms.txt)
 
 ## 增量功能
