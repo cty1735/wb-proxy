@@ -1,10 +1,23 @@
-# wb-proxy — 基于 workbuddy2api-hub 的增量增强版
+# wb-proxy
 
-> **本项目仓库**：**[cty1735/wb-proxy](https://github.com/cty1735/wb-proxy)**
+**wb-proxy 是一个本地自托管的 AI 网关：把 WorkBuddy、Qoder、Trae 的多账号登录态，连同免账号的免费模型源，合并成一个 OpenAI 兼容接口（`/v1/chat/completions`、`/v1/responses`，可选 Anthropic Messages），供 Claude Code / Codex / OpenCode / DSH / Crush / ZCode / Hermes 等客户端直接使用。**
 
-> 本项目以 **[ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub)** 的 **v1.7.16** 为基座：**完整保留其全部原始能力与实现细节**（见下方「原始项目介绍」与后续技术章节），并在此基础上持续叠加改进与修复。
+<p align="center">
+  <a href="https://github.com/cty1735/wb-proxy/releases"><img src="https://img.shields.io/badge/Release-v1.7.16-2496ED?style=flat-square" alt="Version 1.7.16"></a>
+  <img src="https://img.shields.io/badge/Python-3.9+-blue.svg?style=flat-square" alt="Python">
+  <img src="https://img.shields.io/badge/API-OpenAI_Compatible-412991?style=flat-square" alt="OpenAI API">
+  <img src="https://img.shields.io/badge/Dual_Realm-Intl_&_CN-0DBD8B?style=flat-square" alt="Dual Realm">
+  <img src="https://img.shields.io/badge/License-MIT-green.svg?style=flat-square" alt="License">
+</p>
+
+- **一个 Base URL、一把 Key**：四类上游（WorkBuddy / Qoder / Trae / 鸡蛋免费源）合成一个模型池，模型 id 形如 `模型名 · 供应商`，后缀优先决定去向，客户端不必按网关拆配置。
+- **接账号，不接 API Key**：WorkBuddy / Qoder / Trae 走浏览器 OAuth、设备码或桌面客户端导入，不用去各家申请 Key；签到、连登、积分任务、Token 保活由后台常驻调度器自动执行。
+- **零账号也能用**：`?provider=egg` 聚合 OpenCode Zen 免费车道与 Kilo 免费池，克隆下来启动就能调，不需要任何凭据。
+- **只用标准库**：Python 3.9+ 直接跑，不装依赖；另有 GHCR 镜像，可 Docker / NAS 一键部署。
+
+> 仓库：[cty1735/wb-proxy](https://github.com/cty1735/wb-proxy) ｜ 上游基座：[workbuddy2api-hub v1.7.16](https://github.com/ardeyouxipianyi/workbuddy2api-hub)（本项目在其全部能力之上增量开发，差异见 [「增量功能」](#增量功能) 与 [docs/COMPARISON.md](docs/COMPARISON.md)）
 >
-> 相对上游基座多做了什么，见下方「增量功能」。
+> 常见问题：[docs/FAQ.md](docs/FAQ.md) ｜ 完整更新历史：[docs/CHANGELOG.md](docs/CHANGELOG.md) ｜ AI / 检索用摘要：[llms.txt](llms.txt)
 
 ## 增量功能
 
@@ -31,36 +44,28 @@
 
 > 完整更新历史见 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
 
----
+## 和同类项目比
 
-## 原始项目介绍（上游基座）
+| 项目 | 面向什么 | 上游怎么接 | 账号运维 | 与 wb-proxy 的差别 |
+| --- | --- | --- | --- | --- |
+| **wb-proxy** | 本机 / NAS 自用，多客户端共用一个网关 | 第三方客户端**账号登录态**（OAuth / 设备码 / 桌面端导入），另有免账号免费源与自建 API Key 池 | 内置签到、连登、积分任务、Token 保活、限额护栏 | — |
+| [workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub)（上游基座） | 同上 | WorkBuddy 账号 | 基础调度 | 本项目是其增强版：新增 Qoder / Trae / 鸡蛋三路、总路由、省 token、智能体一键配置等，见上方「增量功能」 |
+| [LiteLLM](https://github.com/BerriAI/litellm) | 生产环境统一 SDK / 代理层 | 各家 **API Key** | 无 | wb-proxy 不持 Key、持登录态；反过来 LiteLLM 支持的 provider 数量远多于本项目 |
+| one-api / new-api 类 | 多 Key 分发与计费 | 各家 **API Key** | 无 | 同上；这类项目强在计费与团队配额，wb-proxy 强在「没有 Key、只有账号」的通道 |
+| [magpie](https://github.com/yetone/magpie) | 本地模型路由组 | API Key / 本地模型 | 无 | wb-proxy 的路由策略（smart / order / rotate / usage / pace）参考了它的设计 |
 
-### WorkBuddy2API-Hub — 国际版、国内版多账号网关中枢
+> 对比基于各自公开文档与 README，只说明定位差异，不评判优劣。细节见 [docs/COMPARISON.md](docs/COMPARISON.md)。
 
-<p align="center">
-  <a href="https://github.com/cty1735/wb-proxy/releases"><img src="https://img.shields.io/badge/Release-v1.7.16-2496ED?style=flat-square" alt="Version 1.7.16"></a>
-  <img src="https://img.shields.io/badge/Python-3.9+-blue.svg?style=flat-square" alt="Python">
-  <img src="https://img.shields.io/badge/API-OpenAI_Compatible-412991?style=flat-square" alt="OpenAI API">
-  <img src="https://img.shields.io/badge/Dual_Realm-Intl_&_CN-0DBD8B?style=flat-square" alt="Dual Realm">
-  <img src="https://img.shields.io/badge/License-MIT-green.svg?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/Vibe_Coding-100%25-ff69b4?style=flat-square" alt="Vibe Coding">
-</p>
+## 常见问题
 
-把腾讯 **[www.workbuddy.ai](https://www.workbuddy.ai)**（国际版）与 **[codebuddy.cn](https://www.codebuddy.cn)**（国内版）的原生服务封装成标准 OpenAI 兼容接口（Chat Completions / Responses），并提供默认关闭的实验性 Anthropic Messages 适配；同时补齐多账号调度与运维能力：
+- **wb-proxy 是什么？** 一个本地自托管网关：把 WorkBuddy / Qoder / Trae 的多账号登录态和免费模型源，合成一个 OpenAI 兼容接口（`http://127.0.0.1:8788/v1`）。
+- **一个 Key 能同时用 WorkBuddy 和 Qoder 的额度吗？** 能。不带 `?provider=` 时按「路由」池选路，模型 id 后缀（` · WorkBuddy-global` 等）决定去向；也可以显式钉死某一家。
+- **完全不想登录账号，能用吗？** 能。`?provider=egg` 是免账号免密钥的免费上游（Zen 免费车道 + Kilo 免费池），克隆启动后直接调 `/v1/chat/completions?provider=egg`。
+- **支持哪些客户端？** Claude Code、Codex CLI、OpenCode、DSH、Crush、ZCode、Hermes。看板「智能体配置」可一键写入，也可用 `wb_agents.py` 在别的机器上配置。
+- **和 workbuddy2api-hub 是什么关系？** 本项目以它的 v1.7.16 为基座，保留其全部能力，并在其上增量开发（Qoder / Trae / 鸡蛋、总路由、省 token 等）。
+- **数据存在哪？** 全部在本机：`accounts/`（账号、配置、API Key）与 `usage/`（用量流水）；默认面板密码 `admin`，首次登录请改掉。
 
-- **开箱即用**：绿色包自带精简 Python（Windows），双击脚本即启；
-- **双区域独立路由**：国际版 / 国内版各自配置与调度，看板一键切换，状态落盘；
-- **协议与风险**：默认支持 Chat Completions、Responses API（Codex）；Anthropic Messages（Claude Code / Anthropic SDK）经协议转换且缓存兼容性尚未验证，默认禁用，仅可显式选择启用；
-- **模型目录对齐官方桌面端**：剔除补全通道与专线变体，能力与规格按桌面端宣告，上游新模型无需发版即进 `/v1/models`；
-- **设备指纹隔离 (`derive_id`)**：以账号 UID 稳定派生机器码与会话标识，同一账号不漂移、不同账号互不关联；
-- **账号接入**：看板点链接走浏览器 OAuth；Windows 上还能直接从运行中的桌面客户端导入（加密 token 就地解密），macOS / Linux 可手动粘贴解码密钥后导入；
-- **每日自动化**：国内版签到 / 成长与积分任务 / 猫猫旅行；国际版每日活跃打卡；后台调度器按 09:00 & 21:00、22:00、01:00 排程；
-- **限额护栏**：保留积分 · 每日 Token · 每日积分 · 按模型 Token 四条账号级护栏，单账号独立计数，本地 0 点解封（默认全部关闭）；
-- **OpenRouter 价估算**：把 token 折算成等价花费（人民币 / 美元可切）；
-- **多 Key 与出口绑定**：每个 Key 可固定走国际版或国内版、可限定模型，用量按 Key 归属；
-- **Web 看板**：指标卡片、模型性能与用量大表、请求流水、账号与任务管理一屏可查。
-
-> ⚡ **Vibe Coding 产物**：本项目为 100% Vibe Coding 协同产物——人类开发者提出架构与业务意图，AI 助手端到端完成逆向分析、链路调度、WAF 指纹脱敏与界面编写。
+> 更多问答（部署方式、常见报错、限额、Claude Code 缓存风险等）见 [docs/FAQ.md](docs/FAQ.md)。
 
 ---
 
@@ -591,6 +596,31 @@ export ANTHROPIC_API_KEY="你在看板设置中添加并绑定的API_Key"
 ### Unreleased
 
 已发布版本的完整记录（v1.4.5 ~ v1.7.16，含每版的 PR 归属）见 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
+
+---
+
+<details>
+<summary><b>附：上游基座 WorkBuddy2API-Hub 的原始介绍（点开查看，非本项目功能）</b></summary>
+
+### WorkBuddy2API-Hub — 国际版、国内版多账号网关中枢
+
+把腾讯 **[www.workbuddy.ai](https://www.workbuddy.ai)**（国际版）与 **[codebuddy.cn](https://www.codebuddy.cn)**（国内版）的原生服务封装成标准 OpenAI 兼容接口（Chat Completions / Responses），并提供默认关闭的实验性 Anthropic Messages 适配；同时补齐多账号调度与运维能力：
+
+- **开箱即用**：绿色包自带精简 Python（Windows），双击脚本即启；
+- **双区域独立路由**：国际版 / 国内版各自配置与调度，看板一键切换，状态落盘；
+- **协议与风险**：默认支持 Chat Completions、Responses API（Codex）；Anthropic Messages（Claude Code / Anthropic SDK）经协议转换且缓存兼容性尚未验证，默认禁用，仅可显式选择启用；
+- **模型目录对齐官方桌面端**：剔除补全通道与专线变体，能力与规格按桌面端宣告，上游新模型无需发版即进 `/v1/models`；
+- **设备指纹隔离 (`derive_id`)**：以账号 UID 稳定派生机器码与会话标识，同一账号不漂移、不同账号互不关联；
+- **账号接入**：看板点链接走浏览器 OAuth；Windows 上还能直接从运行中的桌面客户端导入（加密 token 就地解密），macOS / Linux 可手动粘贴解码密钥后导入；
+- **每日自动化**：国内版签到 / 成长与积分任务 / 猫猫旅行；国际版每日活跃打卡；后台调度器按 09:00 & 21:00、22:00、01:00 排程；
+- **限额护栏**：保留积分 · 每日 Token · 每日积分 · 按模型 Token 四条账号级护栏，单账号独立计数，本地 0 点解封（默认全部关闭）；
+- **OpenRouter 价估算**：把 token 折算成等价花费（人民币 / 美元可切）；
+- **多 Key 与出口绑定**：每个 Key 可固定走国际版或国内版、可限定模型，用量按 Key 归属；
+- **Web 看板**：指标卡片、模型性能与用量大表、请求流水、账号与任务管理一屏可查。
+
+> ⚡ **Vibe Coding 产物**：本项目为 100% Vibe Coding 协同产物——人类开发者提出架构与业务意图，AI 助手端到端完成逆向分析、链路调度、WAF 指纹脱敏与界面编写。
+
+</details>
 
 ## 七、致谢与引用声明 (Credits & References)
 

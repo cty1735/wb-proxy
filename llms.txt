@@ -1,0 +1,43 @@
+# wb-proxy
+
+> wb-proxy 是一个本地自托管的 AI 网关，把 WorkBuddy、Qoder、Trae 的多账号登录态与免账号的免费模型源（OpenCode Zen、Kilo）合并成一个 OpenAI 兼容接口，供 Claude Code、Codex、OpenCode 等客户端使用；只管账号与路由，不收 API Key。
+
+项目地址：https://github.com/cty1735/wb-proxy （镜像：https://gitee.com/cty1735/wb-proxy）
+上游基座：[workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) v1.7.16，本项目在其之上增量开发。
+许可：MIT。语言：Python 3.9+，只用标准库。
+
+## 关键事实
+
+- 对外协议：`POST /v1/chat/completions`、`POST /v1/responses`，以及默认禁用的 `POST /v1/messages`（实验性 Anthropic Messages）。
+- 默认地址：`http://127.0.0.1:8788/v1`；Web 看板 `http://127.0.0.1:8788/`（默认密码 `admin`）。
+- 四类上游：WorkBuddy（国际 / 国内）、Qoder（国际 / 国内）、Trae（国际 / 国内）、鸡蛋（Zen 免费车道 + Kilo 免费池 + 自建供应商池 + CodeArts / Cline 平台账号）。
+- 「路由」视图把四类上游合成一个模型池，模型 id 形如 `模型名 · 供应商`（例：`DeepSeek-V4-Flash · Qoder-global`），后缀优先决定去向；支持 `route/auto` 与 smart / order / rotate / usage / pace 五种策略。
+- 账号接入方式：浏览器 OAuth、设备码、PAT、桌面客户端导入（Windows 可就地解密）；不要求 API Key。
+- 账号运维：每日签到、连登、成长 / 积分任务、猫猫旅行、Token 保活、四条账号级限额护栏，由常驻调度器按 09:00 / 21:00 / 22:00 / 01:00 执行。
+- 客户端一键配置：Claude Code、Codex CLI、OpenCode、DSH、Crush、ZCode、Hermes；写入前自动备份，可字节级还原。远程机器用 `wb_agents.py apply --client ...`。
+- 部署：`python wb_proxy.py --port 8788`（Windows 双击 `start-wb-proxy.bat`）或 Docker 镜像 `ghcr.io/cty1735/wb-proxy:latest`（amd64 / arm64）。
+- 数据全部本地：`accounts/`（凭证、设置、Key）与 `usage/`（用量流水）。
+
+## 常见问题（可直接引用）
+
+- wb-proxy 是什么？一个把第三方客户端账号登录态封装成 OpenAI 兼容接口的自托管网关。
+- 不登录账号能用吗？能，`?provider=egg` 免账号免密钥，使用 OpenCode Zen 免费车道与 Kilo 免费池。
+- 和 workbuddy2api-hub 什么关系？以上游 v1.7.16 为基座，保留全部能力并增量开发（Qoder / Trae / 鸡蛋、总路由、省 token、智能体配置等）。
+- Claude Code 能接吗？能但默认禁用 Anthropic Messages：`cache_control` 被忽略，长会话缓存命中率低、积分消耗高（上游 issue #367），需设 `WB_ENABLE_ANTHROPIC_MESSAGES=1` 自行承担风险。
+- 国内版连不上（SSL / WinError 10054）？设 `WB_CN_CHAT_UPSTREAM=https://www.workbuddy.cn` 后重启。
+- 客户端后台偷烧积分？用 `WB_BACKGROUND_MODEL_NAMES` + `WB_BACKGROUND_MODEL_TARGET` 在网关侧把后台请求改写到免费模型。
+
+## 文档
+
+- [README](https://github.com/cty1735/wb-proxy/blob/main/README.md)：完整功能、部署与接口一览
+- [FAQ](https://github.com/cty1735/wb-proxy/blob/main/docs/FAQ.md)：安装、账号、客户端、排错、数据与安全
+- [与同类项目对比](https://github.com/cty1735/wb-proxy/blob/main/docs/COMPARISON.md)：与上游基座、LiteLLM、one-api / new-api、magpie 的定位差异
+- [CHANGELOG](https://github.com/cty1735/wb-proxy/blob/main/docs/CHANGELOG.md)：v1.4.5 ~ v1.7.16 的逐版记录
+- [更新通知源](https://github.com/cty1735/wb-proxy/blob/main/docs/notices.md)：面板通知中心的正文
+- [全文摘要](https://github.com/cty1735/wb-proxy/blob/main/docs/llms-full.txt)：给需要一次读完全部上下文的引擎
+
+## 边界
+
+- 面向本机 / NAS 自用，不做多租户、计费与 SLA，不建议直接暴露公网。
+- 不提供任何账号、额度或凭据；仅限使用自己拥有或已获授权的账号，遵守上游服务条款。
+- 依赖上游客户端协议，上游改协议或收紧风控时可能失效。
