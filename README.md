@@ -1,5 +1,17 @@
 # wb-proxy
 
+<p align="center">
+  <a href="README.en.md">English</a> ｜ <b>中文</b>
+</p>
+
+<p align="center">
+  <img src="docs/images/dashboard-analytics.png" alt="wb-proxy 数据看板截图：Token 消耗 828K、请求数、生成速度、缓存命中率 60.7%、API 等价花费与请求成功率 100%，下方是最近请求列表与近一年工作回澜热力图" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/images/dashboard-gateway.png" alt="wb-proxy「网关与账号」页截图：国际版 / 国内版网关卡片、可用积分、请求成功率、后台定时调度器状态，以及国内版账号列表（状态、出口、权重、积分、请求、缓存与操作按钮）" width="100%">
+</p>
+
 **wb-proxy 是一个本地自托管的 AI 网关：把 WorkBuddy、Qoder、Trae 的多账号登录态，连同免账号的免费模型源，合并成一个 OpenAI 兼容接口（`/v1/chat/completions`、`/v1/responses`，可选 Anthropic Messages），供 Claude Code / Codex / OpenCode / DSH / Crush / ZCode / Hermes 等客户端直接使用。**
 
 <p align="center">
