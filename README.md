@@ -4,14 +4,6 @@
   <a href="README.en.md">English</a> ｜ <b>中文</b>
 </p>
 
-<p align="center">
-  <img src="docs/images/dashboard-analytics.png" alt="wb-proxy 数据看板截图：Token 消耗 828K、请求数、生成速度、缓存命中率 60.7%、API 等价花费与请求成功率 100%，下方是最近请求列表与近一年工作回澜热力图" width="100%">
-</p>
-
-<p align="center">
-  <img src="docs/images/dashboard-gateway.png" alt="wb-proxy「网关与账号」页截图：国际版 / 国内版网关卡片、可用积分、请求成功率、后台定时调度器状态，以及国内版账号列表（状态、出口、权重、积分、请求、缓存与操作按钮）" width="100%">
-</p>
-
 **wb-proxy 是一个本地自托管的 AI 网关：把 WorkBuddy、Qoder、Trae 的多账号登录态，连同免账号的免费模型源，合并成一个 OpenAI 兼容接口（`/v1/chat/completions`、`/v1/responses`，可选 Anthropic Messages），供 Claude Code / Codex / OpenCode / DSH / Crush / ZCode / Hermes 等客户端直接使用。**
 
 <p align="center">
@@ -57,6 +49,28 @@
 - **2026-10-17 ~ 10-18｜更多提供商**：新增 Qoder、Trae（国际 / 国内）通道与 OAuth 接入，账号、模型清单、用量按提供商维度打通。
 
 > 完整更新历史见 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
+
+## 界面预览
+
+下面三张都是运行中的真实截图，未做美化。日常用的就是这三页。
+
+**网关与账号** —— 国际版 / 国内版两个池子并排，可用积分、请求成功率、后台定时调度器的下一次执行时间，以及每个账号的状态、出口、权重、今日请求与缓存命中。
+
+<p align="center">
+  <img src="docs/images/dashboard-gateway.png" alt="wb-proxy「网关与账号」页截图：国际版（280/280 积分）与国内版（11,611.84 积分、3 个账号）两张网关卡片，国内版 3,792 次调用、641.51 积分消耗、99.9% 请求成功率，下方是后台定时调度器状态与国内版账号列表（版本、账号、状态、今日活动、出口、权重、积分、请求、总 token、缓存、操作）" width="100%">
+</p>
+
+**数据看板** —— Token 消耗、请求数、生成速度、缓存命中率、API 等价花费、请求成功率六张卡片，下面是 Token 时序与最近请求实时流，底部是近一年的活动热力图。
+
+<p align="center">
+  <img src="docs/images/dashboard-analytics.png" alt="wb-proxy 数据看板截图：Token 消耗 828K、请求数 20 次、缓存命中率 60.7%、API 等价花费 ¥0.13、请求成功率 100%，下方是 Token 时序图、最近请求列表与近一年工作回澜热力图" width="100%">
+</p>
+
+**API 等价花费明细** —— 点开花费卡片，按账号和按模型两个维度拆解：每个模型折算成多少钱、占比多少、消耗多少 Token，免费模型单列且不计金额。
+
+<p align="center">
+  <img src="docs/images/api-cost-breakdown.png" alt="wb-proxy「API 等价花费明细」弹窗截图：合计 ¥0.55 / 58 次请求 / 3.86M Token / 积分消耗 0，按账号列出 OpenCode（本地），按模型列出 group/deepseek-v4.1-flash（¥0.55，100%，3.77M Token）与 group/auto-flint-v1.0-free（¥0.00，85.6K Token），底部注明按 OpenRouter 价格折算的口径" width="100%">
+</p>
 
 ## 和同类项目比
 

@@ -4,14 +4,6 @@
   <b>English</b> ｜ <a href="README.md">中文</a>
 </p>
 
-<p align="center">
-  <img src="docs/images/dashboard-analytics.png" alt="wb-proxy analytics dashboard: 828K tokens, request count, generation speed, 60.7% cache hit rate, API-equivalent cost and 100% success rate, with a recent-requests list and a year-long activity heatmap" width="100%">
-</p>
-
-<p align="center">
-  <img src="docs/images/dashboard-gateway.png" alt="wb-proxy Gateway & Accounts page: Global and China gateway cards with available credits, request success rate, background scheduler status, and a China-realm account list showing status, egress, weight, credits, requests, cache and per-row actions" width="100%">
-</p>
-
 **wb-proxy is a self-hosted AI gateway that merges the multi-account login sessions of WorkBuddy, Qoder and Trae — plus credential-free free model sources — into a single OpenAI-compatible API (`/v1/chat/completions`, `/v1/responses`, with an optional Anthropic Messages adapter) that Claude Code, Codex, OpenCode, DSH, Crush, ZCode and Hermes can talk to directly.**
 
 <p align="center">
@@ -57,6 +49,28 @@ Everything below is incremental work on top of the upstream base (v1.7.16). Date
 - **2026-10-17 ~ 10-18 — More providers:** Qoder and Trae channels (global and China) with OAuth onboarding; accounts, catalogs and usage are unified per provider.
 
 > Full history: **[docs/CHANGELOG.md](docs/CHANGELOG.md)**.
+
+## Screenshots
+
+All three are unedited screenshots of a live instance. These pages are the whole day-to-day surface.
+
+**Gateway and accounts** — Global and China realms side by side, with available credits, request success rate, the next run of the background scheduler, and a per-account list showing status, egress, weight, today's requests and cache hits.
+
+<p align="center">
+  <img src="docs/images/dashboard-gateway.png" alt="wb-proxy Gateway and Accounts page: Global (280/280 credits) and China (11,611.84 credits, 3 accounts) gateway cards, 3,792 China-realm requests, 641.51 credits consumed and 99.9% success rate, followed by the background scheduler status and the China-realm account list with status, egress, weight, credits, requests, tokens and cache per row" width="100%">
+</p>
+
+**Analytics** — Six cards for token spend, request count, generation speed, cache hit rate, API-equivalent cost and success rate; below them a token timeline, a live recent-request stream, and a year-long activity heatmap.
+
+<p align="center">
+  <img src="docs/images/dashboard-analytics.png" alt="wb-proxy analytics dashboard: 828K tokens, 20 requests, 60.7% cache hit rate, ¥0.13 API-equivalent cost, 100% success rate, with a token timeline, recent-request list and a year-long activity heatmap" width="100%">
+</p>
+
+**API-equivalent cost breakdown** — Click the cost card to split spend by account and by model: how much each model is worth in currency, its share, and the tokens it burned. Free models are listed separately and excluded from the amount.
+
+<p align="center">
+  <img src="docs/images/api-cost-breakdown.png" alt="wb-proxy API-equivalent cost breakdown modal: ¥0.55 total, 58 requests, 3.86M tokens and 0 credits, broken down by account (OpenCode, local) and by model — group/deepseek-v4.1-flash at ¥0.55 (100%, 3.77M tokens) and group/auto-flint-v1.0-free at ¥0.00 (85.6K tokens) — with the OpenRouter-based conversion rules noted at the bottom" width="100%">
+</p>
 
 ## How it compares
 
